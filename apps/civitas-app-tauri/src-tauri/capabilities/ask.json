@@ -1,0 +1,69 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "consumer-ask",
+  "description": "Chat-history-only filesystem permissions for the compact Ask window.",
+  "local": true,
+  "windows": ["ask"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:app:allow-version",
+    "core:window:allow-theme",
+    "core:path:allow-resolve-directory",
+    "core:path:allow-join",
+    "store:allow-load",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-save",
+    "deep-link:allow-get-current",
+    "os:allow-platform",
+    "os:allow-os-type",
+    "os:allow-version",
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        "$HOME/.civitas/chats",
+        "$HOME/.civitas/chats/*.json",
+        "$HOME/.civitas/chats/*.json.*.tmp"
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": ["$HOME/.civitas/chats/*.json"]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        "$HOME/.civitas/chats/*.json",
+        "$HOME/.civitas/chats/*.json.*.tmp"
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": ["$HOME/.civitas/chats"]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": ["$HOME/.civitas/chats/*.json"]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": ["$HOME/.civitas/chats"]
+    },
+    {
+      "identifier": "fs:allow-rename",
+      "allow": [
+        "$HOME/.civitas/chats/*.json",
+        "$HOME/.civitas/chats/*.json.*.tmp"
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        "$HOME/.civitas/chats/*.json",
+        "$HOME/.civitas/chats/*.json.*.tmp"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@civitas/browser-extension",
+  "version": "0.3.4",
+  "private": true,
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "test": "bun test",
+    "check": "bun run test && bun run build",
+    "zip": "bun run build && cd dist && zip -r \"../civitas-browser-extension-v$(node -p 'require(\\\"../package.json\\\").version').zip\" . && cd ..",
+    "dev": "bun build src/worker.ts src/options.ts src/popup.ts --outdir dist --target browser --format esm --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.287"
+  },
+  "packageManager": "bun@1.3.10"
+}

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Civitas Browser Bridge</title>
+    <link rel="stylesheet" href="extension.css" />
+  </head>
+  <body class="popup">
+    <main class="shell shell--popup">
+      <header class="brand">
+        <img src="icon-128.png" alt="" class="brand__icon" />
+        <div>
+          <div class="eyebrow">Civitas</div>
+          <h1>Share this tab</h1>
+        </div>
+        <button id="settings-btn" class="icon-button" aria-label="Open settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Z" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.86 1.86-.06-.06A1.7 1.7 0 0 0 16 18.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V20h-2.6v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-1.86-1.86.06-.06A1.7 1.7 0 0 0 7.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H5.8V11h.1A1.7 1.7 0 0 0 7.5 9.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06L8.96 6.1l.06.06A1.7 1.7 0 0 0 10.9 6.5a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1v-.1h2.6v.1A1.7 1.7 0 0 0 16 6.4a1.7 1.7 0 0 0 1.88-.34l.06-.06 1.86 1.86-.06.06A1.7 1.7 0 0 0 19.4 9.8a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v2.6h-.1A1.7 1.7 0 0 0 19.4 15Z" />
+          </svg>
+        </button>
+      </header>
+
+      <section id="status-bar" class="status" data-state="checking">
+        <span class="status__dot" aria-hidden="true"></span>
+        <span id="status-text">checking…</span>
+      </section>
+
+      <p id="connected-tagline" class="body-copy" hidden>
+        This active tab is shared temporarily. Civitas can read a bounded
+        outline; every navigation still needs Allow once.
+      </p>
+
+      <section id="action-section" class="action-section" hidden>
+        <button id="connect-btn" class="primary-button" hidden>
+          Connect Civitas
+        </button>
+        <button id="open-btn" class="primary-button" hidden>
+          Open Civitas
+        </button>
+        <span id="action-hint" class="hint"></span>
+      </section>
+
+      <section id="pair-info" class="pair-card" hidden>
+        <span>Match this code in Civitas</span>
+        <strong id="pair-code"></strong>
+      </section>
+
+      <footer>
+        Only the active tab you invoked is available. Form values, password
+        fields, URL queries, and URL fragments are omitted.
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

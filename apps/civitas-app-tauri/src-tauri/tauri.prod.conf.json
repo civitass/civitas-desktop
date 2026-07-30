@@ -1,0 +1,137 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Civitas Desktop",
+  "identifier": "team.civitas.app",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../out",
+    "devUrl": "http://localhost:3000"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "active": true,
+    "publisher": "Mediar, Inc.",
+    "category": "Productivity",
+    "shortDescription": "Local-first personal work memory",
+    "longDescription": "Capture, search, and understand your work on your computer, with optional AI providers you choose.",
+    "copyright": "",
+    "targets": ["app", "dmg", "deb", "appimage", "nsis"],
+    "externalBin": ["bun"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/256x256.png",
+      "icons/512x512.png",
+      "icons/1024x1024.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/civitas-logo-tray-failed.png",
+      "icons/civitas-logo-tray-black.png"
+    ],
+    "resources": ["assets/*"],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "signCommand": "powershell -ExecutionPolicy Bypass -File sign-ssl.ps1 %1"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/civitass/civitas-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzNzQ0MkQ5NzE5NkQwREEKUldUYTBKWngyVUowOHh4UTF0VUZMUkJ6TXV6UXVHamNPNnRaT1Q2WUwzWlM1cEtOaGFUZFZkRU4K"
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["civitas"]
+      },
+      "mobile": [
+        {
+          "host": "civitas.team",
+          "pathPrefix": ["/settings"]
+        },
+        {
+          "host": "civitas.team",
+          "pathPrefix": ["/changelog"]
+        },
+        {
+          "host": "civitas.team",
+          "pathPrefix": ["/onboarding"]
+        },
+        {
+          "host": "civitas.team",
+          "pathPrefix": ["/status"]
+        }
+      ]
+    }
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "trayIcon": {
+      "id": "civitas_main",
+      "iconPath": "assets/civitas-logo-tray-white.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": true
+    },
+    "security": {
+      "capabilities": [
+        "consumer-overlay",
+        "consumer-home",
+        "consumer-chat",
+        "consumer-ask",
+        "consumer-search",
+        "consumer-onboarding",
+        "consumer-permission-recovery",
+        "consumer-tray",
+        "consumer-graph-map",
+        "consumer-notification-panel",
+        "consumer-viewer"
+      ],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/.civitas/data/**/*.aac",
+          "$HOME/.civitas/data/**/*.flac",
+          "$HOME/.civitas/data/**/*.gif",
+          "$HOME/.civitas/data/**/*.jpeg",
+          "$HOME/.civitas/data/**/*.jpg",
+          "$HOME/.civitas/data/**/*.m4a",
+          "$HOME/.civitas/data/**/*.mkv",
+          "$HOME/.civitas/data/**/*.mov",
+          "$HOME/.civitas/data/**/*.mp3",
+          "$HOME/.civitas/data/**/*.mp4",
+          "$HOME/.civitas/data/**/*.ogg",
+          "$HOME/.civitas/data/**/*.png",
+          "$HOME/.civitas/data/**/*.wav",
+          "$HOME/.civitas/data/**/*.webm",
+          "$HOME/.civitas/data/**/*.webp",
+          "$HOME/.civitas/exports/**/*.gif",
+          "$HOME/.civitas/exports/**/*.jpeg",
+          "$HOME/.civitas/exports/**/*.jpg",
+          "$HOME/.civitas/exports/**/*.png",
+          "$HOME/.civitas/exports/**/*.webp",
+          "$HOME/.civitas/pipes/*/logs/**/*.gif",
+          "$HOME/.civitas/pipes/*/logs/**/*.jpeg",
+          "$HOME/.civitas/pipes/*/logs/**/*.jpg",
+          "$HOME/.civitas/pipes/*/logs/**/*.png",
+          "$HOME/.civitas/pipes/*/logs/**/*.webp",
+          "$HOME/.civitas/pipes/*/output/**/*.gif",
+          "$HOME/.civitas/pipes/*/output/**/*.jpeg",
+          "$HOME/.civitas/pipes/*/output/**/*.jpg",
+          "$HOME/.civitas/pipes/*/output/**/*.png",
+          "$HOME/.civitas/pipes/*/output/**/*.webp"
+        ]
+      },
+      "csp": "default-src 'self' asset: http://asset.localhost; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' 'unsafe-inline' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; media-src 'self' data: blob: asset: http://asset.localhost; frame-src 'none'; worker-src 'self' blob:"
+    },
+    "macOSPrivateApi": true
+  }
+}

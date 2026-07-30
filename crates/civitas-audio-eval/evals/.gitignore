@@ -1,0 +1,3 @@
+# Audio corpora, transcripts, RTTM files, and derived fixtures are external.
+# See README.md for the verified LibriSpeech flow and optional local corpora.
+fixtures/

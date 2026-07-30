@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Civitas Browser Bridge",
+  "version": "0.3.4",
+  "description": "Share a bounded outline of one active tab with local Civitas, with one-shot approval before navigation.",
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Share this tab with Civitas",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icon-32.png",
+      "128": "icon-128.png"
+    }
+  },
+  "icons": {
+    "32": "icon-32.png",
+    "128": "icon-128.png"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "notifications",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*"
+  }
+}

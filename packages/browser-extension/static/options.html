@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Civitas Browser Bridge</title>
+    <link rel="stylesheet" href="extension.css" />
+  </head>
+  <body class="options">
+    <main class="shell shell--options">
+      <header class="hero">
+        <img src="icon-128.png" alt="" class="hero__icon" />
+        <div class="eyebrow">Civitas Browser Bridge</div>
+        <h1 id="connection-title">Connect Civitas</h1>
+        <p id="connection-help">
+          Click connect, then approve the request in the Civitas desktop app.
+          No API token copy/paste needed.
+        </p>
+      </header>
+
+      <section class="panel">
+        <button id="connect" class="primary-button">Connect to Civitas</button>
+        <div id="status" class="status status--wide" data-state="idle">
+          Click connect, then approve in the Civitas app.
+        </div>
+
+        <details id="pair-details" class="pair-details" hidden>
+          <summary>Verify pairing request</summary>
+          <div id="pair-code"></div>
+        </details>
+      </section>
+
+      <section class="privacy-grid" aria-label="Browser privacy boundary">
+        <article>
+          <span class="privacy-grid__number">01</span>
+          <h2>You choose the tab</h2>
+          <p>Click the extension on the active tab to grant temporary access.</p>
+        </article>
+        <article>
+          <span class="privacy-grid__number">02</span>
+          <h2>Bounded reading</h2>
+          <p>Civitas receives an outline without form values or secret URL data.</p>
+        </article>
+        <article>
+          <span class="privacy-grid__number">03</span>
+          <h2>Navigation asks again</h2>
+          <p>The desktop shows the exact HTTPS URL before every Allow once.</p>
+        </article>
+      </section>
+
+      <button id="advanced-toggle" class="text-button">Connection details</button>
+      <section id="manual-setup" class="panel panel--manual" hidden>
+        <label for="baseUrl">Local Civitas address</label>
+        <input
+          id="baseUrl"
+          type="url"
+          inputmode="url"
+          value="http://127.0.0.1:3030"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <span class="field-help">
+          HTTP localhost or 127.0.0.1 only. Remote addresses are rejected.
+        </span>
+
+        <div class="button-row">
+          <button id="save" class="secondary-button">Save</button>
+          <button id="test" class="secondary-button">Test connection</button>
+        </div>
+      </section>
+
+      <footer class="options-footer">
+        No analytics. No cookie access. No arbitrary code execution. Remove the
+        extension at any time to revoke browser access.
+      </footer>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

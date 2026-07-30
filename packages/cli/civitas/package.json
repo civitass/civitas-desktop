@@ -1,0 +1,24 @@
+{
+  "name": "civitas",
+  "version": "0.1.0",
+  "description": "civitas CLI — learns how your team works and turns it into shared workflows",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "bin": {
+    "civitas": "lib/cli.js"
+  },
+  "optionalDependencies": {
+    "@civitas/cli-darwin-arm64": "0.1.0",
+    "@civitas/cli-darwin-x64": "0.1.0",
+    "@civitas/cli-linux-x64": "0.1.0",
+    "@civitas/cli-win32-x64": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitass/civitas-desktop"
+  },
+  "license": "MIT",
+  "keywords": ["civitas", "screen-recording", "ai", "memory", "cli"]
+}

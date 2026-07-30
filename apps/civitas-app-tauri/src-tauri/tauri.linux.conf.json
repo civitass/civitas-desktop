@@ -1,0 +1,27 @@
+{
+  "bundle": {
+    "publisher": "Mediar, Inc.",
+    "resources": ["assets/*", "tessdata/*", "tessdata/configs/*"],
+    "externalBin": ["bun"],
+    "linux": {
+      "deb": {
+        "depends": [
+          "tesseract-ocr",
+          "tesseract-ocr-eng",
+          "tesseract-ocr-chi-sim",
+          "tesseract-ocr-chi-tra",
+          "libtesseract-dev",
+          "ffmpeg"
+        ]
+      },
+      "appimage": {
+        "files": {
+          "/usr/bin/tesseract": "./tesseract",
+          "/usr/bin/ffmpeg": "./ffmpeg/ffmpeg",
+          "/usr/bin/ffprobe": "./ffmpeg/ffprobe",
+          "/usr/bin/qt-faststart": "./ffmpeg/qt-faststart"
+        }
+      }
+    }
+  }
+}

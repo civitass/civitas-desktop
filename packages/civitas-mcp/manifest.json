@@ -1,0 +1,123 @@
+{
+  "manifest_version": "0.3",
+  "name": "civitas",
+  "display_name": "Civitas",
+  "version": "0.0.0-injected-from-package-json",
+  "description": "Query your local Civitas work memory through a permissioned MCP bridge",
+  "long_description": "Civitas builds a personal work timeline and provenance-aware knowledge graph on your computer. This MCP server lets an explicitly configured client query the local Civitas API with read-only tools by default. State-changing actions and raw screenshots require separate opt-in scopes.",
+  "author": {
+    "name": "civitas",
+    "url": "https://civitas.team"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitass/civitas-desktop"
+  },
+  "homepage": "https://civitas.team",
+  "documentation": "https://github.com/civitass/civitas-desktop/tree/main/packages/civitas-mcp",
+  "support": "https://github.com/civitass/civitas-desktop/issues",
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "CIVITAS_MCP_CREDENTIAL": "${user_config.civitas_mcp_credential}",
+        "CIVITAS_MCP_SCOPES": "read"
+      }
+    }
+  },
+  "user_config": {
+    "civitas_mcp_credential": {
+      "type": "string",
+      "title": "Civitas client credential",
+      "description": "In Civitas Settings → Connections, copy setup for this client and paste its CIVITAS_MCP_CREDENTIAL value here. Never paste the device-owner API key.",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "tools": [
+    {
+      "name": "search-content",
+      "description": "Search through recorded screen content, audio transcriptions, and UI elements with speaker filtering"
+    },
+    {
+      "name": "list-meetings",
+      "description": "List detected meetings with duration, app, and attendees"
+    },
+    {
+      "name": "activity-summary",
+      "description": "Lightweight compressed activity overview for a time range (apps, recent texts, audio summary)"
+    },
+    {
+      "name": "search-elements",
+      "description": "Search structured UI elements (accessibility tree nodes and OCR text blocks)"
+    },
+    {
+      "name": "frame-context",
+      "description": "Get accessibility text, parsed tree nodes, and extracted URLs for a specific frame"
+    },
+    {
+      "name": "query_decisions",
+      "description": "Query decisions about an entity with their reasons, options considered (chosen and rejected), honesty note, and provenance"
+    },
+    {
+      "name": "get_entity",
+      "description": "Get an entity's current state, attributes, and relationships in the knowledge graph"
+    },
+    {
+      "name": "find_procedure",
+      "description": "Find how a workflow is performed from locally captured evidence"
+    },
+    {
+      "name": "who_knows",
+      "description": "Find who knows about a topic, ranked by attributable claim confidence (permission-gated)"
+    },
+    {
+      "name": "find_blockers",
+      "description": "Find what is blocking an entity and who said so, with provenance"
+    },
+    {
+      "name": "find_precedent",
+      "description": "Find the closest past precedent for a situation — what fixed a similar problem last time"
+    },
+    {
+      "name": "list_recent_decisions",
+      "description": "List the most recent decisions across all entities — the 'catch me up' feed, each with reasons, options, honesty, and provenance"
+    },
+    {
+      "name": "find_decision_options",
+      "description": "Show the alternatives considered for a decision and why each was chosen or rejected (rejected branches are first-class), with a criterion rollup"
+    },
+    {
+      "name": "trace_provenance",
+      "description": "Show the evidence behind a claim or decision: source episode, true event date, confidence, attribution, honesty contract, and conflicting claims"
+    },
+    {
+      "name": "find_contradictions",
+      "description": "Check whether a claim or entity is contested — returns conflicting claim pairs with an honest status (present / none / not_computed)"
+    },
+    {
+      "name": "get_context_pack",
+      "description": "Assemble everything needed to act on a task, permissioned: state, decisions, blockers, procedures, and connected people, each with provenance"
+    }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  },
+  "keywords": [
+    "local-first",
+    "knowledge-graph",
+    "personal-memory",
+    "provenance",
+    "search"
+  ],
+  "privacy_policies": [
+    "https://github.com/civitass/civitas-desktop/blob/main/docs/PRIVACY_AND_DATA_BOUNDARY.md"
+  ]
+}

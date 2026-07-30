@@ -1,0 +1,733 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Tell the engine the UI is light by default so native scrollbars and form
+       controls render correctly. Overridden by `.dark` below. (#3746) */
+    color-scheme: light;
+
+    --background: 240 11% 96%;
+    --foreground: 240 3% 12%;
+
+    --surface: 0 0% 100%;
+    --surface-secondary: 240 5% 94%;
+    --surface-tertiary: 240 5% 91%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 3% 12%;
+    --card-hover: 240 11% 96%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 3% 12%;
+
+    --primary: 240 3% 12%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 240 3% 22%;
+    --primary-muted: 240 5% 94%;
+
+    --secondary: 240 5% 94%;
+    --secondary-foreground: 240 3% 12%;
+    --secondary-hover: 240 5% 91%;
+
+    --success: 95 18% 38%;
+    --success-foreground: 0 0% 100%;
+    --success-muted: 90 18% 91%;
+
+    --warning: 28 26% 38%;
+    --warning-foreground: 0 0% 100%;
+    --warning-muted: 30 28% 92%;
+
+    --destructive: 12 45% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-hover: 12 45% 32%;
+    --destructive-muted: 12 34% 93%;
+
+    --info: 28 26% 38%;
+    --info-foreground: 0 0% 100%;
+    --info-muted: 30 28% 92%;
+
+    --muted: 240 5% 94%;
+    --muted-foreground: 240 2% 44%;
+
+    --accent: 240 5% 94%;
+    --accent-foreground: 240 3% 12%;
+    --accent-hover: 240 5% 91%;
+
+    --border: 240 6% 83%;
+    --input: 0 0% 100%;
+    --input-focus: 240 3% 12%;
+    --ring: 28 26% 38%;
+
+    --text-primary: 240 3% 12%;
+    --text-secondary: 240 2% 44%;
+    --text-tertiary: 240 3% 60%;
+    --text-disabled: 240 4% 72%;
+
+    --brand-1: 240 3% 12%;
+    --brand-2: 240 2% 44%;
+    --brand-3: 28 26% 38%;
+    --brand-4: 30 17% 63%;
+    --brand-5: 30 28% 92%;
+
+    --color-1: 240 3% 12%;
+    --color-2: 240 2% 44%;
+    --color-3: 28 26% 38%;
+    --color-4: 30 17% 63%;
+    --color-5: 30 28% 92%;
+
+    --sidebar-background: 240 5% 94%;
+    --sidebar-foreground: 240 3% 12%;
+    --sidebar-primary: 240 3% 12%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 100%;
+    --sidebar-accent-foreground: 240 3% 12%;
+    --sidebar-border: 240 6% 83%;
+    --sidebar-ring: 28 26% 38%;
+
+    --radius: 0.875rem;
+    --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: var(--font-system);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+    /* Font size scale — controlled by the font size setting (Display).
+       Anchored at the macOS-native 13px body/control/sidebar size (NOT the old
+       iOS-sized 17px). Re-ratioed so the derived tokens land on macOS targets:
+       2xs≈10 · xs≈11 · sm≈12 · base 13 · lg≈15 · xl≈17 · 2xl≈20 · 3xl≈22 · 4xl≈27. */
+    --font-size-base: 13px;
+    /* --text-2xs: the dense-row tier (menubar/notification meta, kbd hints,
+       timestamps) — one step below --text-xs. Tokenizes the ad-hoc
+       text-[10px]/[11px] scattered across chrome so small text is consistent. */
+    --text-2xs: calc(var(--font-size-base) * 0.77);
+    --text-xs: calc(var(--font-size-base) * 0.85);
+    --text-sm: calc(var(--font-size-base) * 0.92);
+    --text-base: var(--font-size-base);
+    --text-lg: calc(var(--font-size-base) * 1.15);
+    --text-xl: calc(var(--font-size-base) * 1.31);
+    --text-2xl: calc(var(--font-size-base) * 1.54);
+    --text-3xl: calc(var(--font-size-base) * 1.69);
+    --text-4xl: calc(var(--font-size-base) * 2.1);
+
+    /* Menubar Liquid-Glass tray palette — deliberately FIXED (light, non-theme-
+       adaptive) macOS-native neutrals. The tray's raw black/NN opacity utilities
+       stay inline on purpose, but the two SEMANTIC colors (error + warm accent) are
+       lifted here so error/accent styling stays consistent across access-manager,
+       the tray, and future glass surfaces. HSL triples (no `hsl(...)` wrapper) so
+       they compose with Tailwind's `/opacity` and `hsl(var(--tray-*))`. */
+    --tray-error: 12 45% 44%;
+    --tray-accent: 28 42% 38%;
+  }
+
+  .dark {
+    /* Match native scrollbars and form controls to the dark UI even when the OS
+       is in light mode. The theme is class-based (`.dark` on <html>), not
+       prefers-color-scheme, so without this the WebView keeps painting a light
+       scrollbar/controls in dark mode (most visible on Windows). (#3746) */
+    color-scheme: dark;
+
+    --background: 240 4% 11%;
+    --foreground: 0 0% 96%;
+
+    --surface: 240 3% 16%;
+    --surface-secondary: 240 3% 19%;
+    --surface-tertiary: 240 3% 22%;
+
+    --card: 240 3% 16%;
+    --card-foreground: 0 0% 96%;
+    --card-hover: 240 3% 22%;
+
+    --popover: 240 3% 16%;
+    --popover-foreground: 0 0% 96%;
+
+    --primary: 0 0% 96%;
+    --primary-foreground: 240 4% 11%;
+    --primary-hover: 240 6% 83%;
+    --primary-muted: 240 3% 22%;
+
+    --secondary: 240 3% 19%;
+    --secondary-foreground: 0 0% 96%;
+    --secondary-hover: 240 3% 22%;
+
+    --success: 95 22% 60%;
+    --success-foreground: 240 4% 11%;
+    --success-muted: 240 3% 22%;
+
+    --warning: 32 40% 60%;
+    --warning-foreground: 240 4% 11%;
+    --warning-muted: 240 3% 22%;
+
+    --destructive: 14 55% 60%;
+    --destructive-foreground: 240 4% 11%;
+    --destructive-hover: 14 55% 50%;
+    --destructive-muted: 240 3% 22%;
+
+    --info: 32 40% 60%;
+    --info-foreground: 240 4% 11%;
+    --info-muted: 240 3% 22%;
+
+    --muted: 240 3% 19%;
+    --muted-foreground: 240 3% 69%;
+
+    --accent: 240 3% 19%;
+    --accent-foreground: 0 0% 96%;
+    --accent-hover: 240 3% 22%;
+
+    --border: 240 3% 28%;
+    --input: 240 3% 16%;
+    --input-focus: 0 0% 96%;
+    --ring: 30 35% 60%;
+
+    --text-primary: 0 0% 96%;
+    --text-secondary: 240 3% 69%;
+    --text-tertiary: 240 3% 53%;
+    --text-disabled: 240 3% 36%;
+
+    --brand-1: 0 0% 96%;
+    --brand-2: 240 3% 69%;
+    --brand-3: 32 40% 60%;
+    --brand-4: 240 3% 53%;
+    --brand-5: 240 3% 28%;
+
+    --color-1: 0 0% 96%;
+    --color-2: 240 3% 69%;
+    --color-3: 32 40% 60%;
+    --color-4: 240 3% 53%;
+    --color-5: 240 3% 28%;
+
+    --sidebar-background: 240 4% 9%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 0 0% 96%;
+    --sidebar-primary-foreground: 240 4% 11%;
+    --sidebar-accent: 240 3% 16%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 240 3% 28%;
+    --sidebar-ring: 30 35% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  /* Prevent flash during theme initialization and support transparency */
+  html {
+    background-color: hsl(var(--background));
+    transition: background-color 0ms; /* Instant transition to prevent flash */
+  }
+
+  body {
+    @apply bg-background text-foreground !pointer-events-auto !overscroll-none;
+    font-family: var(--font-system);
+    /* Anchor the inheritance root to the macOS-native base (13px, honoring the
+       Display setting via --font-size-base). Without this, bare/unclassed text
+       (e.g. a <h4> with only font-medium) falls back to the UA default 16px while
+       token classes use the 13px scale — the source of the iOS-oversized drift.
+       Set on body (NOT html) so the `rem` unit stays anchored to html=16px and
+       Tailwind's rem-based spacing is unaffected. */
+    font-size: var(--font-size-base);
+  }
+
+  /* When translucent sidebar is enabled on macOS, the OS handles the background */
+  html.macos-vibrancy,
+  body.macos-vibrancy {
+    background-color: transparent !important;
+  }
+
+  /* Apple Liquid-Glass surfaces (menubar dropdown + knowledge-graph map).
+     ONE translucent PLATE over the native light-Aqua frost — set here (not inline) so
+     `prefers-reduced-transparency` can swap it to a solid, fully-legible surface. */
+  .kg-tray-panel {
+    /* Ultra-light warm tint only — the native UnderWindowBackground vibrancy + the
+       wallpaper carry the look (delicate, highly transparent liquid glass). Just enough
+       tint + saturate to stabilize small text; tune up slightly if text smears over a
+       very busy wallpaper. Reduced-transparency swaps to a solid plate below. */
+    background: linear-gradient(
+      180deg,
+      hsla(48, 40%, 99%, 0.14) 0%,
+      hsla(40, 28%, 98%, 0.1) 100%
+    );
+  }
+  .kg-graph-surface {
+    background: transparent;
+  }
+  /* Keyboard focus on the glass surfaces (Ask panel, tray idiom): a quiet 1px
+     ink ring with no offset — .focus-ring's sepia offset ring needs an opaque
+     background to paint its offset against and reads as a slab over the
+     transparent vibrancy material. */
+  .focus-ring-glass {
+    @apply focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-black/40 focus-visible:ring-offset-0;
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .kg-tray-panel {
+      background: hsl(40 30% 97%) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    .kg-graph-surface {
+      background: hsl(40 24% 96%) !important;
+    }
+  }
+  @media (prefers-contrast: more) {
+    .kg-tray-panel,
+    .kg-graph-surface {
+      background: hsl(var(--background)) !important;
+      border-color: hsl(var(--foreground) / 0.42) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto !important;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-delay: 0ms !important;
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Prevent intermittent scrollbars on Windows overlay — html/body should never scroll,
+     inner containers handle their own scrolling with scrollbar-hide */
+  html, body {
+    overflow: hidden;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+  }
+
+  *,
+  a,
+  button {
+    /* cursor: default; */
+    user-select: none;
+    -webkit-user-drag: none; /* Prevent element dragging */
+    -webkit-tap-highlight-color: transparent; /* Remove blue/purple flash on click */
+  }
+  :not(input):not(textarea),
+  :not(input):not(textarea)::after,
+  :not(input):not(textarea)::before {
+    -webkit-user-select: none; /* Safari */
+    -moz-user-select: none;    /* Firefox */
+   -ms-user-select: none;     /* Internet Explorer/Edge */
+    user-select: none;
+    -webkit-user-drag: none; /* Prevent element dragging */
+    /* cursor: default; */
+  }
+
+  input,
+  textarea,
+  [contenteditable],
+  [contenteditable="true"] {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+  }
+
+  /* Prevent all image and element dragging globally */
+  img, a, [draggable] {
+    -webkit-user-drag: none;
+    user-drag: none;
+    -khtml-user-drag: none;
+    -moz-user-drag: none;
+    -o-user-drag: none;
+    -ms-user-drag: none;
+    draggable: false;
+  }
+
+  /* Disable macOS Live Text analysis on search modal thumbnail images.
+     Live Text creates invisible interactive overlays that steal click events. */
+  [role="dialog"] img {
+    -webkit-image-analysis: none;
+  }
+
+  /* Selectable text layer — override global user-select:none for OCR text overlay
+     and chat message prose content.
+     Must override *, :not(input):not(textarea), and ::before/::after rules above. */
+  .selectable-text-layer,
+  .selectable-text-layer *,
+  .selectable-text-layer *::before,
+  .selectable-text-layer *::after,
+  .prose,
+  .prose *,
+  .prose *::before,
+  .prose *::after {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+    cursor: text !important;
+    -webkit-user-drag: none !important;
+  }
+  .selectable-text-layer::selection,
+  .selectable-text-layer *::selection,
+  .prose::selection,
+  .prose *::selection {
+    background-color: rgba(154, 91, 52, 0.22) !important;
+  }
+
+  .prose a,
+  .prose a * {
+    cursor: pointer !important;
+  }
+
+  /* Allow video/audio controls to work normally */
+  video, audio {
+    -webkit-user-drag: auto !important;
+    user-select: auto !important;
+  }
+
+  video::-webkit-media-controls,
+  video::-webkit-media-controls-enclosure,
+  video::-webkit-media-controls-panel,
+  video::-webkit-media-controls-timeline,
+  audio::-webkit-media-controls,
+  audio::-webkit-media-controls-enclosure,
+  audio::-webkit-media-controls-panel,
+  audio::-webkit-media-controls-timeline {
+    -webkit-user-drag: auto !important;
+    pointer-events: auto !important;
+    user-select: auto !important;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+
+  /* Minimal scrollbar: visible track + thumb, no up/down arrow buttons (like reference) */
+  .scrollbar-minimal {
+    scrollbar-width: thin;  /* Firefox: thin scrollbar, no arrows */
+    scrollbar-color: hsl(var(--muted-foreground) / 0.5) transparent;
+  }
+  .scrollbar-minimal::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-minimal::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-minimal::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 4px;
+  }
+  .scrollbar-minimal::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.6);
+  }
+  .scrollbar-minimal::-webkit-scrollbar-button {
+    display: none;  /* No arrow buttons */
+  }
+
+  /* Vibrant sidebar theme.
+   * NOTE: the sidebar fill is now driven by `bg-background` directly on the
+   * AppSidebar element (see components/app-sidebar.tsx) so the sidebar and chat
+   * read as one continuous warm-cream surface — the frosted-glass fill was
+   * dropped on purpose. These rules are kept as a safety net: should the
+   * `.vibrant-sidebar` class ever be reapplied, it stays warm cream (matching
+   * the chat) rather than reintroducing a grey ink overlay. The vibrant-* fg/
+   * border helpers below are still used for text/icon styling. */
+  .vibrant-sidebar {
+    background-color: hsl(var(--background)) !important;
+    border-color: transparent;
+  }
+  .light .vibrant-sidebar {
+    background-color: hsl(var(--background)) !important;
+  }
+  .dark .vibrant-sidebar {
+    background-color: hsl(var(--background)) !important;
+  }
+
+  /* System light mode fallback — covers the gap before JS applies .light class */
+  @media (prefers-color-scheme: light) {
+    html:not(.dark) .vibrant-sidebar {
+      background-color: hsl(var(--background)) !important;
+    }
+    html:not(.dark) .vibrant-sidebar-fg {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-sidebar-fg-muted {
+      color: hsl(240 2% 44%) !important;
+    }
+    html:not(.dark) .vibrant-nav-active {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-nav-hover:hover {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-nav-item {
+      color: hsl(240 2% 44%) !important;
+    }
+    html:not(.dark) .vibrant-nav-item:hover {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-nav-item:hover .vibrant-sidebar-fg-muted {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-heading {
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-card-border {
+      border-color: hsl(240 3% 12% / 0.1) !important;
+    }
+    html:not(.dark) .vibrant-btn-border {
+      border-color: hsl(240 3% 12% / 0.2) !important;
+      color: hsl(240 3% 12%) !important;
+    }
+    html:not(.dark) .vibrant-btn-border:hover {
+      color: hsl(240 3% 12% / 0.8) !important;
+    }
+    html:not(.dark) .vibrant-sidebar-border {
+      border-color: hsl(240 3% 12% / 0.08) !important;
+    }
+  }
+
+  /* System dark mode fallback — covers the gap before JS applies .dark class.
+     Applies to BOTH background and all text colors so there is no flash of
+     dark-vibrancy-background + light-mode text (= invisible text) on first
+     paint when macOS is in Auto/dark mode. */
+  @media (prefers-color-scheme: dark) {
+    html:not(.light) .vibrant-sidebar {
+      background-color: hsl(var(--background)) !important;
+    }
+    html:not(.light) .vibrant-sidebar-fg {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-sidebar-fg-muted {
+      color: hsl(240 3% 69%) !important;
+    }
+    html:not(.light) .vibrant-nav-active {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-nav-hover:hover {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-nav-item {
+      color: hsl(240 3% 69%) !important;
+    }
+    html:not(.light) .vibrant-nav-item:hover {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-nav-item:hover .vibrant-sidebar-fg-muted {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-heading {
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-card-border {
+      border-color: hsl(0 0% 96% / 0.1) !important;
+    }
+    html:not(.light) .vibrant-btn-border {
+      border-color: hsl(0 0% 96% / 0.2) !important;
+      color: hsl(0 0% 96%) !important;
+    }
+    html:not(.light) .vibrant-btn-border:hover {
+      color: hsl(0 0% 96% / 0.8) !important;
+    }
+    html:not(.light) .vibrant-sidebar-border {
+      border-color: hsl(0 0% 96% / 0.08) !important;
+    }
+  }
+
+  .vibrant-sidebar-border {
+    /* The single fold-line between the sidebar and the content (and between
+       sidebar sections) — a whisper hairline so the two zones read as ONE
+       window with a clean Apple delineation, never a blurred-together blob nor
+       a hard material cliff. Consistent in both themes (was fully transparent,
+       which erased the seam entirely). */
+    border-color: hsl(240 3% 12% / 0.06);
+  }
+  .dark .vibrant-sidebar-border {
+    border-color: hsl(0 0% 96% / 0.07);
+  }
+  .vibrant-sidebar-fg {
+    color: hsl(var(--foreground));
+  }
+  .vibrant-sidebar-fg-muted {
+    color: hsl(var(--muted-foreground));
+  }
+  .vibrant-nav-active {
+    color: hsl(var(--foreground));
+    /* macOS source-list selection: medium weight + a neutral rounded-inset fill
+       (the row's own class supplies the radius). Sepia is reserved for the focus
+       ring, so the resting selection is a quiet neutral fill — not the accent. */
+    font-weight: 500;
+    background-color: hsl(var(--foreground) / 0.06);
+  }
+  .dark .vibrant-nav-active {
+    background-color: hsl(var(--foreground) / 0.10);
+  }
+  .vibrant-nav-hover:hover {
+    color: hsl(var(--foreground));
+  }
+  .vibrant-nav-item {
+    color: hsl(var(--muted-foreground));
+  }
+  .vibrant-nav-item:hover {
+    color: hsl(var(--foreground));
+    background-color: hsl(var(--foreground) / 0.035);
+  }
+  .dark .vibrant-nav-item:hover {
+    background-color: hsl(var(--foreground) / 0.06);
+  }
+  /* Icon inside a hovered nav item inherits the foreground color */
+  .vibrant-nav-item:hover .vibrant-sidebar-fg-muted {
+    color: hsl(var(--foreground));
+  }
+  /* macOS-style keyboard focus: a sepia ring with offset (the one accent moment).
+     Applied to interactive rows/buttons that otherwise suppress the OS outline. */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+  /* Shared interaction transition for legacy surfaces. Keep the property list
+     explicit so layout-affecting values never animate accidentally. */
+  .transition-ui {
+    transition-property:
+      background-color,
+      border-color,
+      color,
+      box-shadow,
+      opacity,
+      transform,
+      filter,
+      backdrop-filter;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-out);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .transition-ui {
+      transition-property:
+        background-color,
+        border-color,
+        color,
+        box-shadow,
+        opacity;
+      transition-duration: 80ms;
+    }
+  }
+  .vibrant-heading {
+    color: hsl(var(--foreground));
+  }
+  .vibrant-card-border {
+    border-color: hsl(var(--foreground) / 0.1);
+  }
+  .vibrant-btn-border {
+    border-color: hsl(var(--foreground) / 0.2);
+    color: hsl(var(--foreground));
+  }
+  .vibrant-btn-border:hover {
+    color: hsl(var(--foreground) / 0.8);
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .meeting-audio-level-bar {
+    transform-origin: bottom;
+  }
+
+  .animate-shimmer {
+    animation: shimmer 1.5s infinite linear;
+  }
+
+
+}
+
+.pf-v6-c-text-input-group__text-input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+  width: 100%;
+  padding-block-end: 8px !important;
+  padding-block-start: 8px !important;
+  padding-bottom: 8px !important;
+  padding-inline-end: 16px !important;
+  padding-inline-start: 38px !important;
+  padding-left: 38px !important;
+  padding-right: 16px !important;
+  padding-top: 8px !important;
+}
+.pf-v6-c-text-input-group__text-input::placeholder {
+  padding-left: 20px !important;
+}
+.pf-v6-c-text-input-group__icon {
+  inset-block-start: 18.5px !important;
+  inset-inline-start: 16px !important;
+  line-height: 21px !important;
+  position: absolute !important;
+}
+
+/* PatternFly LogViewer dark theme overrides */
+.dark .pf-v5-c-log-viewer {
+  background-color: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark .pf-v5-c-log-viewer__main {
+  background-color: hsl(var(--background)) !important;
+}
+
+.dark .pf-v5-c-log-viewer__list {
+  background-color: hsl(var(--background)) !important;
+}
+
+.dark .pf-v5-c-log-viewer__list-item {
+  background-color: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .pf-v5-c-toolbar {
+  background-color: hsl(var(--background)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .pf-v5-c-toolbar__content {
+  background-color: hsl(var(--background)) !important;
+}
+
+.dark .pf-v5-c-text-input-group {
+  background-color: hsl(var(--input)) !important;
+}
+
+.dark .pf-v5-c-text-input-group__text-input {
+  background-color: hsl(var(--input)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .pf-v5-c-text-input-group__text-input::placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+
+/* TipTap — show placeholder only on the first empty paragraph of an empty doc.
+   Mirrors the muted-foreground/40 styling we use on native textareas. */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground) / 0.4);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

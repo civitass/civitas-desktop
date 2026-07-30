@@ -1,0 +1,12 @@
+{
+  "name": "@civitas/cli-win32-x64",
+  "version": "0.1.0",
+  "description": "civitas CLI binary for Windows x64",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/civitass/civitas-desktop"
+  },
+  "license": "MIT"
+}

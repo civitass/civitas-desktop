@@ -1,0 +1,98 @@
+# Binaries for programs and examples
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.so
+
+# Test binary, built with `cargo test`
+*.test
+
+# Rust/Cargo specific files
+*target
+
+# IDE specific files
+.idea/
+.vscode/
+*.rs.bk
+
+# act cli
+.secrets
+
+# db 
+data/ 
+text_json/
+.civitas_quick_check
+
+src-tauri/deno-*
+
+# Tauri signing key
+tauri_key_*.key
+pnpm-lock.yaml
+
+.DS_Store
+
+# Ignore onnxruntime-win-x64 libraries
+onnxruntime-win-x64*/
+
+# ignore environment variables
+.env
+.env.local
+
+# JavaScript stuff
+node_modules/
+packages/browser-extension/dist/
+packages/browser-extension/civitas-browser-extension-v*.zip
+packages/browser-extension/civitas-browser-extension-v*.zip.sha256
+
+# Swift build artifacts (ee/sdk)
+.build/
+
+# Python stuff
+venv/
+app.py
+*.pyc
+*.pyo
+*.pyd
+*.py
+*.pyw
+*.pyz
+*.py3
+*.py3w
+*.py3z
+__pycache__/
+!scripts/test_enrich_openapi.py
+!scripts/generate_ocr_fixtures.py
+!scripts/test_generate_ocr_fixtures.py
+
+civitas-app-tauri/src-tauri/.next/
+.vercel
+.wrangler/
+
+
+
+.playwright*
+
+# Claude Code
+.claude/worktrees/
+.claude/*.local* # local changes are specific to the individual developer, let's not check them in for everyone.
+.claude/*.lock
+apps/civitas-app-tauri/src-tauri/onnxruntime-win-arm64-1.19.2/
+apps/civitas-app-tauri/src-tauri/onnxruntime-win-x64-1.19.2/
+crates/civitas-audio/onnxruntime-win-x64-1.19.2.zip
+crates/civitas-audio/onnxruntime-win-arm64-1.19.2.zip
+crates/civitas-audio/openblas-0.3.31-x64.zip
+crates/civitas-audio/openblas-0.3.31-woa64-dll.zip
+apps/civitas-app-tauri/src-tauri/openblas/
+apps/civitas-app-tauri/src-tauri/mlx.metallib
+.serena/
+.worktrees/
+.recon/
+
+# /design-sync skill (staged scripts, build output, machine state)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+apps/civitas-app-tauri/.design-sync-build/

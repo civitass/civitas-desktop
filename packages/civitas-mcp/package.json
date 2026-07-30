@@ -1,0 +1,66 @@
+{
+  "name": "civitas-mcp",
+  "version": "0.18.10",
+  "description": "Permissioned local MCP bridge for Civitas personal work memory",
+  "main": "dist/index.js",
+  "bin": {
+    "civitas-mcp": "dist/cli.js",
+    "civitas-mcp-http": "dist/http-server.js"
+  },
+  "files": [
+    "dist/**",
+    "ui/**",
+    "README.md",
+    "LICENSE.md",
+    "manifest.json"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "start": "node dist/cli.js",
+    "start:http": "node dist/cli.js --http",
+    "dev": "ts-node src/cli.ts",
+    "dev:http": "ts-node src/cli.ts --http",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "security:audit": "bun audit --audit-level=low",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "civitas",
+    "model-context-protocol",
+    "claude",
+    "ai",
+    "local-first",
+    "knowledge-graph",
+    "personal-memory"
+  ],
+  "author": "Civitas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/civitass/civitas-desktop.git",
+    "directory": "packages/civitas-mcp"
+  },
+  "homepage": "https://github.com/civitass/civitas-desktop/tree/main/packages/civitas-mcp",
+  "bugs": {
+    "url": "https://github.com/civitass/civitas-desktop/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3",
+    "ts-node": "^10.9.2",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "tmp": "0.2.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "bun@1.3.10"
+}

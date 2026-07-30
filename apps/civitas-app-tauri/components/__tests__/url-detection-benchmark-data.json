@@ -1,0 +1,154 @@
+{
+	"metadata": {
+		"synthetic_fixture": true,
+		"generated_for": "public URL-detection regression testing",
+		"total_frames": 10,
+		"total_ocr_blocks": 15,
+		"blocks_with_urls": 9,
+		"total_ground_truth_urls": 10,
+		"frames_with_browser_url": 4
+	},
+	"browser_urls": {
+		"101": "https://example.com/project/alpha",
+		"102": "https://docs.example.org/guide",
+		"103": "https://www.iana.org/domains/reserved",
+		"104": "www.example.net/status"
+	},
+	"labeled_blocks": [
+		{
+			"frame_id": 101,
+			"browser_url": "https://example.com/project/alpha",
+			"app_name": "Synthetic Browser",
+			"text": "https://example.com/project/alpha",
+			"confidence": 0.99,
+			"bounds": { "left": 0.08, "top": 0.04, "width": 0.42, "height": 0.04 },
+			"ground_truth_urls": ["https://example.com/project/alpha"]
+		},
+		{
+			"frame_id": 101,
+			"browser_url": "https://example.com/project/alpha",
+			"app_name": "Synthetic Browser",
+			"text": "Quarterly planning workspace",
+			"confidence": 0.97,
+			"bounds": { "left": 0.12, "top": 0.2, "width": 0.31, "height": 0.05 },
+			"ground_truth_urls": []
+		},
+		{
+			"frame_id": 102,
+			"browser_url": "https://docs.example.org/guide",
+			"app_name": "Synthetic Browser",
+			"text": "Open the guide at https://docs.example.org/guide before the review.",
+			"confidence": 0.98,
+			"bounds": { "left": 0.1, "top": 0.16, "width": 0.74, "height": 0.05 },
+			"ground_truth_urls": ["https://docs.example.org/guide"]
+		},
+		{
+			"frame_id": 102,
+			"browser_url": "https://docs.example.org/guide",
+			"app_name": "Synthetic Mail",
+			"text": "Questions: alex@example.com",
+			"confidence": 0.96,
+			"bounds": { "left": 0.14, "top": 0.32, "width": 0.32, "height": 0.04 },
+			"ground_truth_urls": []
+		},
+		{
+			"frame_id": 103,
+			"browser_url": "https://www.iana.org/domains/reserved",
+			"app_name": "Synthetic Browser",
+			"text": "https://www.iana.org/domains/reserved",
+			"confidence": 0.99,
+			"bounds": { "left": 0.07, "top": 0.05, "width": 0.45, "height": 0.04 },
+			"ground_truth_urls": ["https://www.iana.org/domains/reserved"]
+		},
+		{
+			"frame_id": 104,
+			"browser_url": "www.example.net/status",
+			"app_name": "Synthetic Browser",
+			"text": "www.example.net/status",
+			"confidence": 0.98,
+			"bounds": { "left": 0.08, "top": 0.05, "width": 0.32, "height": 0.04 },
+			"ground_truth_urls": ["www.example.net/status"]
+		},
+		{
+			"frame_id": 105,
+			"browser_url": null,
+			"app_name": "Synthetic Notes",
+			"text": "Compare https://example.com/alpha and https://example.org/beta",
+			"confidence": 0.97,
+			"bounds": { "left": 0.11, "top": 0.24, "width": 0.72, "height": 0.05 },
+			"ground_truth_urls": ["https://example.com/alpha", "https://example.org/beta"]
+		},
+		{
+			"frame_id": 106,
+			"browser_url": null,
+			"app_name": "Synthetic Terminal",
+			"text": "example.dev",
+			"confidence": 0.94,
+			"bounds": { "left": 0.06, "top": 0.18, "width": 0.18, "height": 0.04 },
+			"ground_truth_urls": ["example.dev"]
+		},
+		{
+			"frame_id": 107,
+			"browser_url": null,
+			"app_name": "Synthetic Mail",
+			"text": "Owner: pat.lee+planning@example.org",
+			"confidence": 0.95,
+			"bounds": { "left": 0.12, "top": 0.2, "width": 0.4, "height": 0.04 },
+			"ground_truth_urls": []
+		},
+		{
+			"frame_id": 108,
+			"browser_url": null,
+			"app_name": "Synthetic Notes",
+			"text": "Review (https://example.org/notes).",
+			"confidence": 0.97,
+			"bounds": { "left": 0.09, "top": 0.28, "width": 0.42, "height": 0.04 },
+			"ground_truth_urls": ["https://example.org/notes"]
+		},
+		{
+			"frame_id": 109,
+			"browser_url": null,
+			"app_name": "Synthetic Browser",
+			"text": "https://example.com/offscreen",
+			"confidence": 0.88,
+			"bounds": { "left": -0.12, "top": 0.4, "width": 0.34, "height": 0.04 },
+			"ground_truth_urls": ["https://example.com/offscreen"]
+		},
+		{
+			"frame_id": 109,
+			"browser_url": null,
+			"app_name": "Synthetic Terminal",
+			"text": "httos.atthub.com is OCR noise",
+			"confidence": 0.51,
+			"bounds": { "left": 0.08, "top": 0.5, "width": 0.37, "height": 0.04 },
+			"ground_truth_urls": []
+		},
+		{
+			"frame_id": 110,
+			"browser_url": null,
+			"app_name": "Synthetic Chat",
+			"text": "Status is available at www.example.com/status.",
+			"confidence": 0.96,
+			"bounds": { "left": 0.1, "top": 0.22, "width": 0.5, "height": 0.04 },
+			"ground_truth_urls": ["www.example.com/status"]
+		},
+		{
+			"frame_id": 110,
+			"browser_url": null,
+			"app_name": "Synthetic Terminal",
+			"text": "Build completed in 127.0.0.1 milliseconds",
+			"confidence": 0.93,
+			"bounds": { "left": 0.07, "top": 0.38, "width": 0.41, "height": 0.04 },
+			"ground_truth_urls": []
+		},
+		{
+			"frame_id": 110,
+			"browser_url": null,
+			"app_name": "Synthetic Mail",
+			"text": "Send the summary to review-team@example.net",
+			"confidence": 0.97,
+			"bounds": { "left": 0.12, "top": 0.48, "width": 0.49, "height": 0.04 },
+			"ground_truth_urls": []
+		}
+	]
+}

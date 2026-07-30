@@ -1,0 +1,290 @@
+[workspace]
+
+[package]
+name = "civitas-app"
+version = "2.6.0"
+description = "Local-first personal work memory and knowledge graph"
+authors = ["Civitas <eng@civitas.team>"]
+license = "MIT"
+repository = "https://github.com/civitass/civitas-desktop"
+default-run = "civitas-app"
+edition = "2021"
+rust-version = "1.92"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "=2.6.2", features = [] }
+tauri-helper = { git = "https://github.com/divanshu-go/tauri-helper", rev = "e25ff1d2c5026189305a0251a1e06788efe1d2b3" }
+# Used by build.rs on Windows MSVC targets (incl. cross-compiles from
+# Linux/macOS CI runners) to compile c/bswap_shim.c — provides
+# __builtin_bswap{16,32,64} as real functions to satisfy the aws-lc-sys
+# link. Unconditional because target-gated build-deps key off the build
+# *host*, not the target, which excludes cc on cross-compiles.
+cc = "1"
+
+[dependencies]
+tauri-helper = { git = "https://github.com/divanshu-go/tauri-helper", rev = "e25ff1d2c5026189305a0251a1e06788efe1d2b3" }
+tauri = { version = "=2.11.2", features = [
+  "protocol-asset",
+  "macos-private-api",
+  "tray-icon",
+  "image-png",
+  "image-ico",
+] }
+tauri-utils = { version = "=2.9.2", features = [] }
+# plugins
+tauri-plugin-fs = "=2.4.5"
+tauri-plugin-notification = "=2.3.3"
+tauri-plugin-updater = "=2.10.0"
+tauri-plugin-dialog = "=2.6.0"
+tauri-plugin-os = "=2.3.2"
+tauri-plugin-process = "=2.3.1"
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-shell = "=2.3.5"
+tauri-plugin-store = "=2.4.2"
+tauri-plugin-http = "=2.5.7"
+tauri-plugin-permission-flow = { git = "https://github.com/divanshu-go/permission-flow", rev = "d7376a1b95acb78700e93505d8ca058e5ddb94ce", package = "tauri-plugin-permission-flow" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+plist = "1.10.0"
+arc-swap = "1"
+
+tower-http = { version = "0.4.0", features = ["cors", "trace"] }
+http = "0.2"
+
+# TypeScript bindings
+specta = { version = "=2.0.0-rc.20", features = [
+	"derive",
+	"serde_json",
+	"uuid",
+] }
+tauri-specta = { version = "=2.0.0-rc.20", features = ["derive", "typescript"] }
+specta-typescript = "0.0.7"
+
+# Logging
+log = "0.4.17"
+
+# Dark mode or light mode
+dark-light = "2.0.0"
+
+# Tokio
+tokio = { version = "1.36.0", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "form", "rustls"] }
+
+# tracing
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-appender = "0.2.3"
+
+
+sha2 = "0.10"
+anyhow = "1.0.71"
+tempfile = "3"
+arboard = "3.4"
+
+# System information
+sysinfo = "=0.29.0"
+
+# hakc
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
+
+# server
+axum = "0.6.0" # or your current version
+
+
+
+dirs = "5.0.1"
+tauri-plugin-deep-link = "=2.4.6"
+
+once_cell = "1.20.0"
+regex = "1"
+raw-window-handle = "0.6"
+
+notify = "8.0.0"
+futures = "0.3.30"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+
+chrono = "0.4.39"
+tauri-plugin-opener = "2.5.3"
+uuid = { version = "1.0", features = ["v4"] }
+urlencoding = "2"
+url = "2"
+async-trait = "0.1"
+
+# Civitas core
+civitas-core = { path = "../../../crates/civitas-core", features = ["secrets"] }
+
+# Embedded civitas server
+civitas-config = { path = "../../../crates/civitas-config", features = ["specta"] }
+civitas-engine = { path = "../../../crates/civitas-engine", default-features = false }
+civitas-screen = { path = "../../../crates/civitas-screen" }
+civitas-a11y = { path = "../../../crates/civitas-a11y" }
+civitas-audio = { path = "../../../crates/civitas-audio" }
+civitas-db = { path = "../../../crates/civitas-db" }
+civitas-vault = { path = "../../../crates/civitas-vault" }
+civitas-connect = { path = "../../../crates/civitas-connect", features = ["specta"] }
+civitas-secrets = { path = "../../../crates/civitas-secrets" }
+civitas-events = { path = "../../../crates/civitas-events" }
+eventkit-rs = { git = "https://github.com/divanshu-go/eventkit-rs", rev = "9dd52787c8435d734ed443e2d5641f45b0177cae", default-features = false, features = ["events"] }
+# Async local PII reconciliation. CoreML accelerates the pinned ONNX
+# text and image models on macOS. Windows release builds select
+# DirectML through their build feature; Linux uses the CPU baseline.
+# No remote redaction fallback is compiled into the consumer app.
+civitas-redact = { path = "../../../crates/civitas-redact", features = ["onnx-coreml"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"] }
+image = "0.25.5"
+
+# jemalloc — aggressively returns freed pages to OS, reducing RSS bloat
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+tikv-jemallocator = { version = "0.6", optional = true }
+
+[target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
+tauri-plugin-cli = "2.4.1"
+tauri-plugin-global-shortcut = "2.3.1"
+tauri-plugin-webdriver = { version = "0.2", optional = true }
+
+[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2.3.7", features = ["deep-link"] }
+tauri-plugin-updater = "2.10.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tracing-oslog = "0.3.0"
+core-foundation = "0.10"
+cocoa = "0.26.0"
+objc = "0.2.7"
+block = "0.1"
+base64 = "0.22.1"
+# Fix macOS 26 Tahoe crash: ObjC method signatures changed from signed to unsigned
+# integers, causing objc2 strict validation to panic inside tao's extern "C" callbacks
+# (send_event, did_finish_launching) → panic_cannot_unwind → SIGABRT
+# See: https://github.com/tauri-apps/tao/issues/1171
+objc2 = { version = "0.6", features = ["relax-sign-encoding"] }
+# bunch of hack for permissions
+core-graphics-helmer-fork = "0.24.0"
+nokhwa-bindings-macos = { git = "https://github.com/CapSoftware/nokhwa", rev = "0d3d1f30a78b" }
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "18ffb9a201fbf6fedfaa382fd4b92315ea30ab1a" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52.0"
+lazy_static = "1.5.0"
+image = "0.25.5"
+windows-icons = { git = "https://github.com/tribhuwan-kumar/windows-icons.git", rev = "4dcd086b36bed286181cb87636ad6eb058ab7684" }
+base64 = "0.22.1"
+raw-window-handle = "0.6"
+webview2-com = "=0.38.2"
+windows-core = "0.61.2"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18.1"
+base64 = "0.22.1"
+freedesktop-desktop-entry = "0.7.0"
+freedesktop-icon-lookup = "0.1.3"
+xdg = "2.5.2"
+ini = "1.3"
+resvg = "0.45.1"
+image = "0.25.5"
+futures-channel = "0.3.30"
+lazy_static = "1.5.0"
+
+[features]
+default = ["consumer", "custom-protocol", "qwen3-asr", "parakeet"]
+consumer = []
+dev-evals = ["civitas-engine/dev-evals"]
+metal = ["civitas-audio/metal"]
+pulseaudio = ["civitas-audio/pulseaudio"]
+directml = ["civitas-engine/directml"]
+vulkan = ["civitas-audio/vulkan"]
+cargo-clippy = []
+e2e = ["tauri-plugin-webdriver"]
+
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+
+# Set only by the protected GitHub release workflow. Enables official updates
+# and the signed application's production credential-vault identity.
+# Source builds without this flag use an isolated development vault.
+official-build = ["civitas-secrets/official-build"]
+
+# On-device AI via Apple Foundation Models (macOS 26+ / Xcode 26+ only)
+apple-intelligence = ["civitas-engine/apple-intelligence"]
+
+qwen3-asr = ["civitas-engine/qwen3-asr"]
+parakeet = ["civitas-engine/parakeet"]
+# macOS only — requires Apple MLX (Metal)
+parakeet-mlx = ["civitas-engine/parakeet-mlx"]
+# v45 phase 3 text-PII redactor via ONNX Runtime — cross-platform with
+# zero end-user dependencies. CPU is the Linux baseline; CoreML on Mac
+# uses Metal + Neural Engine; DirectML on Windows uses any DX12 GPU.
+# The 3 features are not mutually exclusive at compile time — each CI
+# build enables exactly one per platform.
+redact-onnx-cpu = ["civitas-engine/redact-onnx-cpu"]
+redact-onnx-coreml = ["civitas-engine/redact-onnx-coreml"]
+redact-onnx-directml = ["civitas-engine/redact-onnx-directml"]
+
+jemalloc = ["tikv-jemallocator"]
+
+
+[dev-dependencies]
+serial_test = "4.0.1"
+
+
+[package.metadata.cargo-machete]
+# civitas-redact: workspace dep added for async PII reconciliation (PR #3188);
+# wiring lands in a follow-up. Cargo compiles it for the workspace either way.
+# eventkit-rs: lib crate is imported as `eventkit` (calendar.rs, permissions.rs);
+# cargo-machete matches the package name `eventkit_rs` so it can't see the use.
+ignored = ["tauri-utils", "civitas-redact", "eventkit-rs"]
+
+[patch.crates-io]
+# macOS tray menus can outlive the Rust `Menu` that created them while the
+# native menu is open. This fork stores an Rc<MenuChild> on NSMenuItem instead
+# of a raw pointer so stale AppKit items keep their Rust click data alive.
+# Pinned by commit (not branch) for reproducible builds; drop once
+# upstream tauri-apps/muda#361 merges and ships in a released muda.
+muda = { git = "https://github.com/divanshu-go/muda", rev = "9dc5de53e84040a63c9a5423b669ec892de8a671" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+# Fast local release builds: cargo build --profile release-dev
+[profile.release-dev]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
+
+# Maximum-speed local builds for updater e2e harness — no optimization, fastest compile.
+# Trades runtime perf and binary size for compile speed.
+[profile.release-local]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+opt-level = 1
+debug = false
+
+# Faster dev builds
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
