@@ -445,6 +445,7 @@ fn vad_threshold_sweep_framework() {
 /// Uses silence and white noise (won't trigger speech detection, but validates
 /// the VAD engine works end-to-end).
 #[tokio::test]
+#[ignore = "requires a pre-staged checksum-verified Silero model"]
 async fn vad_silero_integration() {
     println!("\n{}", "=".repeat(70));
     println!(" VAD SILERO INTEGRATION TEST");

@@ -17,9 +17,10 @@
 //! { "excluded_apps": [{ "bundle_id": "com.example.app", "name": "Example" }] }
 //! ```
 //!
-//! The path defaults to `$HOME/.civitas/audio-exclusions.json` and can
-//! be overridden with `CIVITAS_AUDIO_EXCLUSIONS_PATH` — both the engine
-//! reader and these commands honor the same env var so they always agree.
+//! The path defaults to the active `CIVITAS_DATA_DIR` (or
+//! `$HOME/.civitas/audio-exclusions.json`) and can be overridden with
+//! `CIVITAS_AUDIO_EXCLUSIONS_PATH` — both the engine reader and these
+//! commands honor the same boundary so they always agree.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 const ENV_OVERRIDE: &str = "CIVITAS_AUDIO_EXCLUSIONS_PATH";
-const DEFAULT_RELATIVE_PATH: &str = ".civitas/audio-exclusions.json";
 
 #[derive(Serialize, Deserialize, Type, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -42,11 +42,10 @@ pub struct ExcludedApp {
 }
 
 fn exclusions_path() -> PathBuf {
-    if let Ok(p) = std::env::var(ENV_OVERRIDE) {
+    if let Some(p) = std::env::var_os(ENV_OVERRIDE).filter(|path| !path.is_empty()) {
         return PathBuf::from(p);
     }
-    let home = dirs::home_dir().unwrap_or_default();
-    home.join(DEFAULT_RELATIVE_PATH)
+    civitas_core::paths::default_civitas_data_dir().join("audio-exclusions.json")
 }
 
 fn parse_excluded_app(entry: &serde_json::Value) -> Option<ExcludedApp> {

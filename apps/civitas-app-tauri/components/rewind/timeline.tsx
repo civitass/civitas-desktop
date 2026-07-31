@@ -123,7 +123,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
     useState<OSPermissionStatus | null>(null);
   const [screenRelaunchRequired, setScreenRelaunchRequired] = useState(false);
   const [appIdentifier, setAppIdentifier] = useState<string | null>(null);
-  const previousScreenPermissionRef = useRef<OSPermissionStatus | null>(null);
   const captureRequirements = useMemo(
     () => capturePermissionRequirements(settings),
     [
@@ -137,26 +136,15 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
   const refreshScreenPermission = useCallback(async () => {
     if (!screenAccessRequired) {
-      previousScreenPermissionRef.current = null;
       setScreenPermission(null);
       setScreenRelaunchRequired(false);
       return;
     }
 
     try {
-      const status = await commands.checkScreenRecordingPermission();
-      const previous = previousScreenPermissionRef.current;
-      if (
-        previous !== null &&
-        !isPermissionGranted(previous) &&
-        isPermissionGranted(status)
-      ) {
-        setScreenRelaunchRequired(true);
-      } else if (!isPermissionGranted(status)) {
-        setScreenRelaunchRequired(false);
-      }
-      previousScreenPermissionRef.current = status;
-      setScreenPermission(status);
+      const state = await commands.checkScreenRecordingPermissionState();
+      setScreenPermission(state.status);
+      setScreenRelaunchRequired(state.relaunchRequired);
     } catch {
       // Timeline connection state remains authoritative if the native
       // permission probe itself is temporarily unavailable.

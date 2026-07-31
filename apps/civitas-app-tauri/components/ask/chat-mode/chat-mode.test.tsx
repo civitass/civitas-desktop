@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => ({
   loadConversationFileStrict: vi.fn(),
   updateSettings: vi.fn(),
   localFetch: vi.fn(),
+  civitasDataRoot: vi.fn(),
   settingsState: {
     // undefined ⇒ the component's `?? true` default kicks in, matching the big
     // Chat app (thinking pills hidden by default). Tests that exercise the
@@ -80,8 +81,11 @@ vi.mock("@/lib/utils/tauri", () => ({
 }));
 
 vi.mock("@tauri-apps/api/path", () => ({
-  homeDir: async () => "/home/tester",
   join: async (...parts: string[]) => parts.join("/"),
+}));
+
+vi.mock("@/lib/data-root", () => ({
+  getCivitasDataRoot: mocks.civitasDataRoot,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -266,6 +270,7 @@ beforeEach(() => {
     ok: true,
     json: async () => ({ data: [] }),
   });
+  mocks.civitasDataRoot.mockResolvedValue("/home/tester/.civitas");
 });
 
 afterEach(() => {
@@ -1156,6 +1161,29 @@ describe("classifyAskChatError — provider failure honesty", () => {
     expect(classifyAskChatError("504 Gateway Timeout")).toBe("unreachable");
     // The honest copy is the unreachable one, never the generic fallback.
     expect(ASK_CHAT_ERROR_COPY.unreachable).toContain("unreachable");
+  });
+
+  it("classifies Pi's bare connection error as a local-service outage", () => {
+    expect(classifyAskChatError("Connection error.")).toBe("unreachable");
+    expect(ASK_CHAT_ERROR_COPY.unreachable).toContain(
+      "local assistant service",
+    );
+  });
+
+  it("keeps provider-region and local-network-policy failures actionable", () => {
+    expect(
+      classifyAskChatError(
+        "provider_region_restricted: unsupported countries, regions, or territories",
+      ),
+    ).toBe("region");
+    expect(ASK_CHAT_ERROR_COPY.region).toContain("current country");
+
+    expect(classifyAskChatError("network_policy_blocked")).toBe(
+      "network-policy",
+    );
+    expect(ASK_CHAT_ERROR_COPY["network-policy"]).toContain(
+      "Settings → Privacy",
+    );
   });
 
   it("does not over-match: a 502 embedded in an unrelated number token stays 'other'", () => {

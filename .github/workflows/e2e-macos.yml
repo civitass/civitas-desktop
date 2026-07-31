@@ -7,7 +7,7 @@ name: macOS E2E Tests
 on:
   schedule:
     # Run every 4 hours to catch regressions (not on every release — hogs self-hosted runner)
-    - cron: '0 */4 * * *'
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +23,7 @@ jobs:
   # No screen recording or mic — tests what we can without permissions
   e2e-hosted:
     name: macOS E2E (hosted)
-    runs-on: macos-14  # M1, Sonoma
+    runs-on: macos-14 # M1, Sonoma
     timeout-minutes: 45
     if: >
       github.event_name == 'schedule' ||
@@ -43,6 +43,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.93.1"
 
       - name: Rust cache
         # cache restore/save is an optimization only; a transient GHA cache

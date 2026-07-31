@@ -81,6 +81,18 @@ pub use pipeline::{Pipeline, PipelineConfig};
 pub use span::{RedactedSpan, SpanLabel, TextRedactionPolicy};
 
 use async_trait::async_trait;
+use std::path::PathBuf;
+
+pub(crate) fn default_civitas_data_dir() -> PathBuf {
+    std::env::var_os("CIVITAS_DATA_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".civitas")
+        })
+}
 
 /// A single text input + the redacted text the [`Redactor`] returned
 /// + the spans that were redacted (so callers can keep an audit trail).

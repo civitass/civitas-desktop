@@ -132,6 +132,7 @@ fn word_recall(ground_truth: &str, transcription: &str) -> f64 {
 
 /// Synthetic pipeline test with multiple threshold comparisons.
 #[tokio::test]
+#[ignore = "requires a pre-staged checksum-verified Silero model"]
 async fn pipeline_end_to_end_synthetic() {
     println!("\n--- Pipeline End-to-End: Synthetic ---");
 

@@ -212,9 +212,16 @@ async fn open_pool() -> Result<SqlitePool, String> {
     let data_dir = civitas_core::paths::default_civitas_data_dir();
     let db_path = data_dir.join("db.sqlite");
     let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    sqlx::SqlitePool::connect(&db_url)
+    let pool = sqlx::SqlitePool::connect(&db_url)
         .await
-        .map_err(|error| format!("failed to open local provider database: {error}"))
+        .map_err(|error| format!("failed to open local provider database: {error}"))?;
+    // Startup credential migration and Settings commands can run before the
+    // server-core task has opened the database. Apply the central migration
+    // gate first so inference runtime DDL can never get ahead of SQLx history.
+    civitas_db::DatabaseManager::ensure_schema(&pool)
+        .await
+        .map_err(|error| format!("failed to prepare local provider database: {error}"))?;
+    Ok(pool)
 }
 
 async fn open_secure_store(pool: SqlitePool) -> Result<civitas_secrets::SecretStore, String> {

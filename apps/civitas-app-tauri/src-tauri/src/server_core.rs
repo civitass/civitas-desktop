@@ -25,6 +25,84 @@ use civitas_engine::{
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
+#[cfg(any(debug_assertions, feature = "e2e"))]
+fn e2e_bedrock_profile(
+    region: String,
+    model: String,
+) -> civitas_engine::inference::ProviderProfile {
+    let now = chrono::Utc::now().to_rfc3339();
+    civitas_engine::inference::ProviderProfile {
+        id: "e2e-bedrock-session".to_string(),
+        provider: civitas_engine::inference::ProviderId::Bedrock,
+        display_name: "Bedrock E2E session".to_string(),
+        endpoint: format!("https://bedrock-runtime.{region}.amazonaws.com"),
+        region: Some(region),
+        model: model.clone(),
+        extraction_model: Some(model),
+        embedding_model: None,
+        credential_ref: Some("e2e-bedrock-session".to_string()),
+        data_boundary_ack_version: 1,
+        created_at: now.clone(),
+        updated_at: now,
+        last_tested_at: None,
+        last_test_status: None,
+        active: true,
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "e2e"))]
+async fn seed_e2e_bedrock_session_profile(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    if !crate::get_e2e_seed_flags()
+        .iter()
+        .any(|flag| flag == "bedrock-provider")
+    {
+        return Ok(());
+    }
+    if cfg!(feature = "official-build") {
+        return Err("the Bedrock E2E session seed is unavailable in official builds".to_string());
+    }
+
+    let token = std::env::var("CIVITAS_E2E_BEDROCK_TOKEN")
+        .map_err(|_| "CIVITAS_E2E_BEDROCK_TOKEN is required for the Bedrock E2E seed")?;
+    // Remove the plaintext from the process environment as soon as it has
+    // crossed the explicit debug/E2E boundary. The credential remains only in
+    // the process-memory store and is zeroized when replaced or on process exit.
+    std::env::remove_var("CIVITAS_E2E_BEDROCK_TOKEN");
+    let region =
+        std::env::var("CIVITAS_E2E_BEDROCK_REGION").unwrap_or_else(|_| "us-east-2".to_string());
+    let model = std::env::var("CIVITAS_E2E_BEDROCK_MODEL")
+        .unwrap_or_else(|_| "us.anthropic.claude-sonnet-4-6".to_string());
+    let profile = e2e_bedrock_profile(region.clone(), model.clone());
+    let credential = civitas_engine::inference::ProviderCredential {
+        api_key: Some(token),
+        aws_access_key_id: None,
+        aws_secret_access_key: None,
+        aws_session_token: None,
+        aws_profile: None,
+    };
+    civitas_engine::inference::validate_profile(&profile).map_err(|error| error.to_string())?;
+    civitas_engine::inference::validate_credential(profile.provider, &credential)
+        .map_err(|error| error.to_string())?;
+    civitas_engine::inference::set_session_credential(&profile.id, credential)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = civitas_engine::inference::upsert_profile(pool, &profile).await {
+        civitas_engine::inference::delete_session_credential(&profile.id);
+        return Err(error.to_string());
+    }
+    // The seed itself is an explicit remote-data boundary for this isolated
+    // debug/E2E process. A stricter CIVITAS_NETWORK_MODE environment override
+    // still wins inside effective_network_mode and keeps the request blocked.
+    civitas_core::network::set_runtime_network_mode(
+        civitas_core::network::NetworkMode::RemoteEnabled,
+    );
+
+    info!(
+        provider = "bedrock",
+        region, model, "E2E session-only provider profile installed"
+    );
+    Ok(())
+}
+
 /// Shared references that survive capture start/stop cycles.
 /// The HTTP server, pipes, and DB live here.
 pub struct ServerCore {
@@ -381,6 +459,15 @@ impl ServerCore {
             }
         }
 
+        #[cfg(any(debug_assertions, feature = "e2e"))]
+        seed_e2e_bedrock_session_profile(&db.pool)
+            .await
+            .map_err(|error| {
+                let message = format!("Failed to install Bedrock E2E session profile: {error}");
+                crate::health::set_boot_error(&message);
+                message
+            })?;
+
         // --- Pipe manager ---
         crate::health::set_boot_phase("starting_pipes", Some("loading pipes"));
         let pipes_dir = config.data_dir.join("pipes");
@@ -531,6 +618,11 @@ impl ServerCore {
 
         info!("Server core started successfully");
         crate::health::set_boot_phase("ready", None);
+        // Historical CJK shadow-token backfill can scan multi-gigabyte local
+        // databases. It is resumable and deliberately starts only after the
+        // authenticated loopback API is ready, so Timeline and chat never wait
+        // behind local search-index maintenance.
+        db.start_background_maintenance();
 
         // ── Async PII reconciliation workers (issue #3185 / PR #3188) ─────
         // Two independent workers — text and image — each gated by its
@@ -757,5 +849,30 @@ impl ServerCore {
             Ok(Err(e)) => warn!("Audio manager shutdown error: {:?}", e),
             Err(_) => warn!("Audio manager shutdown timed out after 15s"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::e2e_bedrock_profile;
+
+    #[test]
+    fn bedrock_e2e_profile_is_session_scoped_and_valid() {
+        let profile = e2e_bedrock_profile(
+            "us-east-2".to_string(),
+            "us.anthropic.claude-sonnet-4-6".to_string(),
+        );
+
+        assert_eq!(profile.id, "e2e-bedrock-session");
+        assert_eq!(
+            profile.endpoint,
+            "https://bedrock-runtime.us-east-2.amazonaws.com"
+        );
+        assert_eq!(
+            profile.credential_ref.as_deref(),
+            Some("e2e-bedrock-session")
+        );
+        assert!(profile.active);
+        civitas_engine::inference::validate_profile(&profile).unwrap();
     }
 }

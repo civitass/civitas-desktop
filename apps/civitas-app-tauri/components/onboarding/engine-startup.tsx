@@ -23,8 +23,6 @@ import { useOnboarding } from "@/lib/hooks/use-onboarding";
 import { localFetch } from "@/lib/api";
 import { openExternalUrl } from "@/lib/open-external";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { homeDir, join } from "@tauri-apps/api/path";
 import { ParticleStream, ProgressSteps } from "./particle-stream";
 
 interface EngineStartupProps {
@@ -32,6 +30,7 @@ interface EngineStartupProps {
 }
 
 type StartupState = "starting" | "running" | "live-feed" | "stuck";
+type CaptureStartupGate = "checking" | "allowed" | "relaunch";
 
 interface ActivityItem {
   id: string;
@@ -144,6 +143,8 @@ const BOOT_PHASE_POLL_MS = 500;
 export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
   const { completeOnboarding } = useOnboarding();
   const [state, setState] = useState<StartupState>("starting");
+  const [captureStartupGate, setCaptureStartupGate] =
+    useState<CaptureStartupGate>("checking");
   const [serverStarted, setServerStarted] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
   const [visionReady, setVisionReady] = useState(false);
@@ -167,7 +168,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
       .then(setBundleId)
       .catch(() => setBundleId(null));
   }, []);
-  const { settings, updateSettings } = useSettings();
+  const { settings, updateSettings, isSettingsLoaded } = useSettings();
   const capturePaused =
     settings.disableVision !== false && settings.disableAudio !== false;
 
@@ -185,6 +186,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
   const [bootPhase, setBootPhase] = useState<BootPhaseSnapshot | null>(null);
 
   const hasAdvancedRef = useRef(false);
+  const engineStartAttemptedRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
   const feedStartRef = useRef(0);
 
@@ -212,8 +214,30 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
 
   // Spawn civitas on mount
   useEffect(() => {
+    if (!isSettingsLoaded || engineStartAttemptedRef.current) return;
+    engineStartAttemptedRef.current = true;
+
     const start = async () => {
       try {
+        const screenCaptureRequested =
+          settings.disableVision === false ||
+          (settings.disableAudio === false &&
+            settings.captureSystemAudio === true);
+        if (screenCaptureRequested) {
+          const screenState =
+            await commands.checkScreenRecordingPermissionState();
+          if (screenState.relaunchRequired) {
+            setCaptureStartupGate("relaunch");
+            setSpawnError(
+              "Screen Recording access was granted during this launch. Relaunch Civitas once so macOS can activate capture for this app build.",
+            );
+            setSpawnErrorKind("permission");
+            setState("stuck");
+            return;
+          }
+        }
+        setCaptureStartupGate("allowed");
+
         const healthCheck = await localFetch("/health", {
           signal: AbortSignal.timeout(3000),
         }).catch(() => null);
@@ -253,11 +277,22 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
       }
     };
     start();
-  }, []);
+  }, [
+    isSettingsLoaded,
+    settings.captureSystemAudio,
+    settings.disableAudio,
+    settings.disableVision,
+  ]);
 
   // Poll health
   useEffect(() => {
-    if (state === "running" || state === "live-feed") return;
+    if (
+      captureStartupGate !== "allowed" ||
+      state === "running" ||
+      state === "live-feed"
+    ) {
+      return;
+    }
 
     const poll = async () => {
       try {
@@ -285,12 +320,18 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
     const interval = setInterval(poll, 500);
     poll();
     return () => clearInterval(interval);
-  }, [state]);
+  }, [captureStartupGate, state]);
 
   // Poll boot phase via Tauri IPC — available before HTTP server binds.
   // Crucial on large-db migrations where /health is unreachable for minutes.
   useEffect(() => {
-    if (state === "running" || state === "live-feed") return;
+    if (
+      captureStartupGate === "relaunch" ||
+      state === "running" ||
+      state === "live-feed"
+    ) {
+      return;
+    }
 
     let cancelled = false;
     const poll = async () => {
@@ -310,7 +351,7 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [state]);
+  }, [captureStartupGate, state]);
 
   // Transition from "running" to "live-feed" instead of auto-advancing
   useEffect(() => {
@@ -612,9 +653,10 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
 
   const openLogsFolder = async () => {
     try {
-      const home = await homeDir();
-      const civitasDir = await join(home, ".civitas");
-      await revealItemInDir(civitasDir);
+      const result = await commands.revealCivitasDataDir();
+      if (result.status === "error") {
+        throw new Error(result.error);
+      }
     } catch (err) {
       console.error("Logs folder could not be opened.");
     }

@@ -44,7 +44,9 @@ interface MessageLike {
 const MAX_DERIVED_CITATIONS = 12;
 const MAX_TEXT_LENGTH = 140;
 
-export function sourceCitationsFromMessage(message: MessageLike): SourceCitation[] {
+export function sourceCitationsFromMessage(
+  message: MessageLike,
+): SourceCitation[] {
   const explicit = normalizeExplicitCitations(message.sourceCitations);
   if (explicit.length > 0) return explicit;
   return sourceCitationsFromContentBlocks(message.contentBlocks);
@@ -53,7 +55,9 @@ export function sourceCitationsFromMessage(message: MessageLike): SourceCitation
 // Aggregate citations across a sequence of messages, deduped. Used for
 // pipe-run chats where the whole transcript is one agentic loop and showing
 // per-message footers spams the same file across every step.
-export function aggregateSourceCitations(messages: readonly MessageLike[]): SourceCitation[] {
+export function aggregateSourceCitations(
+  messages: readonly MessageLike[],
+): SourceCitation[] {
   const all: SourceCitation[] = [];
   for (const message of messages) {
     all.push(...sourceCitationsFromMessage(message));
@@ -106,11 +110,17 @@ export function computeChatCitationPlan(
     const assistantsWithCitations = turn.filter(
       (m) => m.role === "assistant" && sourceCitationsFromMessage(m).length > 0,
     );
-    const lastAssistant = [...turn].reverse().find((m) => m.role === "assistant");
+    const lastAssistant = [...turn]
+      .reverse()
+      .find((m) => m.role === "assistant");
     const shouldAggregate = force
       ? assistantsWithCitations.length >= 1
       : assistantsWithCitations.length >= minAssistants;
-    if (shouldAggregate && lastAssistant && typeof lastAssistant.id === "string") {
+    if (
+      shouldAggregate &&
+      lastAssistant &&
+      typeof lastAssistant.id === "string"
+    ) {
       for (const m of assistantsWithCitations) {
         if (typeof m.id === "string") deferredMessageIds.add(m.id);
       }
@@ -128,7 +138,9 @@ export function computeChatCitationPlan(
   return { deferredMessageIds, aggregatedAfter };
 }
 
-export function sourceCitationsFromContentBlocks(contentBlocks: unknown): SourceCitation[] {
+export function sourceCitationsFromContentBlocks(
+  contentBlocks: unknown,
+): SourceCitation[] {
   if (!Array.isArray(contentBlocks)) return [];
 
   const citations: SourceCitation[] = [];
@@ -142,24 +154,31 @@ export function sourceCitationsFromContentBlocks(contentBlocks: unknown): Source
   return dedupeCitations(citations).slice(0, MAX_DERIVED_CITATIONS);
 }
 
-export function formatSourceCitationsMarkdown(citations: SourceCitation[]): string {
+export function formatSourceCitationsMarkdown(
+  citations: SourceCitation[],
+): string {
   if (citations.length === 0) return "";
   const label = citations.length === 1 ? "Source" : "Sources";
   const rows = citations.map((citation, index) => {
     const title = citation.href
       ? `[${escapeMarkdown(citation.title)}](${citation.href})`
       : escapeMarkdown(citation.title);
-    const subtitle = citation.subtitle ? ` - ${escapeMarkdown(citation.subtitle)}` : "";
+    const subtitle = citation.subtitle
+      ? ` - ${escapeMarkdown(citation.subtitle)}`
+      : "";
     return `${index + 1}. ${title}${subtitle}`;
   });
   return `**${label}:**\n${rows.join("\n")}`;
 }
 
-function sourceCitationsFromToolCall(toolCall: ToolCallLike | undefined): SourceCitation[] {
-  if (!toolCall || toolCall.isError === true || toolCall.isRunning === true) return [];
+function sourceCitationsFromToolCall(
+  toolCall: ToolCallLike | undefined,
+): SourceCitation[] {
+  if (!toolCall || toolCall.isError === true || toolCall.isRunning === true)
+    return [];
 
   const toolName = normalizeToolName(
-    typeof toolCall.toolName === "string" ? toolCall.toolName : "unknown"
+    typeof toolCall.toolName === "string" ? toolCall.toolName : "unknown",
   );
   const args = isObject(toolCall.args) ? toolCall.args : {};
   const resultText = resultToText(toolCall.result);
@@ -178,7 +197,10 @@ function sourceCitationsFromToolCall(toolCall: ToolCallLike | undefined): Source
   }
 
   if (toolName === "write" || toolName === "edit") {
-    const path = stringArg(args, "path") ?? stringArg(args, "file_path") ?? stringArg(args, "filePath");
+    const path =
+      stringArg(args, "path") ??
+      stringArg(args, "file_path") ??
+      stringArg(args, "filePath");
     const verb = toolName === "write" ? "Wrote" : "Edited";
     return path ? [fileCitation(path, verb)] : [];
   }
@@ -190,7 +212,9 @@ function sourceCitationsFromToolCall(toolCall: ToolCallLike | undefined): Source
       {
         id: stableId(["file-search", pattern, path]),
         kind: "file",
-        title: pattern ? `Search: ${truncate(pattern, 60)}` : "Local file search",
+        title: pattern
+          ? `Search: ${truncate(pattern, 60)}`
+          : "Local file search",
         subtitle: path ? shortenPath(path) : undefined,
       },
     ];
@@ -207,18 +231,22 @@ function sourceCitationsFromToolCall(toolCall: ToolCallLike | undefined): Source
 function webSearchCitations(
   args: Record<string, unknown>,
   result: unknown,
-  resultText: string
+  resultText: string,
 ): SourceCitation[] {
   const query = stringArg(args, "query");
   const urls = resultLinks(result, resultText);
   if (urls.length > 0) {
-    return dedupeLinks(urls).slice(0, 6).map((link) => ({
-      id: stableId(["web", link.url]),
-      kind: "web",
-      title: link.title || hostname(link.url) || "Web source",
-      subtitle: query ? `web search: ${truncate(query, 90)}` : hostname(link.url),
-      href: link.url,
-    }));
+    return dedupeLinks(urls)
+      .slice(0, 6)
+      .map((link) => ({
+        id: stableId(["web", link.url]),
+        kind: "web",
+        title: link.title || hostname(link.url) || "Web source",
+        subtitle: query
+          ? `web search: ${truncate(query, 90)}`
+          : hostname(link.url),
+        href: link.url,
+      }));
   }
 
   return [
@@ -232,13 +260,15 @@ function webSearchCitations(
 }
 
 function civitasToolCitation(args: Record<string, unknown>): SourceCitation {
-  const contentType = stringArg(args, "content_type") ?? stringArg(args, "contentType");
+  const contentType =
+    stringArg(args, "content_type") ?? stringArg(args, "contentType");
   const appName = stringArg(args, "app_name") ?? stringArg(args, "appName");
   const query = stringArg(args, "q") ?? stringArg(args, "query");
-  const startTime = stringArg(args, "start_time") ?? stringArg(args, "startTime");
+  const startTime =
+    stringArg(args, "start_time") ?? stringArg(args, "startTime");
   const range = timeRange(
     startTime,
-    stringArg(args, "end_time") ?? stringArg(args, "endTime")
+    stringArg(args, "end_time") ?? stringArg(args, "endTime"),
   );
   const parts = [
     contentType ?? "all content",
@@ -311,7 +341,8 @@ function civitasApiCitation(call: string): SourceCitation {
   // Only local screen captures map to a moment on the timeline. Memory/db/
   // connector endpoints aren't time-anchored screen data, so leave them inert.
   const params = queryParams(query);
-  const timestamp = kind === "civitas" ? navTimestamp(params.start_time) : undefined;
+  const timestamp =
+    kind === "civitas" ? navTimestamp(params.start_time) : undefined;
   const searchText = path === "/search" ? params.q : undefined;
 
   return {
@@ -337,7 +368,10 @@ function civitasTitle(path: string): string {
   if (path === "/raw_sql") return "Local database query";
   if (path === "/memories") return "Civitas memories";
   if (path.startsWith("/connections/perplexity/")) return "Perplexity search";
-  if (path.startsWith("/connections/google-calendar/") || path.startsWith("/connections/calendar/")) {
+  if (
+    path.startsWith("/connections/google-calendar/") ||
+    path.startsWith("/connections/calendar/")
+  ) {
     return "Google Calendar events";
   }
   if (path.startsWith("/connections/notion")) return "Notion connection";
@@ -346,7 +380,8 @@ function civitasTitle(path: string): string {
   if (path.startsWith("/frames")) return "Frame data";
   if (path.startsWith("/speakers")) return "Speaker data";
   if (path === "/health") return "Civitas health";
-  if (path.startsWith("/connections/")) return `${titleCase(path.split("/")[2] ?? "connector")} connection`;
+  if (path.startsWith("/connections/"))
+    return `${titleCase(path.split("/")[2] ?? "connector")} connection`;
   return "Civitas API";
 }
 
@@ -371,15 +406,25 @@ function civitasSubtitle(path: string, query: string): string | undefined {
   }
 
   if (path === "/memories") {
-    return params.q ? `memory query: ${truncate(params.q, 60)}` : limitSubtitle(params.limit);
+    return params.q
+      ? `memory query: ${truncate(params.q, 60)}`
+      : limitSubtitle(params.limit);
   }
 
   if (path.startsWith("/connections/perplexity/")) {
     return "external web context via Civitas connection";
   }
 
-  if (path.startsWith("/connections/google-calendar/") || path.startsWith("/connections/calendar/")) {
-    return timeRange(params.start_time ?? params.start, params.end_time ?? params.end) ?? limitSubtitle(params.limit);
+  if (
+    path.startsWith("/connections/google-calendar/") ||
+    path.startsWith("/connections/calendar/")
+  ) {
+    return (
+      timeRange(
+        params.start_time ?? params.start,
+        params.end_time ?? params.end,
+      ) ?? limitSubtitle(params.limit)
+    );
   }
 
   if (path.startsWith("/connections/")) {
@@ -412,15 +457,25 @@ function isUsablePath(path: string): boolean {
   if (!trimmed) return false;
   const base = basename(trimmed);
   if (!base) return false;
-  return base !== "null" && base !== "undefined" && base !== "true" && base !== "false";
+  return (
+    base !== "null" &&
+    base !== "undefined" &&
+    base !== "true" &&
+    base !== "false"
+  );
 }
 
 function fileKind(path: string): SourceCitationKind {
   if (path.includes("/.codex/memories/") || /(^|\/)MEMORY\.md$/.test(path)) {
     return "memory";
   }
-  if (path.includes("/.civitas/pipes/")) return "pipe";
-  if (path.includes("/.civitas/chats/")) return "civitas";
+  // The native data root can be the signed-app default, a namespaced source
+  // build root, or an owner-selected absolute directory. Classify from the
+  // bounded Civitas subtree shape instead of assuming `~/.civitas`.
+  if (/(^|\/)pipes\/[^/]+\/(?:pipe\.(?:md|ts)|logs\/|output\/)/i.test(path)) {
+    return "pipe";
+  }
+  if (/(^|\/)chats\/[^/]+\.json$/i.test(path)) return "civitas";
   return "file";
 }
 
@@ -429,19 +484,31 @@ function normalizeExplicitCitations(value: unknown): SourceCitation[] {
   const citations: SourceCitation[] = [];
   for (const item of value) {
     if (!isObject(item)) continue;
-    const kind = typeof item.kind === "string" && isSourceKind(item.kind)
-      ? item.kind
-      : "file";
-    const title = typeof item.title === "string" && item.title.trim()
-      ? item.title.trim()
-      : null;
+    const kind =
+      typeof item.kind === "string" && isSourceKind(item.kind)
+        ? item.kind
+        : "file";
+    const title =
+      typeof item.title === "string" && item.title.trim()
+        ? item.title.trim()
+        : null;
     if (!title) continue;
-    const subtitle = typeof item.subtitle === "string" ? item.subtitle : undefined;
+    const subtitle =
+      typeof item.subtitle === "string" ? item.subtitle : undefined;
     const href = typeof item.href === "string" ? item.href : undefined;
-    const timestamp = typeof item.timestamp === "string" ? navTimestamp(item.timestamp) : undefined;
-    const query = typeof item.query === "string" && item.query.trim() ? item.query.trim() : undefined;
+    const timestamp =
+      typeof item.timestamp === "string"
+        ? navTimestamp(item.timestamp)
+        : undefined;
+    const query =
+      typeof item.query === "string" && item.query.trim()
+        ? item.query.trim()
+        : undefined;
     citations.push({
-      id: typeof item.id === "string" && item.id ? item.id : stableId([kind, title, subtitle, href]),
+      id:
+        typeof item.id === "string" && item.id
+          ? item.id
+          : stableId([kind, title, subtitle, href]),
       kind,
       title,
       subtitle,
@@ -461,7 +528,7 @@ function normalizeToolName(toolName: string): string {
 
 function extractCivitasApiCalls(command: string): string[] {
   const matches = command.match(
-    /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):3030\/[^\s"'`)<]+/g
+    /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):3030\/[^\s"'`)<]+/g,
   );
   return matches ?? [];
 }
@@ -486,7 +553,9 @@ function extractWebLinks(text: string): Array<{ title?: string; url: string }> {
   return links;
 }
 
-function extractStructuredSources(result: unknown): Array<{ title?: string; url: string }> {
+function extractStructuredSources(
+  result: unknown,
+): Array<{ title?: string; url: string }> {
   if (!isObject(result)) return [];
   const details = isObject(result.details) ? result.details : undefined;
   const sourceArrays = [
@@ -503,7 +572,8 @@ function extractStructuredSources(result: unknown): Array<{ title?: string; url:
       const url = cleanUrl(source.url);
       if (!url) continue;
       links.push({
-        title: typeof source.title === "string" ? source.title.trim() : undefined,
+        title:
+          typeof source.title === "string" ? source.title.trim() : undefined,
         url,
       });
     }
@@ -511,7 +581,10 @@ function extractStructuredSources(result: unknown): Array<{ title?: string; url:
   return links;
 }
 
-function resultLinks(result: unknown, resultText: string): Array<{ title?: string; url: string }> {
+function resultLinks(
+  result: unknown,
+  resultText: string,
+): Array<{ title?: string; url: string }> {
   return dedupeLinks([
     ...extractStructuredSources(result),
     ...extractStructuredSourcesFromText(resultText),
@@ -519,7 +592,9 @@ function resultLinks(result: unknown, resultText: string): Array<{ title?: strin
   ]);
 }
 
-function extractStructuredSourcesFromText(text: string): Array<{ title?: string; url: string }> {
+function extractStructuredSourcesFromText(
+  text: string,
+): Array<{ title?: string; url: string }> {
   if (!text.trim()) return [];
   try {
     return extractStructuredSources(JSON.parse(text));
@@ -528,7 +603,9 @@ function extractStructuredSourcesFromText(text: string): Array<{ title?: string;
   }
 }
 
-function dedupeLinks(links: Array<{ title?: string; url: string }>): Array<{ title?: string; url: string }> {
+function dedupeLinks(
+  links: Array<{ title?: string; url: string }>,
+): Array<{ title?: string; url: string }> {
   const seen = new Set<string>();
   const out: Array<{ title?: string; url: string }> = [];
   for (const link of links) {
@@ -542,7 +619,8 @@ function dedupeLinks(links: Array<{ title?: string; url: string }>): Array<{ tit
 function extractFilePathsFromCommand(command: string): string[] {
   const paths = new Set<string>();
   const stripped = stripHeredocs(command);
-  const readCommand = /\b(cat|less|more|head|tail|sed|awk|jq|wc|stat)\b([^|;&`]*)/g;
+  const readCommand =
+    /\b(cat|less|more|head|tail|sed|awk|jq|wc|stat)\b([^|;&`]*)/g;
   for (const match of stripped.matchAll(readCommand)) {
     const tool = match[1] ?? "";
     const tokens = shellWords(match[2] ?? "");
@@ -602,16 +680,26 @@ function shellWords(value: string): string[] {
   return words;
 }
 
-function shouldSkipReadProgram(tool: string, token: string, sawOperand: boolean): boolean {
+function shouldSkipReadProgram(
+  tool: string,
+  token: string,
+  sawOperand: boolean,
+): boolean {
   if (sawOperand || !["sed", "awk", "jq"].includes(tool)) return false;
-  if (token.startsWith("./") || token.startsWith("../") || token.startsWith("/") || token.startsWith("~")) {
+  if (
+    token.startsWith("./") ||
+    token.startsWith("../") ||
+    token.startsWith("/") ||
+    token.startsWith("~")
+  ) {
     return false;
   }
   return true;
 }
 
 function isPathLike(value: string): boolean {
-  if (value.startsWith("/") || value.startsWith("~") || value.startsWith(".")) return true;
+  if (value.startsWith("/") || value.startsWith("~") || value.startsWith("."))
+    return true;
   if (value.includes("/")) return true;
   return /\.[a-z0-9]{1,12}$/i.test(value);
 }
@@ -659,10 +747,15 @@ function navTimestamp(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : decoded;
 }
 
-function timeRange(start: string | undefined, end: string | undefined): string | undefined {
+function timeRange(
+  start: string | undefined,
+  end: string | undefined,
+): string | undefined {
   if (!start && !end) return undefined;
   if (start && end) return `${shortTimestamp(start)} to ${shortTimestamp(end)}`;
-  return start ? `from ${shortTimestamp(start)}` : `until ${shortTimestamp(end ?? "")}`;
+  return start
+    ? `from ${shortTimestamp(start)}`
+    : `until ${shortTimestamp(end ?? "")}`;
 }
 
 function shortTimestamp(value: string): string {
@@ -681,7 +774,9 @@ function dedupeCitations(citations: SourceCitation[]): SourceCitation[] {
   const seen = new Set<string>();
   const out: SourceCitation[] = [];
   for (const citation of citations) {
-    const key = citation.href || `${citation.kind}:${citation.title}:${citation.subtitle ?? ""}`;
+    const key =
+      citation.href ||
+      `${citation.kind}:${citation.title}:${citation.subtitle ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(citation);
@@ -691,7 +786,9 @@ function dedupeCitations(citations: SourceCitation[]): SourceCitation[] {
 
 function stableId(parts: Array<string | undefined>): string {
   const body = parts
-    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    )
     .join(":")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -701,14 +798,26 @@ function stableId(parts: Array<string | undefined>): string {
 }
 
 function isSourceKind(kind: string): kind is SourceCitationKind {
-  return ["civitas", "database", "connector", "web", "file", "memory", "pipe", "command"].includes(kind);
+  return [
+    "civitas",
+    "database",
+    "connector",
+    "web",
+    "file",
+    "memory",
+    "pipe",
+    "command",
+  ].includes(kind);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function stringArg(args: Record<string, unknown>, key: string): string | undefined {
+function stringArg(
+  args: Record<string, unknown>,
+  key: string,
+): string | undefined {
   const value = args[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -732,7 +841,8 @@ function cleanUrl(url: string): string | undefined {
   const cleaned = url.replace(/[),.;]+$/g, "");
   try {
     const parsed = new URL(cleaned);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return undefined;
     return parsed.toString();
   } catch {
     return undefined;
@@ -742,7 +852,10 @@ function cleanUrl(url: string): string | undefined {
 function isLocalCivitasUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") && parsed.port === "3030";
+    return (
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
+      parsed.port === "3030"
+    );
   } catch {
     return false;
   }
@@ -763,7 +876,8 @@ function basename(path: string): string {
 
 function shortenPath(path: string): string {
   const home = typeof process !== "undefined" ? process.env.HOME : undefined;
-  const normalized = home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  const normalized =
+    home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
   return truncate(normalized, MAX_TEXT_LENGTH);
 }
 

@@ -87,7 +87,7 @@ async calendarGetEvents(hoursBack: number | null, hoursAhead: number | null) : P
 /**
  * Reset TCC (privacy) permission for Calendars on this app's bundle ID.
  *
- * Why: multiple users (including Louis's own Mac mini) clicked
+ * Why: multiple users clicked
  * "Fix Calendar Permission" → macOS opened the Calendars privacy pane
  * with an EMPTY app list, so they had no way to grant access. Root cause
  * is a stale TCC record (dev-build → prod-build reinstall, OS update,
@@ -198,6 +198,44 @@ async checkPermission(permission: OSPermission) : Promise<OSPermissionStatus> {
  */
 async checkScreenRecordingPermission() : Promise<OSPermissionStatus> {
     return await TAURI_INVOKE("check_screen_recording_permission");
+},
+/**
+ * Return both the current TCC result and whether ScreenCaptureKit needs a
+ * process relaunch before capture can use a grant made during this launch.
+ */
+async checkScreenRecordingPermissionState() : Promise<ScreenRecordingPermissionState> {
+    return await TAURI_INVOKE("check_screen_recording_permission_state");
+},
+/**
+ * Return the resolved user-data root selected during startup.
+ *
+ * Chat history and assistant workspaces use this command so a validated
+ * custom data-directory selection, including fallback behavior, stays
+ * consistent with capture and retrieval.
+ */
+async civitasDataRoot() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("civitas_data_root") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Return the identity-scoped root that owns settings and startup metadata.
+ *
+ * Settings must remain here because they contain the custom data-directory
+ * selection needed to resolve `ResolvedDataDir`. Source builds receive the
+ * development root installed before startup, while official builds receive
+ * the production root.
+ */
+async civitasSettingsRoot() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("civitas_settings_root") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async closeWindow(window: ShowRewindWindow) : Promise<Result<null, string>> {
     try {
@@ -1947,6 +1985,7 @@ endTime: string;
  * What to record: "all", "audio_only", "screen_only"
  */
 recordMode: string }
+export type ScreenRecordingPermissionState = { status: OSPermissionStatus; relaunchRequired: boolean }
 export type SetNetworkModeInput = { mode: string; remoteDataAcknowledged?: boolean }
 export type SettingsStore =
 /**
@@ -1961,7 +2000,7 @@ disableAudio: boolean;
 /**
  * Independently allow capture from input devices (microphones).
  *
- * `null` is the legacy state from before audio consent was split. When
+ * `None` is the legacy state from before audio consent was split. When
  * both source fields are absent, the historic combined `disableAudio`
  * choice is honored for backwards compatibility. If either source field
  * exists, a missing sibling is treated as disabled.

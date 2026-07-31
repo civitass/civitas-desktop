@@ -115,26 +115,22 @@ export default function PermissionRecoveryPage() {
   const { settings, isSettingsLoaded } = useSettings();
   const requirements = capturePermissionRequirements(settings);
   const restartTriggeredRef = useRef(false);
-  const screenWasDeniedRef = useRef(false);
-  const permissionBaselineCapturedRef = useRef(false);
 
   const checkPermissions = useCallback(async () => {
     try {
-      const perms = await commands.doPermissionsCheck(false);
-      if (isSettingsLoaded) {
-        const screenGranted = isPermissionGranted(perms.screenRecording);
-        if (!permissionBaselineCapturedRef.current) {
-          permissionBaselineCapturedRef.current = true;
-          screenWasDeniedRef.current =
-            requirements.screenRecording && !screenGranted;
-        } else if (
+      const [permissionCheck, screenState] = await Promise.all([
+        commands.doPermissionsCheck(false),
+        commands.checkScreenRecordingPermissionState(),
+      ]);
+      const perms = {
+        ...permissionCheck,
+        screenRecording: screenState.status,
+      };
+      setScreenRelaunchRequired(
+        isSettingsLoaded &&
           requirements.screenRecording &&
-          screenWasDeniedRef.current &&
-          screenGranted
-        ) {
-          setScreenRelaunchRequired(true);
-        }
-      }
+          screenState.relaunchRequired,
+      );
       setPermissions(perms);
       setPermissionCheckError(null);
       return perms;

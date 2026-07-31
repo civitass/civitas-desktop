@@ -144,11 +144,14 @@ pub fn preflight_check(need_screen: bool, need_audio: bool) -> bool {
 mod macos_screen_recording {
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
     use std::ffi::c_void;
+    use std::time::Duration;
 
     type CGImageRef = *mut c_void;
     const ON_SCREEN_ONLY: u32 = 1;
     const IMAGE_DEFAULT: u32 = 0;
     const NULL_WINDOW_ID: u32 = 0;
+    const PREFLIGHT_ATTEMPTS: usize = 3;
+    const PREFLIGHT_RETRY_DELAY: Duration = Duration::from_millis(20);
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
@@ -166,6 +169,30 @@ mod macos_screen_recording {
     /// in the negative direction; never in the positive direction.
     pub fn preflight() -> bool {
         unsafe { CGPreflightScreenCaptureAccess() }
+    }
+
+    pub(super) fn preflight_with_retry_using(
+        mut probe: impl FnMut() -> bool,
+        mut wait: impl FnMut(),
+    ) -> bool {
+        for attempt in 0..PREFLIGHT_ATTEMPTS {
+            if probe() {
+                return true;
+            }
+            if attempt + 1 < PREFLIGHT_ATTEMPTS {
+                wait();
+            }
+        }
+        false
+    }
+
+    /// Confirm a negative preflight result before surfacing it.
+    ///
+    /// macOS can briefly return a stale negative while TCC refreshes or while
+    /// another capture client is probing concurrently. A real revocation still
+    /// returns false after this bounded 40 ms confirmation window.
+    pub fn preflight_with_retry() -> bool {
+        preflight_with_retry_using(preflight, || std::thread::sleep(PREFLIGHT_RETRY_DELAY))
     }
 
     /// True on macOS 15 (Sequoia) or later. Cached — spawns `sw_vers` once per process.
@@ -213,10 +240,10 @@ mod macos_screen_recording {
     }
 }
 
-/// CLI: always uses `preflight() || capture_probe()` on every macOS version.
+/// CLI: always uses `preflight_with_retry() || capture_probe()` on every macOS version.
 #[cfg(target_os = "macos")]
 pub fn check_screen_recording() -> PermissionStatus {
-    if macos_screen_recording::preflight() || macos_screen_recording::capture_probe() {
+    if macos_screen_recording::preflight_with_retry() || macos_screen_recording::capture_probe() {
         PermissionStatus::Granted
     } else {
         PermissionStatus::Denied
@@ -233,9 +260,9 @@ pub fn check_screen_recording() -> PermissionStatus {
 #[cfg(target_os = "macos")]
 pub fn check_screen_recording_tauri() -> PermissionStatus {
     let ok = if macos_screen_recording::is_sequoia_or_later() {
-        macos_screen_recording::preflight()
+        macos_screen_recording::preflight_with_retry()
     } else {
-        macos_screen_recording::preflight() || macos_screen_recording::capture_probe()
+        macos_screen_recording::preflight_with_retry() || macos_screen_recording::capture_probe()
     };
     if ok {
         PermissionStatus::Granted
@@ -325,16 +352,44 @@ pub fn check_accessibility() -> PermissionStatus {
 mod tests {
     use super::*;
 
-    /// Either probe returning true means permission is granted.
     #[test]
-    fn probe_implies_granted() {
-        if macos_screen_recording::preflight() || macos_screen_recording::capture_probe() {
-            assert_eq!(check_screen_recording(), PermissionStatus::Granted);
-            if !macos_screen_recording::is_sequoia_or_later() || macos_screen_recording::preflight()
-            {
-                assert_eq!(check_screen_recording_tauri(), PermissionStatus::Granted);
-            }
-        }
+    fn preflight_confirmation_accepts_a_late_positive_without_extra_waits() {
+        let mut samples = [false, false, true].into_iter();
+        let mut waits = 0;
+
+        assert!(macos_screen_recording::preflight_with_retry_using(
+            || samples.next().expect("bounded probe count"),
+            || waits += 1,
+        ));
+        assert_eq!(waits, 2);
+    }
+
+    #[test]
+    fn preflight_confirmation_requires_three_negative_samples() {
+        let mut samples = [false, false, false].into_iter();
+        let mut waits = 0;
+
+        assert!(!macos_screen_recording::preflight_with_retry_using(
+            || samples.next().expect("bounded probe count"),
+            || waits += 1,
+        ));
+        assert_eq!(waits, 2);
+    }
+
+    #[test]
+    fn preflight_confirmation_short_circuits_on_the_first_positive() {
+        let mut calls = 0;
+        let mut waits = 0;
+
+        assert!(macos_screen_recording::preflight_with_retry_using(
+            || {
+                calls += 1;
+                true
+            },
+            || waits += 1,
+        ));
+        assert_eq!(calls, 1);
+        assert_eq!(waits, 0);
     }
 
     /// Sanity: repeated probing must not leak, hang, or destabilise.

@@ -7,7 +7,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  checkScreenRecordingPermission: vi.fn(),
+  checkScreenRecordingPermissionState: vi.fn(),
   checkMicrophonePermission: vi.fn(),
   closeWindow: vi.fn(),
   requestPermission: vi.fn(),
@@ -20,7 +20,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
-    checkScreenRecordingPermission: mocks.checkScreenRecordingPermission,
+    checkScreenRecordingPermissionState:
+      mocks.checkScreenRecordingPermissionState,
     checkMicrophonePermission: mocks.checkMicrophonePermission,
     closeWindow: mocks.closeWindow,
     requestPermission: mocks.requestPermission,
@@ -73,15 +74,15 @@ describe("PermissionButtons", () => {
     vi.useRealTimers();
   });
 
-  it("polls screen state and offers relaunch after a grant transition", async () => {
-    mocks.checkScreenRecordingPermission
-      .mockResolvedValueOnce("denied")
-      .mockResolvedValue("granted");
+  it("offers relaunch from the native process-lifecycle state after a remount", async () => {
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "granted",
+      relaunchRequired: true,
+    });
 
     render(<PermissionButtons type="screen" />);
     await act(async () => {
       await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(1500);
     });
 
     const relaunchButton = screen.getByRole("button", {

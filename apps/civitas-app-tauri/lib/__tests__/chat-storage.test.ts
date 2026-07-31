@@ -12,8 +12,11 @@ const fsMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/path", () => ({
-  homeDir: vi.fn(async () => "/Users/test"),
   join: vi.fn(async (...parts: string[]) => parts.join("/")),
+}));
+
+vi.mock("@/lib/data-root", () => ({
+  getCivitasDataRoot: vi.fn(async () => "/Users/test/.civitas"),
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({

@@ -143,7 +143,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import { useIsFullscreen } from "@/lib/hooks/use-is-fullscreen";
 import { useSqlAutocomplete } from "@/lib/hooks/use-sql-autocomplete";
-import { homeDir, join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
+import { getCivitasDataRoot } from "@/lib/data-root";
 import { useTimelineStore } from "@/lib/hooks/use-timeline-store";
 import {
   Dialog,
@@ -166,6 +167,7 @@ import {
 } from "@/lib/chat-utils";
 import { sanitizeToolCallXml } from "@/lib/utils/sanitize-tool-call-xml";
 import { isAssistantRuntimeMissingError } from "@/lib/assistant-runtime";
+import { classifyPiDiagnostic } from "@/lib/assistant/pi-diagnostics";
 import {
   buildDailyLimitMessage,
   classifyQuotaError,
@@ -255,6 +257,43 @@ const AI_PROVIDER_AUTH_MESSAGE =
   "The selected AI provider rejected its credential. Open Settings → AI to test or replace it.";
 const AI_PROVIDER_REJECTED_MESSAGE =
   "The selected provider refused this model or credential. Review the active profile in Settings → AI.";
+const AI_LOCAL_SERVICE_UNAVAILABLE_MESSAGE =
+  "Civitas’s local assistant service is unavailable. Wait a moment and retry; if this persists, restart Civitas.";
+const AI_IMAGE_UNSUPPORTED_MESSAGE =
+  "This model doesn’t support image input. Choose a vision-capable model in Settings → AI.";
+const AI_PROVIDER_REGION_MESSAGE =
+  "The selected provider doesn’t allow this model from your current country or network location. Choose a provider or model available in your region.";
+const AI_NETWORK_POLICY_MESSAGE =
+  "Remote AI is off. Open Settings → Privacy, allow remote features, then retry.";
+const AI_GENERIC_FAILURE_MESSAGE =
+  "The assistant hit an error and stopped. Try again; if it continues, open Settings → AI and run Test connection.";
+
+function safeAssistantFailureMessage(error: string): string {
+  const diagnostic = classifyPiDiagnostic(error);
+  switch (diagnostic) {
+    case "model-not-allowed":
+    case "model-not-found":
+      return AI_MODEL_UNAVAILABLE_MESSAGE;
+    case "provider-rejected":
+      return AI_PROVIDER_REJECTED_MESSAGE;
+    case "image-unsupported":
+      return AI_IMAGE_UNSUPPORTED_MESSAGE;
+    case "provider-region-restricted":
+      return AI_PROVIDER_REGION_MESSAGE;
+    case "network-policy-blocked":
+      return AI_NETWORK_POLICY_MESSAGE;
+    case "local-service-unavailable":
+      return AI_LOCAL_SERVICE_UNAVAILABLE_MESSAGE;
+    default:
+      break;
+  }
+  if (
+    /authentication_error|not authenticated|\b401\b|unauthorized/i.test(error)
+  ) {
+    return AI_PROVIDER_AUTH_MESSAGE;
+  }
+  return AI_GENERIC_FAILURE_MESSAGE;
+}
 
 const LARGE_CONTEXT_CHAR_THRESHOLD = 160_000;
 const LARGE_CONTEXT_CHUNK_CHARS = 24_000;
@@ -525,10 +564,8 @@ async function externalizeLargeContextIfNeeded(
   const filePart = sanitizeLargeContextFilePart(task.slice(0, 60));
   const contextDirName = `${createdAt}-${filePart}`;
   const fileName = "full.txt";
-  const home = await homeDir();
   const dir = await join(
-    home,
-    ".civitas",
+    await getCivitasDataRoot(),
     "pi-chat",
     "large-context",
     sessionPart,
@@ -1986,6 +2023,7 @@ export function StandaloneChat({
   const piStoppedIntentionallyRef = useRef(false);
   const piIntentionallyStoppedPidsRef = useRef<Set<number>>(new Set());
   const piActiveStopRequestedRef = useRef(false);
+  const piStatusWarningShownRef = useRef(false);
 
   const normalizeTurnIntentText = (value: string) =>
     value.replace(/\s+/g, " ").trim();
@@ -2852,7 +2890,11 @@ export function StandaloneChat({
             prefillClaimsRef.current.set(dedupKey, bucket);
             try {
               await emit("chat-prefill-claim", { dedupKey, ...myClaim });
-            } catch {}
+            } catch {
+              console.warn(
+                "Chat prefill coordination could not be broadcast to another window.",
+              );
+            }
             // Wait the collection window so every competing window's claim lands.
             await new Promise((r) => setTimeout(r, 250));
             const claims = prefillClaimsRef.current.get(dedupKey) ?? [myClaim];
@@ -4042,7 +4084,11 @@ export function StandaloneChat({
           if (info.status === "ok") {
             currentPid = info.data.pid;
           }
-        } catch {}
+        } catch {
+          console.warn(
+            "Assistant process status could not be read before restart.",
+          );
+        }
       }
       if (typeof currentPid === "number") {
         piIntentionallyStoppedPidsRef.current.add(currentPid);
@@ -4053,8 +4099,7 @@ export function StandaloneChat({
         piStoppedIntentionallyRef.current = true;
       }
 
-      const home = await homeDir();
-      const dir = await join(home, ".civitas", "pi-chat");
+      const dir = await join(await getCivitasDataRoot(), "pi-chat");
       const result = await commands.piStart(
         piSessionIdRef.current,
         dir,
@@ -4109,9 +4154,13 @@ export function StandaloneChat({
         const result = await commands.piInfo(piSessionIdRef.current);
         if (result.status === "ok") {
           setPiInfo(result.data);
+          piStatusWarningShownRef.current = false;
         }
-      } catch (e) {
-        console.warn("Assistant session status could not be checked.");
+      } catch {
+        if (!piStatusWarningShownRef.current) {
+          console.warn("Assistant session status could not be checked.");
+          piStatusWarningShownRef.current = true;
+        }
       }
     };
     checkPi();
@@ -4121,8 +4170,14 @@ export function StandaloneChat({
         const result = await commands.piInfo(piSessionIdRef.current);
         if (result.status === "ok") {
           setPiInfo(result.data);
+          piStatusWarningShownRef.current = false;
         }
-      } catch {}
+      } catch {
+        if (!piStatusWarningShownRef.current) {
+          console.warn("Assistant session status polling is unavailable.");
+          piStatusWarningShownRef.current = true;
+        }
+      }
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -4702,7 +4757,7 @@ export function StandaloneChat({
                 m.id === msgId
                   ? {
                       ...m,
-                      content: `Error: ${fullError || "Something went wrong"}`,
+                      content: safeAssistantFailureMessage(fullError),
                     }
                   : m,
               ),
@@ -4946,7 +5001,9 @@ export function StandaloneChat({
           } else {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === msgId ? { ...m, content: `Error: ${errMsg}` } : m,
+                m.id === msgId
+                  ? { ...m, content: safeAssistantFailureMessage(errMsg) }
+                  : m,
               ),
             );
           }
@@ -4999,7 +5056,7 @@ export function StandaloneChat({
             } else if (errStr.includes("model_not_allowed")) {
               content = AI_MODEL_UNAVAILABLE_MESSAGE;
             } else {
-              content = errStr;
+              content = safeAssistantFailureMessage(errStr);
             }
           }
 
@@ -5019,6 +5076,12 @@ export function StandaloneChat({
               existing?.content?.includes("usage or budget limit") ||
               existing?.content === AI_MODEL_UNAVAILABLE_MESSAGE ||
               existing?.content === AI_PROVIDER_AUTH_MESSAGE ||
+              existing?.content === AI_PROVIDER_REJECTED_MESSAGE ||
+              existing?.content === AI_LOCAL_SERVICE_UNAVAILABLE_MESSAGE ||
+              existing?.content === AI_IMAGE_UNSUPPORTED_MESSAGE ||
+              existing?.content === AI_PROVIDER_REGION_MESSAGE ||
+              existing?.content === AI_NETWORK_POLICY_MESSAGE ||
+              existing?.content === AI_GENERIC_FAILURE_MESSAGE ||
               existing?.content?.includes("Rate limited") ||
               existing?.content?.includes("rate limit") ||
               existing?.content?.startsWith("Error:");
@@ -5058,7 +5121,7 @@ export function StandaloneChat({
               } else if (lastErr && lastErrKind === "rate") {
                 content = buildRateLimitMessage(lastErr);
               } else if (lastErr) {
-                content = `Error: ${lastErr}`;
+                content = safeAssistantFailureMessage(lastErr);
                 emptyResponseRetryPrompt =
                   lastUserMessageRef.current || undefined;
               } else {
@@ -5291,7 +5354,9 @@ export function StandaloneChat({
           } else {
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === msgId ? { ...m, content: `Error: ${errorStr}` } : m,
+                m.id === msgId
+                  ? { ...m, content: safeAssistantFailureMessage(errorStr) }
+                  : m,
               ),
             );
           }
@@ -5391,7 +5456,11 @@ export function StandaloneChat({
               setPiInfo(info.data);
               return;
             }
-          } catch {}
+          } catch {
+            console.warn(
+              "Assistant replacement status could not be confirmed after termination.",
+            );
+          }
 
           // If a message was in flight, append error to the message so the user
           // knows the agent stopped unexpectedly (not just "completed").
@@ -5449,13 +5518,16 @@ export function StandaloneChat({
                 setPiInfo(result.data);
                 return;
               }
-            } catch {}
+            } catch {
+              console.warn(
+                "Assistant replacement status could not be confirmed before automatic restart.",
+              );
+            }
 
             if (!piStartInFlightRef.current) {
               try {
                 const providerConfig = buildProviderConfig();
-                const home = await homeDir();
-                const dir = await join(home, ".civitas", "pi-chat");
+                const dir = await join(await getCivitasDataRoot(), "pi-chat");
                 const result = await commands.piStart(
                   piSessionIdRef.current,
                   dir,
@@ -5495,7 +5567,14 @@ export function StandaloneChat({
         // Only show errors if user sent a message and is waiting — not during background startup/restart
         if (!piMessageIdRef.current) return;
         const line = event.payload;
-        if (line.includes("model_not_allowed") || line.includes("403")) {
+        const diagnostic = classifyPiDiagnostic(line);
+        if (!diagnostic) return;
+        if (
+          diagnostic === "model-not-allowed" ||
+          diagnostic === "provider-rejected" ||
+          diagnostic === "provider-region-restricted" ||
+          diagnostic === "network-policy-blocked"
+        ) {
           cancelStreamingMessageRender();
           const msgId = piMessageIdRef.current;
           if (msgId) {
@@ -5504,19 +5583,19 @@ export function StandaloneChat({
                 m.id === msgId
                   ? {
                       ...m,
-                      content: line.includes("model_not_allowed")
-                        ? AI_MODEL_UNAVAILABLE_MESSAGE
-                        : AI_PROVIDER_REJECTED_MESSAGE,
+                      content: {
+                        "model-not-allowed": AI_MODEL_UNAVAILABLE_MESSAGE,
+                        "provider-rejected": AI_PROVIDER_REJECTED_MESSAGE,
+                        "provider-region-restricted":
+                          AI_PROVIDER_REGION_MESSAGE,
+                        "network-policy-blocked": AI_NETWORK_POLICY_MESSAGE,
+                      }[diagnostic],
                     }
                   : m,
               ),
             );
           }
-        } else if (
-          line.includes("429") ||
-          line.includes("rate") ||
-          line.includes("daily_limit")
-        ) {
+        } else if (diagnostic === "rate-limited") {
           cancelStreamingMessageRender();
           const msgId = piMessageIdRef.current;
           if (msgId) {
@@ -5532,11 +5611,7 @@ export function StandaloneChat({
               ),
             );
           }
-        } else if (
-          line.includes("content must be a string") ||
-          line.includes("does not support images") ||
-          line.includes("image_url is not supported")
-        ) {
+        } else if (diagnostic === "image-unsupported") {
           cancelStreamingMessageRender();
           const msgId = piMessageIdRef.current;
           if (msgId) {
@@ -5552,21 +5627,11 @@ export function StandaloneChat({
               ),
             );
           }
-        } else if (
-          line.includes("not found") ||
-          line.includes("ECONNREFUSED") ||
-          line.includes("connection refused")
-        ) {
-          let hint = line;
-          if (line.includes("not found")) {
-            hint = `Model not found: ${line}. Check your AI preset in settings.`;
-          } else if (
-            line.includes("ECONNREFUSED") ||
-            line.includes("connection refused")
-          ) {
-            hint =
-              "Cannot connect to Ollama — is it running? Start with: ollama serve";
-          }
+        } else {
+          const hint =
+            diagnostic === "model-not-found"
+              ? "The selected model is unavailable. Refresh models in Settings → AI, then verify its region and access."
+              : AI_LOCAL_SERVICE_UNAVAILABLE_MESSAGE;
           toast({
             title: "Assistant error",
             description: hint,
@@ -6233,8 +6298,7 @@ export function StandaloneChat({
         setPiStarting(true);
         const providerConfig = buildProviderConfig();
         try {
-          const home = await homeDir();
-          const dir = await join(home, ".civitas", "pi-chat");
+          const dir = await join(await getCivitasDataRoot(), "pi-chat");
           const result = await commands.piStart(
             piSessionIdRef.current,
             dir,
@@ -6572,8 +6636,7 @@ export function StandaloneChat({
         result.error.includes("Pi not initialized")
       ) {
         try {
-          const home = await homeDir();
-          const dir = await join(home, ".civitas", "pi-chat");
+          const dir = await join(await getCivitasDataRoot(), "pi-chat");
           const providerConfig = buildProviderConfig();
           const startRes = await commands.piStart(
             piSessionIdRef.current,
@@ -9736,7 +9799,11 @@ export function StandaloneChat({
                             "civitas_connect_banner_dismissed",
                             "true",
                           );
-                        } catch {}
+                        } catch {
+                          console.warn(
+                            "Connection banner preference could not be saved.",
+                          );
+                        }
                       }}
                       className="text-muted-foreground/50 hover:text-foreground transition-colors shrink-0"
                     >

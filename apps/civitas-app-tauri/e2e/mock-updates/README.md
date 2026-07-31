@@ -29,6 +29,10 @@ Expected: it pulls the staged update from `http://127.0.0.1:8765/`.
 ## Notes
 
 - Build newer first: building the older app later overwrites `src-tauri/target/release/bundle`.
+- The harness deliberately keeps the development bundle, vault, and data
+  identities. It tests updater transport and signature behavior without
+  reading or writing the signed consumer app's credentials or `~/.civitas`
+  database.
 - Scripts used above are in `apps/civitas-app-tauri/package.json`:
   - `updater-local:build`
   - `updater-local:stage-last`

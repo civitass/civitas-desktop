@@ -12,6 +12,9 @@ set -euo pipefail
 FFMPEG_COMMIT="38b88335f99e76ed89ff3c93f877fdefce736c13"
 FFMPEG_TAG="n8.1.2"
 FFMPEG_REPOSITORY="https://github.com/FFmpeg/FFmpeg.git"
+FFMPEG_ARCHIVE_URL="https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/${FFMPEG_COMMIT}"
+FFMPEG_ARCHIVE_SHA256="2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6"
+FFMPEG_ARCHIVE_BYTES="16894057"
 
 target="${1:?usage: build_ffmpeg_macos.sh <aarch64-apple-darwin|x86_64-apple-darwin> [output-directory]}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +24,7 @@ output_dir="${2:-${app_dir}/src-tauri}"
 case "$target" in
   aarch64-apple-darwin)
     arch="arm64"
-    deployment_target="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
+    deployment_target="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
     ;;
   x86_64-apple-darwin)
     arch="x86_64"
@@ -32,6 +35,22 @@ case "$target" in
     exit 2
     ;;
 esac
+
+version_lte() {
+  awk -v actual="$1" -v limit="$2" '
+    BEGIN {
+      split(actual, a, ".");
+      split(limit, b, ".");
+      for (i = 1; i <= 4; i += 1) {
+        av = a[i] + 0;
+        bv = b[i] + 0;
+        if (av < bv) exit 0;
+        if (av > bv) exit 1;
+      }
+      exit 0;
+    }
+  '
+}
 
 if [ -n "${RUNNER_TEMP:-}" ]; then
   work_dir="$(mktemp -d "${RUNNER_TEMP}/civitas-ffmpeg.XXXXXX")"
@@ -44,14 +63,52 @@ source_dir="${work_dir}/ffmpeg"
 install_dir="${work_dir}/install"
 mkdir -p "$source_dir" "$install_dir" "$output_dir"
 
-git -C "$source_dir" init --quiet
-git -C "$source_dir" remote add origin "$FFMPEG_REPOSITORY"
-git -C "$source_dir" fetch --quiet --depth 1 origin "$FFMPEG_COMMIT"
-git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
+source_archive="${CIVITAS_FFMPEG_SOURCE_ARCHIVE:-}"
+if [ -n "$source_archive" ]; then
+  if [ ! -f "$source_archive" ]; then
+    echo "CIVITAS_FFMPEG_SOURCE_ARCHIVE does not exist: $source_archive" >&2
+    exit 2
+  fi
+else
+  source_archive="${work_dir}/ffmpeg-${FFMPEG_COMMIT}.tar.gz"
+  curl \
+    --fail \
+    --silent \
+    --show-error \
+    --location \
+    --connect-timeout 20 \
+    --max-time 1800 \
+    --speed-limit 1 \
+    --speed-time 120 \
+    --retry 2 \
+    --retry-all-errors \
+    --retry-delay 2 \
+    --retry-max-time 3600 \
+    --output "$source_archive" \
+    "$FFMPEG_ARCHIVE_URL"
+fi
 
-resolved_commit="$(git -C "$source_dir" rev-parse HEAD)"
-if [ "$resolved_commit" != "$FFMPEG_COMMIT" ]; then
-  echo "FFmpeg source integrity check failed: expected $FFMPEG_COMMIT, received $resolved_commit" >&2
+archive_sha256="$(shasum -a 256 "$source_archive" | awk '{print $1}')"
+archive_bytes="$(stat -f '%z' "$source_archive")"
+if [ "$archive_sha256" != "$FFMPEG_ARCHIVE_SHA256" ] ||
+  [ "$archive_bytes" != "$FFMPEG_ARCHIVE_BYTES" ]; then
+  echo "FFmpeg source archive integrity check failed" >&2
+  echo "Expected: ${FFMPEG_ARCHIVE_BYTES} bytes, sha256 ${FFMPEG_ARCHIVE_SHA256}" >&2
+  echo "Actual: ${archive_bytes} bytes, sha256 ${archive_sha256}" >&2
+  exit 1
+fi
+
+archive_root="FFmpeg-${FFMPEG_COMMIT}"
+if ! tar -tzf "$source_archive" |
+  awk -v prefix="${archive_root}/" '
+    index($0, prefix) != 1 || $0 ~ /(^|\/)\.\.(\/|$)/ { exit 1 }
+  '; then
+  echo "FFmpeg source archive contains an unexpected or unsafe path" >&2
+  exit 1
+fi
+tar -xzf "$source_archive" --strip-components=1 -C "$source_dir"
+if [ ! -x "$source_dir/configure" ]; then
+  echo "FFmpeg source archive is missing its configure entry point" >&2
   exit 1
 fi
 
@@ -98,8 +155,24 @@ for binary in ffmpeg ffprobe; do
     echo "${binary} contains a package-manager runtime dependency" >&2
     exit 1
   fi
-  cp "./${binary}" "${output_dir}/${binary}-${target}"
-  chmod 755 "${output_dir}/${binary}-${target}"
+  minimum_versions="$(
+    xcrun vtool -show-build "./${binary}" 2>/dev/null |
+      awk '$1 == "minos" { print $2 }'
+  )"
+  if [ -z "$minimum_versions" ]; then
+    echo "${binary} has no reviewable minimum macOS version" >&2
+    exit 1
+  fi
+  while IFS= read -r minimum_version; do
+    if ! version_lte "$minimum_version" "$deployment_target"; then
+      echo "${binary} requires macOS ${minimum_version}, above requested ${deployment_target}" >&2
+      exit 1
+    fi
+  done <<<"$minimum_versions"
+  staged_binary="${work_dir}/${binary}-${target}.staged"
+  cp -X "./${binary}" "$staged_binary"
+  chmod 755 "$staged_binary"
+  mv -f "$staged_binary" "${output_dir}/${binary}-${target}"
 done
 
 ffmpeg_path="${output_dir}/ffmpeg-${target}"
@@ -113,7 +186,9 @@ cat > "${output_dir}/.civitas-ffmpeg-${target}.json" <<MANIFEST
   "schemaVersion": "civitas-macos-ffmpeg-sidecars/v1",
   "provenance": "pinned-source-build",
   "sourceCommit": "${FFMPEG_COMMIT}",
+  "sourceArchiveSha256": "${FFMPEG_ARCHIVE_SHA256}",
   "target": "${target}",
+  "minimumSystemVersion": "${deployment_target}",
   "binaries": [
     {
       "path": "ffmpeg-${target}",
@@ -134,6 +209,8 @@ cat > "${output_dir}/assets/FFmpeg-SOURCE.txt" <<SOURCE_NOTICE
 FFmpeg ${FFMPEG_TAG}
 Source commit: ${FFMPEG_COMMIT}
 Source repository: ${FFMPEG_REPOSITORY}
+Source archive: ${FFMPEG_ARCHIVE_URL}
+Source archive SHA-256: ${FFMPEG_ARCHIVE_SHA256}
 Rebuild script: apps/civitas-app-tauri/scripts/build_ffmpeg_macos.sh
 
 This release build disables GPL, nonfree, network, and auto-detected external

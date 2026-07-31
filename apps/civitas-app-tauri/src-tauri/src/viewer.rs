@@ -84,13 +84,11 @@ fn relative_path_allowed(relative: &Path, access: CivitasFileAccess) -> bool {
     let at_root = relative.components().count() == 1;
     let artifact_area = first == Some("exports") || is_pipe_artifact(relative);
     let captured_media = first == Some("data") && has_extension(relative, MEDIA_EXTENSIONS);
+    let reviewed_artifact_media = artifact_area && has_extension(relative, MEDIA_EXTENSIONS);
     let root_log = at_root && has_extension(relative, &["log"]);
 
     match access {
-        CivitasFileAccess::Media => {
-            (first == Some("data") || first == Some("exports"))
-                && has_extension(relative, MEDIA_EXTENSIONS)
-        }
+        CivitasFileAccess::Media => captured_media || reviewed_artifact_media,
         CivitasFileAccess::Viewer => {
             captured_media
                 || ((artifact_area || root_log) && has_extension(relative, VIEWER_EXTENSIONS))
@@ -499,6 +497,14 @@ mod tests {
         ));
         assert!(relative_path_allowed(
             Path::new("data/monitor-1.mp4"),
+            CivitasFileAccess::Media
+        ));
+        assert!(relative_path_allowed(
+            Path::new("pipes/daily/output/chart.png"),
+            CivitasFileAccess::Media
+        ));
+        assert!(!relative_path_allowed(
+            Path::new("pipes/daily/pipe.md"),
             CivitasFileAccess::Media
         ));
     }

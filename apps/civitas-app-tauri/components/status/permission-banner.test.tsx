@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   doPermissionsCheck: vi.fn(),
+  checkScreenRecordingPermissionState: vi.fn(),
   requestPermissionWithFlow: vi.fn(),
   openPermissionSettingsWithFlow: vi.fn(),
   requestPermission: vi.fn(),
@@ -25,6 +26,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
     doPermissionsCheck: mocks.doPermissionsCheck,
+    checkScreenRecordingPermissionState:
+      mocks.checkScreenRecordingPermissionState,
     requestPermission: mocks.requestPermission,
     openPermissionSettings: mocks.openPermissionSettings,
   },
@@ -68,6 +71,10 @@ describe("PermissionBanner", () => {
     mocks.listen.mockResolvedValue(() => {});
     mocks.requestPermissionWithFlow.mockResolvedValue(undefined);
     mocks.relaunch.mockResolvedValue(undefined);
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "denied",
+      relaunchRequired: false,
+    });
   });
 
   afterEach(() => {
@@ -116,24 +123,21 @@ describe("PermissionBanner", () => {
     );
   });
 
-  it("changes to an explicit relaunch after the OS grant transition", async () => {
+  it("shows the process-wide relaunch requirement even without a local transition", async () => {
     mocks.settings.disableVision = false;
-    mocks.doPermissionsCheck
-      .mockResolvedValueOnce({
-        screenRecording: "denied",
-        microphone: "denied",
-        accessibility: "denied",
-      })
-      .mockResolvedValue({
-        screenRecording: "granted",
-        microphone: "denied",
-        accessibility: "denied",
-      });
+    mocks.doPermissionsCheck.mockResolvedValue({
+      screenRecording: "granted",
+      microphone: "denied",
+      accessibility: "denied",
+    });
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "granted",
+      relaunchRequired: true,
+    });
 
     render(<PermissionBanner />);
     await act(async () => {
       await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(3000);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Relaunch Civitas" }));

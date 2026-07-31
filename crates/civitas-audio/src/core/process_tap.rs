@@ -82,9 +82,10 @@ fn detect_os_version() -> Option<(u64, u64, u64)> {
 /// { "excluded_apps": [{ "bundle_id": "com.example.app", "name": "Example" }] }
 /// ```
 ///
-/// Path defaults to `$HOME/.civitas/audio-exclusions.json` and can be
-/// overridden with the `CIVITAS_AUDIO_EXCLUSIONS_PATH` environment
-/// variable. The engine reads the file on every Process Tap rebuild and
+/// Path defaults to `CIVITAS_DATA_DIR/audio-exclusions.json` (or
+/// `$HOME/.civitas/audio-exclusions.json`) and can be overridden with the
+/// `CIVITAS_AUDIO_EXCLUSIONS_PATH` environment variable. The engine reads the
+/// file on every Process Tap rebuild and
 /// polls its mtime + the resolved AudioObjectID set on the existing 500ms
 /// loop in [`spawn_process_tap_capture`], so changes (file edits, an
 /// excluded app launching, or an excluded app quitting) take effect without
@@ -119,18 +120,27 @@ mod exclusions {
     }
 
     /// Returns the active config-file path: env override wins, else
+    /// `CIVITAS_DATA_DIR/audio-exclusions.json`, falling back to
     /// `$HOME/.civitas/audio-exclusions.json`.
     pub fn config_path() -> PathBuf {
         let override_val = std::env::var(ENV_OVERRIDE).ok();
+        let data_dir = std::env::var("CIVITAS_DATA_DIR").ok();
         let home = std::env::var("HOME").unwrap_or_default();
-        resolved_path(override_val.as_deref(), &home)
+        resolved_path(override_val.as_deref(), data_dir.as_deref(), &home)
     }
 
     /// Pure resolution helper, factored out for testability without
     /// mutating process-wide environment variables.
-    fn resolved_path(env_override: Option<&str>, home: &str) -> PathBuf {
-        if let Some(p) = env_override {
+    fn resolved_path(
+        env_override: Option<&str>,
+        data_dir_override: Option<&str>,
+        home: &str,
+    ) -> PathBuf {
+        if let Some(p) = env_override.filter(|path| !path.is_empty()) {
             return PathBuf::from(p);
+        }
+        if let Some(p) = data_dir_override.filter(|path| !path.is_empty()) {
+            return PathBuf::from(p).join("audio-exclusions.json");
         }
         PathBuf::from(home).join(DEFAULT_RELATIVE_PATH)
     }
@@ -282,13 +292,23 @@ mod exclusions {
 
         #[test]
         fn resolved_path_env_override_wins() {
-            let p = resolved_path(Some("/tmp/custom.json"), "/Users/anyone");
+            let p = resolved_path(
+                Some("/tmp/custom.json"),
+                Some("/tmp/civitas-data"),
+                "/Users/anyone",
+            );
             assert_eq!(p, PathBuf::from("/tmp/custom.json"));
         }
 
         #[test]
+        fn resolved_path_uses_the_active_civitas_data_boundary() {
+            let p = resolved_path(None, Some("/tmp/civitas-data"), "/Users/anyone");
+            assert_eq!(p, PathBuf::from("/tmp/civitas-data/audio-exclusions.json"));
+        }
+
+        #[test]
         fn resolved_path_default_uses_home() {
-            let p = resolved_path(None, "/Users/anyone");
+            let p = resolved_path(None, None, "/Users/anyone");
             assert_eq!(
                 p,
                 PathBuf::from("/Users/anyone/.civitas/audio-exclusions.json")

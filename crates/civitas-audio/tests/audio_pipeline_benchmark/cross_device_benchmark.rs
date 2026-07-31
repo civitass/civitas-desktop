@@ -116,6 +116,7 @@ fn analyze_cross_device(
 
 /// Synthetic cross-device test: mic captures local speaker, system captures remote.
 #[tokio::test]
+#[ignore = "requires a pre-staged checksum-verified Silero model"]
 async fn cross_device_coverage_synthetic() {
     println!("\n--- Cross-Device Coverage: Synthetic ---");
 

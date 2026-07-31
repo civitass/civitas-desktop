@@ -20,6 +20,7 @@ use sqlx::ValueRef;
 use std::borrow::Cow;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -52,6 +53,34 @@ const DEDUP_TIME_WINDOW_SECS: i64 = 45;
 /// Higher = stricter matching, lower = more aggressive deduplication.
 const DEDUP_SIMILARITY_THRESHOLD: f64 = 0.85;
 const FRAMES_FTS_EXTERNAL_CONTENT_MIGRATION_VERSION: i64 = 20260415000000;
+const INFERENCE_REQUEST_CONTRACT_MIGRATION_VERSION: i64 = 20260729050000;
+const INFERENCE_AUDIT_TABLE: &str = "inference_request_audit";
+const INFERENCE_AUDIT_DRIFT_BACKUP_TABLE: &str = "inference_request_audit__runtime_schema_recovery";
+const CJK_SEARCH_BACKFILL_JOB: &str = "cjk-search-shadow-v1";
+const CJK_SEARCH_BACKFILL_BATCH_SIZE: i64 = 500;
+const CJK_SEARCH_BACKFILL_YIELD_MS: u64 = 25;
+
+const INFERENCE_AUDIT_BASE_TABLE_SQL: &str = r#"
+CREATE TABLE inference_request_audit (
+    id                  TEXT PRIMARY KEY,
+    purpose             TEXT NOT NULL,
+    provider_profile_id TEXT NOT NULL,
+    endpoint_host       TEXT NOT NULL,
+    request_bytes       INTEGER NOT NULL CHECK (request_bytes >= 0),
+    status              TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    completed_at        TEXT
+)"#;
+
+const INFERENCE_AUDIT_CONTRACT_COLUMNS: &[&str] = &[
+    "data_classes",
+    "source_count",
+    "estimated_input_tokens",
+    "redaction_status",
+    "timeout_ms",
+    "retry_policy",
+    "cancellation_policy",
+];
 
 struct CommentOnlyMigrationChecksum {
     version: i64,
@@ -943,6 +972,9 @@ pub struct DatabaseManager {
     /// pooled connections cache the file header's auto_vacuum mode and
     /// report stale values after a conversion VACUUM).
     connection_string: Arc<str>,
+    /// Guards long-running background maintenance against accidental duplicate
+    /// startup from multiple UI/service call sites in the same process.
+    maintenance_started: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -1154,6 +1186,7 @@ impl DatabaseManager {
             heavy_read_semaphore: Arc::new(Semaphore::new(2)),
             write_queue,
             connection_string: Arc::from(connection_string.as_str()),
+            maintenance_started: AtomicBool::new(false),
         };
 
         // Checkpoint any stale WAL before running migrations or starting captures.
@@ -1178,7 +1211,7 @@ impl DatabaseManager {
         }
 
         // Run migrations after establishing the connection
-        Self::run_migrations(&db_manager.pool).await?;
+        Self::ensure_schema(&db_manager.pool).await?;
 
         // Surface corruption proactively at boot with a recovery hint,
         // instead of only discovering it later via worker query errors
@@ -1188,9 +1221,13 @@ impl DatabaseManager {
         Ok(db_manager)
     }
 
-    async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    /// Bring an already-open Civitas SQLite pool to the current canonical
+    /// schema. All persistent callers, including startup credential migration,
+    /// must pass through this gate before feature modules run runtime DDL.
+    pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         let mut migrator = sqlx::migrate!("./src/migrations");
         migrator.set_ignore_missing(true);
+        Self::stage_inference_audit_runtime_drift(pool).await?;
         Self::apply_comment_only_migration_compatibility(pool, &mut migrator).await?;
         Self::log_pending_search_index_migration(pool, &migrator).await;
         match migrator.run(pool).await {
@@ -1206,18 +1243,13 @@ impl DatabaseManager {
                 return Err(e.into());
             }
         }
+        Self::restore_inference_audit_runtime_drift(pool).await?;
 
         // Fix: ensure event-driven capture columns exist on the frames table.
         // An earlier version of migration 20260220000000 may have been applied
         // without these columns. SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS,
         // so we check pragma_table_info and add missing columns in Rust.
         Self::ensure_event_driven_columns(pool).await?;
-
-        // P4 CJK retrieval: populate shadow-token columns for existing rows
-        // after the schema migration. This backfill is idempotent and scoped
-        // to CJK-bearing rows only; new writes populate the same columns at
-        // ingestion time.
-        Self::backfill_cjk_search_text(pool).await?;
 
         Ok(())
     }
@@ -1260,9 +1292,283 @@ impl DatabaseManager {
         Ok(())
     }
 
-    async fn backfill_cjk_search_text(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-        const BATCH_SIZE: i64 = 1000;
+    async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        )
+        .bind(table)
+        .fetch_one(pool)
+        .await?;
+        Ok(count > 0)
+    }
 
+    async fn migration_applied(pool: &SqlitePool, version: i64) -> Result<bool, sqlx::Error> {
+        if !Self::table_exists(pool, "_sqlx_migrations").await? {
+            return Ok(false);
+        }
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1 AND success = TRUE",
+        )
+        .bind(version)
+        .fetch_one(pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    /// Recover the schema shape produced by prerelease runtime DDL without
+    /// rewriting SQLx history or losing its metadata rows.
+    ///
+    /// Older builds could open the provider registry before the central
+    /// migrator. Their `CREATE TABLE IF NOT EXISTS` created the *new* audit
+    /// columns, then migration 20260729050000 failed on its first `ADD COLUMN`.
+    /// Stage that table, recreate the exact pre-migration base contract, let
+    /// SQLx apply and record the real migration, then restore the staged
+    /// metadata in `restore_inference_audit_runtime_drift`.
+    async fn stage_inference_audit_runtime_drift(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        if Self::migration_applied(pool, INFERENCE_REQUEST_CONTRACT_MIGRATION_VERSION).await?
+            || !Self::table_exists(pool, INFERENCE_AUDIT_TABLE).await?
+            || Self::table_exists(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE).await?
+        {
+            return Ok(());
+        }
+
+        let mut has_runtime_contract_column = false;
+        for column in INFERENCE_AUDIT_CONTRACT_COLUMNS {
+            has_runtime_contract_column |=
+                Self::table_has_column(pool, INFERENCE_AUDIT_TABLE, column).await?;
+        }
+        if !has_runtime_contract_column {
+            return Ok(());
+        }
+
+        for column in [
+            "id",
+            "purpose",
+            "provider_profile_id",
+            "endpoint_host",
+            "request_bytes",
+            "status",
+            "created_at",
+            "completed_at",
+        ] {
+            if !Self::table_has_column(pool, INFERENCE_AUDIT_TABLE, column).await? {
+                return Err(sqlx::Error::Protocol(format!(
+                    "cannot recover inference audit runtime schema: missing base column {column}"
+                )));
+            }
+        }
+
+        let mut tx = pool.begin().await?;
+        sqlx::query(&format!(
+            "CREATE TABLE {INFERENCE_AUDIT_DRIFT_BACKUP_TABLE} AS \
+             SELECT * FROM {INFERENCE_AUDIT_TABLE}"
+        ))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(&format!("DROP TABLE {INFERENCE_AUDIT_TABLE}"))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(INFERENCE_AUDIT_BASE_TABLE_SQL)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&format!(
+            "INSERT INTO {INFERENCE_AUDIT_TABLE} (
+                id, purpose, provider_profile_id, endpoint_host, request_bytes,
+                status, created_at, completed_at
+             )
+             SELECT
+                id, purpose, provider_profile_id, endpoint_host,
+                CASE WHEN request_bytes >= 0 THEN request_bytes ELSE 0 END,
+                status, created_at, completed_at
+             FROM {INFERENCE_AUDIT_DRIFT_BACKUP_TABLE}"
+        ))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        info!("staged prerelease inference audit schema for lossless migration recovery");
+        Ok(())
+    }
+
+    async fn restore_inference_audit_runtime_drift(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        if !Self::table_exists(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE).await? {
+            return Ok(());
+        }
+        if !Self::migration_applied(pool, INFERENCE_REQUEST_CONTRACT_MIGRATION_VERSION).await?
+            || !Self::table_exists(pool, INFERENCE_AUDIT_TABLE).await?
+        {
+            return Err(sqlx::Error::Protocol(
+                "inference audit recovery is staged but the canonical migration is unavailable"
+                    .to_string(),
+            ));
+        }
+
+        let staged_count: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {INFERENCE_AUDIT_DRIFT_BACKUP_TABLE}"
+        ))
+        .fetch_one(pool)
+        .await?;
+        let canonical_count: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {INFERENCE_AUDIT_TABLE}"))
+                .fetch_one(pool)
+                .await?;
+        if staged_count != canonical_count {
+            return Err(sqlx::Error::Protocol(format!(
+                "inference audit recovery row-count mismatch: staged={staged_count}, canonical={canonical_count}"
+            )));
+        }
+
+        let mut assignments = Vec::new();
+        if Self::table_has_column(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE, "data_classes").await? {
+            assignments.push(
+                "data_classes = COALESCE((
+                    SELECT staged.data_classes
+                    FROM inference_request_audit__runtime_schema_recovery AS staged
+                    WHERE staged.id = inference_request_audit.id
+                ), '[]')",
+            );
+        }
+        if Self::table_has_column(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE, "source_count").await? {
+            assignments.push(
+                "source_count = CASE
+                    WHEN COALESCE((
+                        SELECT staged.source_count
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ), 0) >= 0
+                    THEN COALESCE((
+                        SELECT staged.source_count
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ), 0)
+                    ELSE 0
+                END",
+            );
+        }
+        if Self::table_has_column(
+            pool,
+            INFERENCE_AUDIT_DRIFT_BACKUP_TABLE,
+            "estimated_input_tokens",
+        )
+        .await?
+        {
+            assignments.push(
+                "estimated_input_tokens = CASE
+                    WHEN (
+                        SELECT staged.estimated_input_tokens
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ) IS NULL
+                    OR (
+                        SELECT staged.estimated_input_tokens
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ) >= 0
+                    THEN (
+                        SELECT staged.estimated_input_tokens
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    )
+                    ELSE NULL
+                END",
+            );
+        }
+        if Self::table_has_column(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE, "redaction_status")
+            .await?
+        {
+            assignments.push(
+                "redaction_status = CASE
+                    WHEN (
+                        SELECT staged.redaction_status
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ) IN ('applied', 'not-applied', 'not-applicable')
+                    THEN (
+                        SELECT staged.redaction_status
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    )
+                    ELSE 'not-applied'
+                END",
+            );
+        }
+        if Self::table_has_column(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE, "timeout_ms").await? {
+            assignments.push(
+                "timeout_ms = CASE
+                    WHEN (
+                        SELECT staged.timeout_ms
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    ) BETWEEN 1000 AND 120000
+                    THEN (
+                        SELECT staged.timeout_ms
+                        FROM inference_request_audit__runtime_schema_recovery AS staged
+                        WHERE staged.id = inference_request_audit.id
+                    )
+                    ELSE 120000
+                END",
+            );
+        }
+        if Self::table_has_column(pool, INFERENCE_AUDIT_DRIFT_BACKUP_TABLE, "retry_policy").await? {
+            assignments.push("retry_policy = 'never'");
+        }
+        if Self::table_has_column(
+            pool,
+            INFERENCE_AUDIT_DRIFT_BACKUP_TABLE,
+            "cancellation_policy",
+        )
+        .await?
+        {
+            assignments.push("cancellation_policy = 'deadline'");
+        }
+
+        let mut tx = pool.begin().await?;
+        if !assignments.is_empty() {
+            let restore_sql = format!(
+                "UPDATE {INFERENCE_AUDIT_TABLE} SET {} \
+                 WHERE EXISTS (
+                    SELECT 1
+                    FROM {INFERENCE_AUDIT_DRIFT_BACKUP_TABLE} AS staged
+                    WHERE staged.id = {INFERENCE_AUDIT_TABLE}.id
+                 )",
+                assignments.join(", ")
+            );
+            sqlx::query(&restore_sql).execute(&mut *tx).await?;
+        }
+        sqlx::query(&format!("DROP TABLE {INFERENCE_AUDIT_DRIFT_BACKUP_TABLE}"))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        info!(
+            rows = staged_count,
+            "restored prerelease inference audit metadata into the canonical schema"
+        );
+        Ok(())
+    }
+
+    /// Start resumable maintenance after the loopback API is already bound.
+    /// Search remains correct during the backfill because legacy NULL rows use
+    /// the bounded LIKE fallback; only CJK FTS acceleration is still warming.
+    pub fn start_background_maintenance(self: &Arc<Self>) {
+        if self
+            .maintenance_started
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let db = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(error) = db.backfill_cjk_search_text().await {
+                warn!(
+                    error = %error,
+                    "background CJK search maintenance paused; it will resume next launch"
+                );
+            }
+        });
+    }
+
+    async fn backfill_cjk_search_text(&self) -> Result<(), sqlx::Error> {
         let jobs: &[(&str, &str, &str)] = &[
             (
                 "frames",
@@ -1293,38 +1599,138 @@ impl DatabaseManager {
         ];
 
         for (table, expr, id_column) in jobs {
-            if !Self::table_has_column(pool, table, "cjk_search_text").await? {
+            if !Self::table_has_column(&self.pool, table, "cjk_search_text").await? {
                 continue;
             }
 
+            let progress = sqlx::query_as::<_, (i64, i64, String)>(
+                "SELECT cursor_id, target_id, state
+                 FROM database_maintenance_progress
+                 WHERE job_name = ?1 AND scope_name = ?2",
+            )
+            .bind(CJK_SEARCH_BACKFILL_JOB)
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            let (mut cursor, target, state) = if let Some(progress) = progress {
+                progress
+            } else {
+                let target: i64 = sqlx::query_scalar(&format!(
+                    "SELECT COALESCE(MAX({id_column}), 0) FROM {table}"
+                ))
+                .fetch_one(&self.pool)
+                .await?;
+                let mut tx = self.begin_immediate_with_retry().await?;
+                sqlx::query(
+                    "INSERT OR IGNORE INTO database_maintenance_progress (
+                        job_name, scope_name, cursor_id, target_id, state,
+                        started_at, updated_at
+                     ) VALUES (
+                        ?1, ?2, 0, ?3, 'pending',
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     )",
+                )
+                .bind(CJK_SEARCH_BACKFILL_JOB)
+                .bind(table)
+                .bind(target)
+                .execute(&mut **tx.conn())
+                .await?;
+                tx.commit().await?;
+                sqlx::query_as::<_, (i64, i64, String)>(
+                    "SELECT cursor_id, target_id, state
+                     FROM database_maintenance_progress
+                     WHERE job_name = ?1 AND scope_name = ?2",
+                )
+                .bind(CJK_SEARCH_BACKFILL_JOB)
+                .bind(table)
+                .fetch_one(&self.pool)
+                .await?
+            };
+            if state == "complete" {
+                continue;
+            }
+
+            let mut updated_rows = 0_i64;
             loop {
                 let sql = format!(
-                    "SELECT {id_column}, {expr} AS source_text FROM {table} \
-                     WHERE cjk_search_text IS NULL \
-                       AND (({expr}) GLOB '*[一-龥]*' \
-                         OR ({expr}) GLOB '*[ぁ-ん]*' \
-                         OR ({expr}) GLOB '*[ァ-ン]*' \
-                         OR ({expr}) GLOB '*[가-힣]*') \
-                     LIMIT {BATCH_SIZE}",
+                    "SELECT {id_column}, {expr} AS source_text, cjk_search_text
+                     FROM {table}
+                     WHERE {id_column} > ?1 AND {id_column} <= ?2
+                     ORDER BY {id_column}
+                     LIMIT ?3",
                 );
-                let rows = sqlx::query_as::<_, (i64, String)>(&sql)
-                    .fetch_all(pool)
+                let rows = sqlx::query_as::<_, (i64, String, Option<String>)>(&sql)
+                    .bind(cursor)
+                    .bind(target)
+                    .bind(CJK_SEARCH_BACKFILL_BATCH_SIZE)
+                    .fetch_all(&self.pool)
                     .await?;
                 if rows.is_empty() {
+                    let mut tx = self.begin_immediate_with_retry().await?;
+                    sqlx::query(
+                        "UPDATE database_maintenance_progress
+                         SET cursor_id = target_id,
+                             state = 'complete',
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                             completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                         WHERE job_name = ?1 AND scope_name = ?2",
+                    )
+                    .bind(CJK_SEARCH_BACKFILL_JOB)
+                    .bind(table)
+                    .execute(&mut **tx.conn())
+                    .await?;
+                    tx.commit().await?;
                     break;
                 }
 
+                let next_cursor = rows.last().map(|row| row.0).unwrap_or(cursor);
                 let update_sql =
-                    format!("UPDATE {table} SET cjk_search_text = ?1 WHERE {id_column} = ?2");
-                for (id, source_text) in rows {
+                    format!("UPDATE {table} SET cjk_search_text = ?1 WHERE {id_column} = ?2 AND cjk_search_text IS NULL");
+                let mut tx = self.begin_immediate_with_retry().await?;
+                for (id, source_text, existing_shadow) in rows {
+                    if existing_shadow.is_some() {
+                        continue;
+                    }
                     let shadow = crate::text_normalizer::cjk_search_text(&source_text);
-                    sqlx::query(&update_sql)
+                    if shadow.is_empty() {
+                        continue;
+                    }
+                    updated_rows += sqlx::query(&update_sql)
                         .bind(shadow)
                         .bind(id)
-                        .execute(pool)
-                        .await?;
+                        .execute(&mut **tx.conn())
+                        .await?
+                        .rows_affected() as i64;
                 }
+                sqlx::query(
+                    "UPDATE database_maintenance_progress
+                     SET cursor_id = ?3,
+                         state = 'running',
+                         started_at = COALESCE(
+                             started_at,
+                             strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                         ),
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE job_name = ?1 AND scope_name = ?2",
+                )
+                .bind(CJK_SEARCH_BACKFILL_JOB)
+                .bind(table)
+                .bind(next_cursor)
+                .execute(&mut **tx.conn())
+                .await?;
+                tx.commit().await?;
+                cursor = next_cursor;
+                tokio::time::sleep(Duration::from_millis(CJK_SEARCH_BACKFILL_YIELD_MS)).await;
             }
+
+            info!(
+                table,
+                target_id = target,
+                updated_rows,
+                "background CJK search maintenance complete"
+            );
         }
 
         Ok(())
@@ -4610,7 +5016,7 @@ impl DatabaseManager {
             },
             fts_condition = if has_fts {
                 if cjk_like_fallback {
-                    "AND (frames.id IN (SELECT rowid FROM frames_fts WHERE frames_fts MATCH ?1 ORDER BY rank LIMIT 5000) OR (frames.cjk_search_text IS NULL AND (COALESCE(frames.full_text, ocr_text.text, frames.accessibility_text, '') LIKE '%' || ?13 || '%' OR COALESCE(frames.name, '') LIKE '%' || ?13 || '%' OR COALESCE(frames.document_path, '') LIKE '%' || ?13 || '%')))"
+                    "AND (frames.id IN (SELECT rowid FROM frames_fts WHERE frames_fts MATCH ?1 ORDER BY rank LIMIT 5000) OR (frames.cjk_search_text IS NULL AND frames.id > COALESCE((SELECT cursor_id FROM database_maintenance_progress WHERE job_name = 'cjk-search-shadow-v1' AND scope_name = 'frames'), 0) AND (COALESCE(frames.full_text, ocr_text.text, frames.accessibility_text, '') LIKE '%' || ?13 || '%' OR COALESCE(frames.name, '') LIKE '%' || ?13 || '%' OR COALESCE(frames.document_path, '') LIKE '%' || ?13 || '%')))"
                 } else {
                     "AND frames_fts MATCH ?1"
                 }
@@ -8964,7 +9370,9 @@ impl DatabaseManager {
             if cjk_like_fallback {
                 conditions.push(
                     "(f.id IN (SELECT rowid FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000) \
-                      OR (f.cjk_search_text IS NULL AND (COALESCE(f.full_text, o.text, f.accessibility_text, '') LIKE '%' || ? || '%' \
+                      OR (f.cjk_search_text IS NULL \
+                       AND f.id > COALESCE((SELECT cursor_id FROM database_maintenance_progress WHERE job_name = 'cjk-search-shadow-v1' AND scope_name = 'frames'), 0) \
+                       AND (COALESCE(f.full_text, o.text, f.accessibility_text, '') LIKE '%' || ? || '%' \
                        OR COALESCE(f.name, '') LIKE '%' || ? || '%' \
                        OR COALESCE(f.document_path, '') LIKE '%' || ? || '%')))",
                 );
@@ -9168,7 +9576,7 @@ LIMIT ? OFFSET ?
         if use_fts {
             if cjk_like_fallback {
                 conditions.push(
-                    "(e.id IN (SELECT rowid FROM elements_fts WHERE elements_fts MATCH ? ORDER BY rank LIMIT 5000) OR (e.cjk_search_text IS NULL AND e.text LIKE '%' || ? || '%'))"
+                    "(e.id IN (SELECT rowid FROM elements_fts WHERE elements_fts MATCH ? ORDER BY rank LIMIT 5000) OR (e.cjk_search_text IS NULL AND e.id > COALESCE((SELECT cursor_id FROM database_maintenance_progress WHERE job_name = 'cjk-search-shadow-v1' AND scope_name = 'elements'), 0) AND e.text LIKE '%' || ? || '%'))"
                         .to_string(),
                 );
             } else {
@@ -13242,6 +13650,205 @@ mod tests {
                 .as_ref(),
             current_checksum
         );
+    }
+
+    #[tokio::test]
+    async fn prerelease_inference_runtime_schema_is_recovered_without_losing_audit_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("runtime-schema-drift.sqlite");
+        let url = format!("sqlite:{}?mode=rwc", db_path.display());
+        let pool = SqlitePool::connect(&url).await.expect("open prerelease db");
+
+        // Exact failure shape from the prerelease desktop: inference runtime
+        // DDL ran before SQLx and created the advanced columns without CHECK
+        // constraints or a migration-history table.
+        sqlx::query(
+            "CREATE TABLE inference_request_audit (
+                id TEXT PRIMARY KEY,
+                purpose TEXT NOT NULL,
+                provider_profile_id TEXT NOT NULL,
+                endpoint_host TEXT NOT NULL,
+                request_bytes INTEGER NOT NULL,
+                data_classes TEXT NOT NULL DEFAULT '[]',
+                source_count INTEGER NOT NULL DEFAULT 0,
+                estimated_input_tokens INTEGER,
+                redaction_status TEXT NOT NULL DEFAULT 'not-applied',
+                timeout_ms INTEGER NOT NULL DEFAULT 120000,
+                retry_policy TEXT NOT NULL DEFAULT 'never',
+                cancellation_policy TEXT NOT NULL DEFAULT 'deadline',
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create prerelease audit table");
+        sqlx::query(
+            "INSERT INTO inference_request_audit (
+                id, purpose, provider_profile_id, endpoint_host, request_bytes,
+                data_classes, source_count, estimated_input_tokens,
+                redaction_status, timeout_ms, retry_policy, cancellation_policy,
+                status, created_at
+             ) VALUES (
+                'audit-1', 'ask', 'profile-1', 'localhost', 42,
+                '[\"prompt-text\"]', 2, 11,
+                'applied', 30000, 'never', 'deadline',
+                'success', '2026-07-31T00:00:00Z'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed prerelease metadata");
+        pool.close().await;
+
+        let db = DatabaseManager::new(&db_path.to_string_lossy(), DbConfig::default())
+            .await
+            .expect("recover and migrate database");
+        let recovered: (String, i64, Option<i64>, String, i64, String, String) = sqlx::query_as(
+            "SELECT data_classes, source_count, estimated_input_tokens,
+                        redaction_status, timeout_ms, retry_policy,
+                        cancellation_policy
+                 FROM inference_request_audit WHERE id = 'audit-1'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .expect("read recovered metadata");
+        assert_eq!(
+            recovered,
+            (
+                "[\"prompt-text\"]".to_string(),
+                2,
+                Some(11),
+                "applied".to_string(),
+                30_000,
+                "never".to_string(),
+                "deadline".to_string(),
+            )
+        );
+
+        let staged_table_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table'
+               AND name = 'inference_request_audit__runtime_schema_recovery'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .expect("inspect recovery table");
+        assert_eq!(staged_table_count, 0);
+        let migration_applied: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations
+             WHERE version = 20260729050000 AND success = TRUE",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .expect("inspect migration history");
+        assert_eq!(migration_applied, 1);
+
+        assert!(
+            sqlx::query(
+                "INSERT INTO inference_request_audit (
+                    id, purpose, provider_profile_id, endpoint_host,
+                    request_bytes, source_count, status, created_at
+                 ) VALUES (
+                    'bad-request', 'ask', 'profile-1', 'localhost',
+                    -1, 0, 'started', '2026-07-31T00:00:00Z'
+                 )",
+            )
+            .execute(&db.pool)
+            .await
+            .is_err(),
+            "canonical request_bytes constraint must be enforced"
+        );
+        assert!(
+            sqlx::query(
+                "INSERT INTO inference_request_audit (
+                    id, purpose, provider_profile_id, endpoint_host,
+                    request_bytes, source_count, status, created_at
+                 ) VALUES (
+                    'bad-source-count', 'ask', 'profile-1', 'localhost',
+                    1, -1, 'started', '2026-07-31T00:00:00Z'
+                 )",
+            )
+            .execute(&db.pool)
+            .await
+            .is_err(),
+            "canonical source_count constraint must be enforced"
+        );
+    }
+
+    #[tokio::test]
+    async fn cjk_backfill_is_resumable_and_never_runs_on_the_startup_gate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("cjk-background-maintenance.sqlite");
+        let db = DatabaseManager::new(&db_path.to_string_lossy(), DbConfig::default())
+            .await
+            .expect("db");
+
+        let progress_at_startup: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM database_maintenance_progress")
+                .fetch_one(&db.pool)
+                .await
+                .expect("inspect startup progress");
+        assert_eq!(
+            progress_at_startup, 0,
+            "database initialization must not synchronously start the backfill"
+        );
+
+        sqlx::query(
+            "INSERT INTO frames (timestamp, full_text, cjk_search_text)
+             VALUES
+                ('2026-07-31T00:00:00Z', '中文工作流', NULL),
+                ('2026-07-31T00:01:00Z', 'ordinary English workflow', NULL)",
+        )
+        .execute(&db.pool)
+        .await
+        .expect("seed legacy frames");
+
+        db.backfill_cjk_search_text()
+            .await
+            .expect("run resumable maintenance");
+
+        let shadows: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT cjk_search_text FROM frames ORDER BY id")
+                .fetch_all(&db.pool)
+                .await
+                .expect("read backfilled shadows");
+        assert!(
+            shadows[0].as_deref().is_some_and(|value| !value.is_empty()),
+            "CJK text receives a search shadow"
+        );
+        assert_eq!(
+            shadows[1], None,
+            "non-CJK legacy rows are not rewritten or inflated"
+        );
+
+        let before_second_run: Vec<(String, i64, i64, String, String)> = sqlx::query_as(
+            "SELECT scope_name, cursor_id, target_id, state, updated_at
+             FROM database_maintenance_progress
+             WHERE job_name = 'cjk-search-shadow-v1'
+             ORDER BY scope_name",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .expect("read completed progress");
+        assert!(before_second_run
+            .iter()
+            .all(|(_, cursor, target, state, _)| state == "complete" && cursor == target));
+
+        db.backfill_cjk_search_text()
+            .await
+            .expect("completed maintenance is a no-op");
+        let after_second_run: Vec<(String, i64, i64, String, String)> = sqlx::query_as(
+            "SELECT scope_name, cursor_id, target_id, state, updated_at
+             FROM database_maintenance_progress
+             WHERE job_name = 'cjk-search-shadow-v1'
+             ORDER BY scope_name",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .expect("read no-op progress");
+        assert_eq!(after_second_run, before_second_run);
     }
 
     fn create_test_block(

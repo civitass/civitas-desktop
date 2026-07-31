@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -35,7 +35,6 @@ interface PermissionState {
 export function PermissionBanner() {
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
   const [relaunchRequired, setRelaunchRequired] = useState(false);
-  const previousPermissionsRef = useRef<PermissionState | null>(null);
   const { isMac } = usePlatform();
   const { settings } = useSettings();
   const requirements = useMemo(
@@ -52,26 +51,17 @@ export function PermissionBanner() {
     if (!isMac) return;
 
     try {
-      const result = await commands.doPermissionsCheck(false);
+      const [result, screenState] = await Promise.all([
+        commands.doPermissionsCheck(false),
+        commands.checkScreenRecordingPermissionState(),
+      ]);
       const next = {
-        screenOk: isPermissionGranted(result.screenRecording),
+        screenOk: isPermissionGranted(screenState.status),
         microphoneOk: isPermissionGranted(result.microphone),
       };
-      const previous = previousPermissionsRef.current;
-
-      if (
-        previous &&
-        ((!previous.screenOk &&
-          next.screenOk &&
-          requirements.screenRecording) ||
-          (!previous.microphoneOk &&
-            next.microphoneOk &&
-            requirements.microphone))
-      ) {
-        setRelaunchRequired(true);
-      }
-
-      previousPermissionsRef.current = next;
+      setRelaunchRequired(
+        requirements.screenRecording && screenState.relaunchRequired,
+      );
       setPermissions(next);
     } catch {
       // The recovery surface provides an explicit retry if the native check

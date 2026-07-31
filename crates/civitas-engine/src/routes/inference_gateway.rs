@@ -24,7 +24,7 @@ use crate::{
     inference::{
         self, AuditRequestMetadata, CancellationPolicy, DirectProvider, GenerateRequest,
         GenerateRequestMetadata, InferenceDataClass, InferenceProvider, InferencePurpose,
-        ProviderHttpResponse, RedactionStatus, RetryPolicy,
+        ModelDescriptor, ProviderHttpResponse, ProviderProfile, RedactionStatus, RetryPolicy,
     },
     server::AppState,
 };
@@ -67,27 +67,55 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     {
         return audit_unavailable_response();
     }
-    match result {
-        Ok(models) => Json(json!({
-            "object": "list",
-            "provider_profile_id": profile.id,
-            "provider": profile.provider.as_str(),
-            "capability_registry_version": inference::MODEL_CAPABILITY_REGISTRY_VERSION,
-            "data": models.into_iter().map(|model| json!({
-                "id": model.id,
-                "object": "model",
-                "name": model.name,
-                "owned_by": model.owned_by.unwrap_or_else(|| profile.provider.as_str().to_string()),
-                "capabilities": model.capabilities
-            })).collect::<Vec<_>>()
-        }))
-        .into_response(),
-        Err(error) => safe_gateway_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "models_unavailable",
-            &safe_internal_message(&error),
-        ),
+    let (models, catalog_status) = runtime_model_catalog(&profile, result);
+    Json(json!({
+        "object": "list",
+        "provider_profile_id": profile.id,
+        "provider": profile.provider.as_str(),
+        "catalog_status": catalog_status,
+        "capability_registry_version": inference::MODEL_CAPABILITY_REGISTRY_VERSION,
+        "data": models.into_iter().map(|model| json!({
+            "id": model.id,
+            "object": "model",
+            "name": model.name,
+            "owned_by": model.owned_by.unwrap_or_else(|| profile.provider.as_str().to_string()),
+            "capabilities": model.capabilities
+        })).collect::<Vec<_>>()
+    }))
+    .into_response()
+}
+
+/// The configured model is always a valid runtime choice even when provider
+/// discovery is unavailable or returns only foundation-model IDs while the
+/// user selected an inference-profile ID (notably Amazon Bedrock).
+fn runtime_model_catalog(
+    profile: &ProviderProfile,
+    discovered: anyhow::Result<Vec<ModelDescriptor>>,
+) -> (Vec<ModelDescriptor>, &'static str) {
+    let mut models = match discovered {
+        Ok(models) => models,
+        Err(_) => {
+            warn!("provider model discovery was unavailable; serving the configured model only");
+            Vec::new()
+        }
+    };
+    let catalog_status = if models.is_empty() {
+        "configured-only"
+    } else {
+        "provider"
+    };
+    if !models.iter().any(|model| model.id == profile.model) {
+        models.push(ModelDescriptor {
+            id: profile.model.clone(),
+            name: profile.model.clone(),
+            owned_by: Some(profile.provider.as_str().to_string()),
+            capabilities: profile
+                .provider
+                .capabilities_for_model(&profile.model)
+                .selected_model,
+        });
     }
+    (models, catalog_status)
 }
 
 pub async fn usage() -> impl IntoResponse {
@@ -213,7 +241,13 @@ pub async fn chat_completions(
             provider_response(materialized, &profile, &audit_id)
         }
         Err(error) => {
-            if inference::finish_audit(&state.db.pool, &audit_id, "transport_error")
+            let network_policy_blocked = is_network_policy_blocked(&error);
+            let audit_status = if network_policy_blocked {
+                "network_policy_blocked"
+            } else {
+                "transport_error"
+            };
+            if inference::finish_audit(&state.db.pool, &audit_id, audit_status)
                 .await
                 .is_err()
             {
@@ -229,6 +263,13 @@ pub async fn chat_completions(
                 profile_id = profile.id,
                 "inference request failed without prompt logging"
             );
+            if network_policy_blocked {
+                return safe_gateway_error(
+                    StatusCode::FORBIDDEN,
+                    "network_policy_blocked",
+                    "Remote AI is off. Allow remote features in Settings → Privacy, then retry.",
+                );
+            }
             safe_gateway_error(
                 StatusCode::BAD_GATEWAY,
                 "provider_unavailable",
@@ -236,6 +277,15 @@ pub async fn chat_completions(
             )
         }
     }
+}
+
+fn is_network_policy_blocked(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<civitas_core::network::NetworkPolicyError>(),
+            Some(civitas_core::network::NetworkPolicyError::Denied { .. })
+        )
+    })
 }
 
 fn validate_chat_request(request: &Value) -> Result<(), (&'static str, &'static str)> {
@@ -553,6 +603,13 @@ struct MaterializedProviderResponse {
     content_type: String,
     body: Vec<u8>,
     retry_after: Option<String>,
+    safe_upstream_error: Option<SafeUpstreamError>,
+}
+
+#[derive(Clone, Copy)]
+struct SafeUpstreamError {
+    kind: &'static str,
+    message: &'static str,
 }
 
 async fn materialize_provider_response(
@@ -572,6 +629,7 @@ async fn materialize_provider_response(
                 content_type: content_type.to_string(),
                 body,
                 retry_after: None,
+                safe_upstream_error: None,
             })
         }
         ProviderHttpResponse::Upstream(mut response) => {
@@ -588,6 +646,7 @@ async fn materialize_provider_response(
                 .and_then(|value| value.to_str().ok())
                 .map(ToOwned::to_owned);
             let mut body = Vec::new();
+            let mut safe_upstream_error = None;
             if status.is_success() {
                 while let Some(chunk) = response.chunk().await? {
                     if body.len().saturating_add(chunk.len()) > MAX_INFERENCE_RESPONSE_BYTES {
@@ -595,15 +654,48 @@ async fn materialize_provider_response(
                     }
                     body.extend_from_slice(&chunk);
                 }
+            } else {
+                const MAX_PROVIDER_ERROR_BYTES: usize = 64 * 1024;
+                let mut provider_error_body = Vec::new();
+                while let Some(chunk) = response.chunk().await? {
+                    if provider_error_body.len().saturating_add(chunk.len())
+                        > MAX_PROVIDER_ERROR_BYTES
+                    {
+                        provider_error_body.clear();
+                        break;
+                    }
+                    provider_error_body.extend_from_slice(&chunk);
+                }
+                safe_upstream_error = classify_safe_upstream_error(status, &provider_error_body);
             }
             Ok(MaterializedProviderResponse {
                 status,
                 content_type,
                 body,
                 retry_after,
+                safe_upstream_error,
             })
         }
     }
+}
+
+fn classify_safe_upstream_error(status: StatusCode, body: &[u8]) -> Option<SafeUpstreamError> {
+    if status != StatusCode::BAD_REQUEST || body.len() > 64 * 1024 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let message = value
+        .get("message")
+        .or_else(|| value.pointer("/error/message"))
+        .and_then(Value::as_str)?
+        .to_ascii_lowercase();
+    if message.contains("unsupported countries, regions, or territories") {
+        return Some(SafeUpstreamError {
+            kind: "provider_region_restricted",
+            message: "This provider does not allow the selected model from your current country or network location. Choose a provider or model available in your region.",
+        });
+    }
+    None
 }
 
 fn receipt_header_value(value: &str) -> String {
@@ -616,7 +708,10 @@ fn provider_response(
     audit_id: &str,
 ) -> Response {
     if !response.status.is_success() {
-        let (kind, message) = classify_provider_error(response.status);
+        let (kind, message) = response
+            .safe_upstream_error
+            .map(|error| (error.kind, error.message))
+            .unwrap_or_else(|| classify_provider_error(response.status));
         let mut result = safe_gateway_error(response.status, kind, message);
         if let Some(retry_after) = response.retry_after {
             if let Ok(value) = retry_after.parse() {
@@ -776,11 +871,38 @@ mod tests {
     }
 
     #[test]
+    fn bedrock_geography_restriction_is_classified_without_forwarding_body() {
+        let upstream = br#"{
+            "message": "Access to Anthropic models is not allowed from unsupported countries, regions, or territories. Request secret: sk-do-not-forward"
+        }"#;
+        let classified = classify_safe_upstream_error(StatusCode::BAD_REQUEST, upstream).unwrap();
+        assert_eq!(classified.kind, "provider_region_restricted");
+        assert!(classified.message.contains("current country"));
+        assert!(!classified.message.contains("sk-do-not-forward"));
+    }
+
+    #[test]
+    fn arbitrary_upstream_error_bodies_are_not_forwarded() {
+        let upstream = br#"{"message":"Unexpected provider detail sk-do-not-forward"}"#;
+        assert!(classify_safe_upstream_error(StatusCode::BAD_REQUEST, upstream).is_none());
+    }
+
+    #[test]
     fn credential_related_internal_errors_are_redacted() {
         let error = anyhow::anyhow!("provider API key is missing: sk-secret");
         let message = safe_internal_message(&error);
         assert!(!message.contains("sk-secret"));
         assert!(message.contains("Settings"));
+    }
+
+    #[test]
+    fn network_policy_denials_remain_distinguishable_through_context() {
+        let source = civitas_core::network::NetworkPolicyError::Denied {
+            purpose: civitas_core::network::EgressPurpose::ProviderInference,
+            destination: civitas_core::network::EgressDestinationClass::Remote,
+        };
+        let error = anyhow::Error::new(source).context("Bedrock request failed");
+        assert!(is_network_policy_blocked(&error));
     }
 
     #[test]
@@ -804,6 +926,39 @@ mod tests {
         let shortened = truncate_message(&message, 240);
         assert_eq!(shortened.chars().count(), 241);
         assert!(shortened.ends_with('…'));
+    }
+
+    #[test]
+    fn runtime_catalog_includes_the_exact_configured_bedrock_profile_id() {
+        let mut profile = ProviderProfile::local_default();
+        profile.provider = crate::inference::ProviderId::Bedrock;
+        profile.model = "us.anthropic.claude-sonnet-4-6".to_string();
+        let foundation = ModelDescriptor {
+            id: "anthropic.claude-sonnet-4-6-v1:0".to_string(),
+            name: "Claude Sonnet 4.6".to_string(),
+            owned_by: Some("Anthropic".to_string()),
+            capabilities: profile
+                .provider
+                .capabilities_for_model("anthropic.claude-sonnet-4-6-v1:0")
+                .selected_model,
+        };
+
+        let (models, status) = runtime_model_catalog(&profile, Ok(vec![foundation]));
+        assert_eq!(status, "provider");
+        assert!(models
+            .iter()
+            .any(|model| model.id == "us.anthropic.claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn runtime_catalog_remains_usable_when_optional_discovery_fails() {
+        let profile = ProviderProfile::local_default();
+        let (models, status) =
+            runtime_model_catalog(&profile, Err(anyhow::anyhow!("discovery unavailable")));
+
+        assert_eq!(status, "configured-only");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, profile.model);
     }
 
     #[test]

@@ -7,7 +7,16 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 #[allow(unused_imports)] // used on macOS
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicBool;
 use tracing::{debug, error, info, warn};
+
+/// ScreenCaptureKit does not reliably adopt a Screen Recording grant made
+/// after this process started. Keep this process-wide instead of inferring the
+/// transition in individual React components: a Timeline remount must not
+/// forget that capture still needs one clean relaunch.
+#[cfg(target_os = "macos")]
+static SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize, Deserialize, Type, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -296,6 +305,39 @@ impl OSPermissionsCheck {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenRecordingPermissionState {
+    pub status: OSPermissionStatus,
+    pub relaunch_required: bool,
+}
+
+fn screen_recording_relaunch_required(
+    unavailable_since_launch: bool,
+    status: &OSPermissionStatus,
+) -> bool {
+    unavailable_since_launch && matches!(status, OSPermissionStatus::Granted)
+}
+
+/// Capture the TCC state as early as possible in process startup.
+///
+/// A missing grant is remembered for the rest of this process. Once the user
+/// grants access, every UI surface can therefore report the same relaunch
+/// requirement even after navigation or a webview remount. A fresh process
+/// starts with a fresh atomic and clears the requirement naturally.
+#[cfg(target_os = "macos")]
+pub(crate) fn initialize_screen_recording_permission_lifecycle() {
+    let status = core_to_os_status(civitas_core::permissions::check_screen_recording_tauri());
+    SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH.store(!status.permitted(), Ordering::SeqCst);
+}
+
+#[cfg(target_os = "macos")]
+fn observe_screen_recording_permission(status: &OSPermissionStatus) {
+    if !status.permitted() {
+        SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH.store(true, Ordering::SeqCst);
+    }
+}
+
 /// OS permissions required by the capture sources the user explicitly enabled.
 ///
 /// These requirements gate only those capture sources. They never gate the
@@ -384,7 +426,31 @@ pub fn check_microphone_permission() -> OSPermissionStatus {
 #[tauri::command(async)]
 #[specta::specta]
 pub fn check_screen_recording_permission() -> OSPermissionStatus {
-    core_to_os_status(civitas_core::permissions::check_screen_recording_tauri())
+    let status = core_to_os_status(civitas_core::permissions::check_screen_recording_tauri());
+    #[cfg(target_os = "macos")]
+    observe_screen_recording_permission(&status);
+    status
+}
+
+/// Return both the current TCC result and whether ScreenCaptureKit needs a
+/// process relaunch before capture can use a grant made during this launch.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn check_screen_recording_permission_state() -> ScreenRecordingPermissionState {
+    let status = check_screen_recording_permission();
+    #[cfg(target_os = "macos")]
+    let unavailable_since_launch =
+        SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH.load(Ordering::SeqCst);
+    #[cfg(not(target_os = "macos"))]
+    let unavailable_since_launch = false;
+
+    ScreenRecordingPermissionState {
+        relaunch_required: screen_recording_relaunch_required(
+            unavailable_since_launch,
+            &status,
+        ),
+        status,
+    }
 }
 
 /// Check only accessibility permission
@@ -1342,5 +1408,25 @@ mod capture_permission_tests {
         assert!(!effective.capture_system_audio);
         assert!(effective.capture_microphone);
         assert!(!effective.disable_audio);
+    }
+
+    #[test]
+    fn screen_grant_requires_relaunch_only_after_unavailability_in_this_process() {
+        assert!(!screen_recording_relaunch_required(
+            false,
+            &OSPermissionStatus::Granted
+        ));
+        assert!(!screen_recording_relaunch_required(
+            true,
+            &OSPermissionStatus::Denied
+        ));
+        assert!(screen_recording_relaunch_required(
+            true,
+            &OSPermissionStatus::Granted
+        ));
+        assert!(!screen_recording_relaunch_required(
+            true,
+            &OSPermissionStatus::NotNeeded
+        ));
     }
 }

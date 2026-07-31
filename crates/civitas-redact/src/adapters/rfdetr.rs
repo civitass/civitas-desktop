@@ -114,9 +114,7 @@ impl RfdetrConfig {
     /// `~/.civitas/models/rfdetr_v12.onnx`. Created lazily by
     /// [`Self::ensure_model_present`] on first run.
     pub fn default_model_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".civitas")
+        crate::default_civitas_data_dir()
             .join("models")
             .join("rfdetr_v12.onnx")
     }

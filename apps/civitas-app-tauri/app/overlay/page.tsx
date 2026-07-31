@@ -176,8 +176,8 @@ export default function OverlayPage() {
       if (restartPending) {
         await localforage.removeItem("screenPermissionRestartPending");
         try {
-          const status = await commands.checkScreenRecordingPermission();
-          if (!isPermissionGranted(status)) {
+          const state = await commands.checkScreenRecordingPermissionState();
+          if (!isPermissionGranted(state.status)) {
             await commands.showWindow("PermissionRecovery");
           }
         } catch {

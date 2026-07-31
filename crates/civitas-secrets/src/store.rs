@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use sha2::{Digest, Sha256};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use zeroize::Zeroizing;
 
@@ -19,11 +20,26 @@ CREATE TABLE IF NOT EXISTS secrets (
     expires_at TEXT
 )";
 
+const CREATE_SECRET_STORE_METADATA_TABLE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS secret_store_metadata (
+    key TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+)";
+
+const KEY_FINGERPRINT_METADATA_KEY: &str = "encryption_key_sha256_v1";
+const RECOVERABLE_LOCAL_OWNER_SECRET_KEY: &str = "api_auth_key";
+
 async fn ensure_secrets_table(pool: &SqlitePool) -> Result<()> {
     sqlx::query(CREATE_SECRETS_TABLE_SQL)
         .execute(pool)
         .await
         .context("failed to create secrets table")?;
+    sqlx::query(CREATE_SECRET_STORE_METADATA_TABLE_SQL)
+        .execute(pool)
+        .await
+        .context("failed to create secret-store metadata table")?;
     Ok(())
 }
 
@@ -52,6 +68,23 @@ pub struct SecretStore {
     key: [u8; 32],
 }
 
+/// Integrity-aware result for callers that can safely repair one narrowly
+/// scoped, locally generated secret without treating database I/O failures as
+/// corruption.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SecretReadOutcome {
+    Missing,
+    Value(Vec<u8>),
+    IntegrityFailure(SecretIntegrityFailure),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretIntegrityFailure {
+    LegacyUnencrypted,
+    InvalidNonceLength,
+    AuthenticationFailed,
+}
+
 impl SecretStore {
     /// Initialize the secrets table with a required OS-vault-backed key.
     ///
@@ -62,6 +95,7 @@ impl SecretStore {
         ensure_secrets_table(&pool).await?;
 
         let store = Self { pool, key };
+        store.bind_encryption_identity().await?;
         store.migrate_legacy_unencrypted_secrets().await?;
         Ok(store)
     }
@@ -134,6 +168,31 @@ impl SecretStore {
 
     /// Retrieve and decrypt a secret value. Returns None if the key doesn't exist.
     pub async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        match self.read_with_integrity_status(key).await? {
+            SecretReadOutcome::Missing => Ok(None),
+            SecretReadOutcome::Value(value) => Ok(Some(value)),
+            SecretReadOutcome::IntegrityFailure(SecretIntegrityFailure::LegacyUnencrypted) => {
+                anyhow::bail!(
+                "secret '{}' is a legacy unencrypted row; reopen the secure store to migrate it",
+                key
+            )
+            }
+            SecretReadOutcome::IntegrityFailure(SecretIntegrityFailure::InvalidNonceLength) => {
+                anyhow::bail!("secret '{}' has invalid encryption metadata", key)
+            }
+            SecretReadOutcome::IntegrityFailure(SecretIntegrityFailure::AuthenticationFailed) => {
+                anyhow::bail!("secret '{}' failed authenticated decryption", key)
+            }
+        }
+    }
+
+    /// Read a secret while distinguishing authenticated-encryption integrity
+    /// failures from storage failures.
+    ///
+    /// Database connection, query, and schema failures remain `Err`. Only a
+    /// row that was fetched successfully but cannot pass the encrypted-record
+    /// contract is returned as `IntegrityFailure`.
+    pub async fn read_with_integrity_status(&self, key: &str) -> Result<SecretReadOutcome> {
         let row: Option<(Vec<u8>, Vec<u8>)> =
             sqlx::query_as("SELECT value, nonce FROM secrets WHERE key = ?")
                 .bind(key)
@@ -142,19 +201,24 @@ impl SecretStore {
                 .context("failed to get secret")?;
 
         match row {
-            None => Ok(None),
+            None => Ok(SecretReadOutcome::Missing),
             Some((stored_value, nonce)) => {
                 if nonce.iter().all(|&b| b == 0) {
-                    anyhow::bail!(
-                        "secret '{}' is a legacy unencrypted row; reopen the secure store to migrate it",
-                        key
-                    );
+                    return Ok(SecretReadOutcome::IntegrityFailure(
+                        SecretIntegrityFailure::LegacyUnencrypted,
+                    ));
                 }
-                let nonce_arr: [u8; 12] = nonce
-                    .try_into()
-                    .map_err(|_| anyhow::anyhow!("invalid nonce length"))?;
-                let plaintext = crypto::decrypt(&stored_value, &nonce_arr, &self.key)?;
-                Ok(Some(plaintext))
+                let Ok(nonce_arr) = <Vec<u8> as TryInto<[u8; 12]>>::try_into(nonce) else {
+                    return Ok(SecretReadOutcome::IntegrityFailure(
+                        SecretIntegrityFailure::InvalidNonceLength,
+                    ));
+                };
+                match crypto::decrypt(&stored_value, &nonce_arr, &self.key) {
+                    Ok(plaintext) => Ok(SecretReadOutcome::Value(plaintext)),
+                    Err(_) => Ok(SecretReadOutcome::IntegrityFailure(
+                        SecretIntegrityFailure::AuthenticationFailed,
+                    )),
+                }
             }
         }
     }
@@ -241,6 +305,98 @@ impl SecretStore {
         }
 
         Ok(count)
+    }
+
+    /// Bind this database to one OS-vault encryption identity.
+    ///
+    /// Development and official builds intentionally use different Keychain
+    /// services. Historic builds let both identities write the same database,
+    /// producing rows that no single key could decrypt. The non-secret
+    /// fingerprint below prevents that state from recurring: a different vault
+    /// identity fails before any secret mutation.
+    async fn bind_encryption_identity(&self) -> Result<()> {
+        let fingerprint = Sha256::digest(self.key);
+        let existing: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT value FROM secret_store_metadata WHERE key = ?")
+                .bind(KEY_FINGERPRINT_METADATA_KEY)
+                .fetch_optional(&self.pool)
+                .await
+                .context("failed to read secret-store encryption identity")?;
+
+        if let Some(existing) = existing {
+            anyhow::ensure!(
+                existing.as_slice() == fingerprint.as_slice(),
+                "protected secrets belong to a different OS credential-vault identity; \
+                 no secret data was changed"
+            );
+            return Ok(());
+        }
+
+        // Before binding a pre-existing database, prove that every encrypted
+        // row is coherent under this key. Legacy plaintext rows are
+        // key-independent and are migrated immediately after this check.
+        let rows: Vec<(String, Vec<u8>, Vec<u8>)> =
+            sqlx::query_as("SELECT key, value, nonce FROM secrets")
+                .fetch_all(&self.pool)
+                .await
+                .context("failed to validate existing protected secrets")?;
+        for (secret_key, stored_value, nonce) in rows {
+            if nonce.iter().all(|&byte| byte == 0) {
+                continue;
+            }
+            let nonce_arr: [u8; 12] = match nonce.try_into() {
+                Ok(nonce) => nonce,
+                Err(_) if secret_key == RECOVERABLE_LOCAL_OWNER_SECRET_KEY => continue,
+                Err(_) => {
+                    anyhow::bail!(
+                        "protected secrets contain invalid encryption metadata; \
+                         no secret data was changed"
+                    )
+                }
+            };
+            if crypto::decrypt(&stored_value, &nonce_arr, &self.key).is_err() {
+                if secret_key == RECOVERABLE_LOCAL_OWNER_SECRET_KEY {
+                    // Historic source and signed builds briefly shared one
+                    // database while using different Keychain services. The
+                    // loopback owner token is generated by Civitas and every
+                    // first-party client rediscovers it, so the engine can
+                    // replace this one row after binding. Provider and
+                    // integration credentials remain strict: one unreadable
+                    // row still blocks the database before any write.
+                    continue;
+                }
+                anyhow::bail!(
+                    "protected secrets are inconsistent with the current OS \
+                     credential-vault identity; no secret data was changed"
+                );
+            }
+        }
+
+        sqlx::query(
+            "INSERT INTO secret_store_metadata (key, value)
+             VALUES (?, ?)
+             ON CONFLICT(key) DO NOTHING",
+        )
+        .bind(KEY_FINGERPRINT_METADATA_KEY)
+        .bind(fingerprint.as_slice())
+        .execute(&self.pool)
+        .await
+        .context("failed to bind secret-store encryption identity")?;
+
+        // Resolve a concurrent first-open race without allowing the last writer
+        // to redefine the database identity.
+        let bound: Vec<u8> =
+            sqlx::query_scalar("SELECT value FROM secret_store_metadata WHERE key = ?")
+                .bind(KEY_FINGERPRINT_METADATA_KEY)
+                .fetch_one(&self.pool)
+                .await
+                .context("failed to verify secret-store encryption identity")?;
+        anyhow::ensure!(
+            bound.as_slice() == fingerprint.as_slice(),
+            "protected secrets were concurrently bound to a different OS \
+             credential-vault identity; no secret data was changed"
+        );
+        Ok(())
     }
 }
 
@@ -412,5 +568,114 @@ mod tests {
 
         let error = store.get("unsafe:key").await.unwrap_err().to_string();
         assert!(error.contains("legacy unencrypted row"));
+    }
+
+    #[tokio::test]
+    async fn test_store_rejects_a_different_encryption_identity_before_write() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let first = SecretStore::new(pool.clone(), [11_u8; 32]).await.unwrap();
+        first.set("provider:key", b"protected").await.unwrap();
+        drop(first);
+
+        let error = match SecretStore::new(pool.clone(), [12_u8; 32]).await {
+            Ok(_) => panic!("a second vault identity must not open the same database"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("different OS credential-vault identity"));
+
+        let original = SecretStore::new(pool, [11_u8; 32]).await.unwrap();
+        assert_eq!(
+            original.get("provider:key").await.unwrap().unwrap(),
+            b"protected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_existing_consistent_rows_are_bound_without_reencryption() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        ensure_secrets_table(&pool).await.unwrap();
+        let (ciphertext, nonce) = crypto::encrypt(b"existing", &TEST_KEY).unwrap();
+        sqlx::query("INSERT INTO secrets (key, value, nonce) VALUES (?, ?, ?)")
+            .bind("existing:key")
+            .bind(&ciphertext)
+            .bind(nonce.as_slice())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let store = SecretStore::new(pool.clone(), TEST_KEY).await.unwrap();
+        assert_eq!(
+            store.get("existing:key").await.unwrap().unwrap(),
+            b"existing"
+        );
+        let stored_ciphertext: Vec<u8> =
+            sqlx::query_scalar("SELECT value FROM secrets WHERE key = 'existing:key'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored_ciphertext, ciphertext);
+    }
+
+    #[tokio::test]
+    async fn test_existing_mixed_identity_rows_fail_without_metadata_claim() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        ensure_secrets_table(&pool).await.unwrap();
+        let (first, first_nonce) = crypto::encrypt(b"first", &[21_u8; 32]).unwrap();
+        let (second, second_nonce) = crypto::encrypt(b"second", &[22_u8; 32]).unwrap();
+        for (key, value, nonce) in [
+            ("first:key", first, first_nonce),
+            ("second:key", second, second_nonce),
+        ] {
+            sqlx::query("INSERT INTO secrets (key, value, nonce) VALUES (?, ?, ?)")
+                .bind(key)
+                .bind(value)
+                .bind(nonce.as_slice())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let error = match SecretStore::new(pool.clone(), [21_u8; 32]).await {
+            Ok(_) => panic!("mixed-key rows must fail closed"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("inconsistent"));
+
+        let metadata_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM secret_store_metadata WHERE key = ?")
+                .bind(KEY_FINGERPRINT_METADATA_KEY)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(metadata_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_unreadable_local_owner_row_can_bind_for_narrow_engine_repair() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        ensure_secrets_table(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO secrets (key, value, nonce)
+             VALUES ('api_auth_key', X'01020304', X'0102030405060708090A0B0C')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let store = SecretStore::new(pool.clone(), TEST_KEY).await.unwrap();
+        assert_eq!(
+            store
+                .read_with_integrity_status("api_auth_key")
+                .await
+                .unwrap(),
+            SecretReadOutcome::IntegrityFailure(SecretIntegrityFailure::AuthenticationFailed)
+        );
+        let metadata_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM secret_store_metadata WHERE key = ?")
+                .bind(KEY_FINGERPRINT_METADATA_KEY)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(metadata_count, 1);
     }
 }

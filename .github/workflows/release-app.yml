@@ -20,7 +20,7 @@ on:
         type: string
 
 concurrency:
-  group: civitas-desktop-release-${{ github.ref_name || inputs.release_tag }}
+  group: civitas-desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -277,7 +277,7 @@ jobs:
     needs:
       - validate
       - draft-release
-    runs-on: macos-26
+    runs-on: ${{ matrix.runner }}
     environment: consumer-release
     timeout-minutes: 180
     permissions:
@@ -287,22 +287,17 @@ jobs:
       matrix:
         include:
           - label: Apple Silicon
+            runner: macos-26
             target: aarch64-apple-darwin
-            deployment_target: "14.0"
+            deployment_target: "13.0"
           - label: Intel
+            runner: macos-26-intel
             target: x86_64-apple-darwin
             deployment_target: "13.0"
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
       CMAKE_OSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
       CIVITAS_RELEASE_TARGET: ${{ matrix.target }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       CI: "false"
     steps:
       # actions/checkout v4
@@ -366,6 +361,7 @@ jobs:
           keychain_path="${RUNNER_TEMP}/civitas-release.keychain-db"
           keychain_password="$(openssl rand -hex 24)"
           certificate_path="${RUNNER_TEMP}/civitas-release.p12"
+          trap 'rm -f -- "$certificate_path"' EXIT
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 7200 "$keychain_path"
@@ -392,6 +388,7 @@ jobs:
       - name: Configure App Store Connect notarization key
         shell: bash
         env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
@@ -405,10 +402,20 @@ jobs:
 
       - name: Verify notarization credentials are configured
         shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           has_api_key=false
           has_apple_id=false
+          if [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::error::APPLE_TEAM_ID is required to verify the expected Developer ID signer"
+            exit 1
+          fi
           if [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
             has_api_key=true
           fi
@@ -426,6 +433,13 @@ jobs:
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         with:
           projectPath: apps/civitas-app-tauri
           tagName: ${{ needs.validate.outputs.release_tag }}
@@ -440,8 +454,19 @@ jobs:
             --target ${{ matrix.target }}
             --features official-build,metal,redact-onnx-coreml
 
-      - name: Verify signed and stapled output
+      - name: Remove ephemeral notarization material
+        if: always()
         shell: bash
+        run: |
+          if [ -n "${APPLE_API_KEY_PATH:-}" ] && [ -f "$APPLE_API_KEY_PATH" ]; then
+            rm -f -- "$APPLE_API_KEY_PATH"
+          fi
+          rm -f -- "$RUNNER_TEMP/civitas-release.p12"
+
+      - name: Verify staged DMG, nested code, and production cold launch
+        shell: bash
+        env:
+          EXPECTED_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           bundle_dir="apps/civitas-app-tauri/src-tauri/target/${{ matrix.target }}/release/bundle"
@@ -449,10 +474,14 @@ jobs:
           dmg_path="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "$app_path"
           test -n "$dmg_path"
+          test -n "${APPLE_SIGNING_IDENTITY:-}"
+          test -n "${EXPECTED_APPLE_TEAM_ID:-}"
+
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign -dvv "$app_path" 2>&1 | grep -Eq 'flags=.*\\(runtime\\)'
           minimum_version="$(plutil -extract LSMinimumSystemVersion raw "$app_path/Contents/Info.plist")"
           test "$minimum_version" = "${{ matrix.deployment_target }}"
+
           case "${{ matrix.target }}" in
             aarch64-apple-darwin) expected_arch="arm64" ;;
             x86_64-apple-darwin) expected_arch="x86_64" ;;
@@ -460,16 +489,220 @@ jobs:
           esac
           actual_arches="$(lipo -archs "$app_path/Contents/MacOS/civitas-app")"
           test "$actual_arches" = "$expected_arch"
-          entitlements="$RUNNER_TEMP/civitas-release-entitlements.plist"
-          codesign -d --entitlements :- "$app_path" > "$entitlements"
-          if [ "$(plutil -extract com.apple.security.get-task-allow raw -o - "$entitlements" 2>/dev/null || true)" = "true" ]; then
-            echo "::error::release bundle enables the debugger entitlement"
-            exit 1
-          fi
+          for required_executable in civitas-app bun ffmpeg ffprobe; do
+            if [ ! -f "$app_path/Contents/MacOS/$required_executable" ]; then
+              echo "::error::production application is missing reviewed executable: $required_executable"
+              exit 1
+            fi
+          done
+          while IFS= read -r -d '' bundled_executable; do
+            case "$(basename "$bundled_executable")" in
+              civitas-app|bun|ffmpeg|ffprobe) ;;
+              *)
+                echo "::error::production application contains an unexpected executable: $bundled_executable"
+                exit 1
+                ;;
+            esac
+          done < <(find "$app_path/Contents/MacOS" -mindepth 1 -maxdepth 1 -type f -print0)
+
           xcrun stapler validate "$app_path"
           xcrun stapler validate "$dmg_path"
           spctl --assess --type execute --verbose=2 "$app_path"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg_path"
+
+          mount_dir="$(mktemp -d "$RUNNER_TEMP/civitas-release-dmg.XXXXXX")"
+          smoke_data=""
+          smoke_pid=""
+          cleanup_verification() {
+            if [ -n "$smoke_pid" ] && kill -0 "$smoke_pid" 2>/dev/null; then
+              kill "$smoke_pid" 2>/dev/null || true
+              wait "$smoke_pid" 2>/dev/null || true
+            fi
+            hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
+            if [ -n "$smoke_data" ] && [ -d "$smoke_data" ]; then
+              rm -rf -- "$smoke_data"
+            fi
+            rm -rf -- "$mount_dir"
+          }
+          trap cleanup_verification EXIT
+
+          hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir" -quiet
+          mounted_app="$mount_dir/Civitas Desktop.app"
+          test -d "$mounted_app"
+          test -L "$mount_dir/Applications"
+          applications_target="$(readlink "$mount_dir/Applications")"
+          case "$applications_target" in
+            /Applications|/Applications/) ;;
+            *)
+              echo "::error::DMG Applications link has an unexpected target: $applications_target"
+              exit 1
+              ;;
+          esac
+
+          while IFS= read -r -d '' entry; do
+            case "$(basename "$entry")" in
+              "Civitas Desktop.app"|"Applications"|".background"|".DS_Store"|".VolumeIcon.icns") ;;
+              *)
+                echo "::error::unexpected top-level DMG entry: $(basename "$entry")"
+                exit 1
+                ;;
+            esac
+          done < <(find "$mount_dir" -mindepth 1 -maxdepth 1 -print0)
+
+          codesign --verify --deep --strict --verbose=2 "$mounted_app"
+          mounted_signature="$(codesign -dvvv --verbose=4 "$mounted_app" 2>&1)"
+          grep -Fq "TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}" <<<"$mounted_signature"
+          grep -Fq "Authority=${APPLE_SIGNING_IDENTITY}" <<<"$mounted_signature"
+          grep -Eq 'flags=.*\\(runtime\\)' <<<"$mounted_signature"
+
+          actual_entitlements="$RUNNER_TEMP/civitas-release-entitlements-actual.plist"
+          actual_entitlements_json="$RUNNER_TEMP/civitas-release-entitlements-actual.json"
+          expected_entitlements_json="$RUNNER_TEMP/civitas-release-entitlements-expected.json"
+          actual_entitlements_sorted="$RUNNER_TEMP/civitas-release-entitlements-actual.sorted.json"
+          expected_entitlements_sorted="$RUNNER_TEMP/civitas-release-entitlements-expected.sorted.json"
+          codesign -d --entitlements :- "$mounted_app" > "$actual_entitlements" 2>/dev/null
+          plutil -convert json -o "$actual_entitlements_json" "$actual_entitlements"
+          plutil -convert json -o "$expected_entitlements_json" \
+            apps/civitas-app-tauri/src-tauri/entitlements.plist
+          jq --sort-keys . "$actual_entitlements_json" > "$actual_entitlements_sorted"
+          jq --sort-keys . "$expected_entitlements_json" > "$expected_entitlements_sorted"
+          if ! cmp -s "$actual_entitlements_sorted" "$expected_entitlements_sorted"; then
+            echo "::error::signed application entitlements differ from the reviewed exact allowlist"
+            diff -u "$expected_entitlements_sorted" "$actual_entitlements_sorted" || true
+            exit 1
+          fi
+
+          version_lte() {
+            awk -v actual="$1" -v limit="$2" '
+              BEGIN {
+                split(actual, a, ".");
+                split(limit, b, ".");
+                for (i = 1; i <= 4; i += 1) {
+                  av = a[i] + 0;
+                  bv = b[i] + 0;
+                  if (av < bv) exit 0;
+                  if (av > bv) exit 1;
+                }
+                exit 0;
+              }
+            '
+          }
+
+          macho_count=0
+          while IFS= read -r -d '' candidate; do
+            if ! file -b "$candidate" | grep -q 'Mach-O'; then
+              continue
+            fi
+            macho_count=$((macho_count + 1))
+            codesign --verify --strict --verbose=2 "$candidate"
+            signature="$(codesign -dvvv --verbose=4 "$candidate" 2>&1)"
+            if ! grep -Fq "TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}" <<<"$signature"; then
+              echo "::error::nested Mach-O has an unexpected Team ID: $candidate"
+              exit 1
+            fi
+            if ! grep -Fq "Authority=${APPLE_SIGNING_IDENTITY}" <<<"$signature"; then
+              echo "::error::nested Mach-O has an unexpected signing authority: $candidate"
+              exit 1
+            fi
+            arches="$(lipo -archs "$candidate")"
+            case " $arches " in
+              *" $expected_arch "*) ;;
+              *)
+                echo "::error::nested Mach-O lacks $expected_arch: $candidate ($arches)"
+                exit 1
+                ;;
+            esac
+            min_versions="$(xcrun vtool -show-build "$candidate" 2>/dev/null | awk '$1 == "minos" { print $2 }')"
+            if [ -z "$min_versions" ]; then
+              echo "::error::nested Mach-O has no reviewable minimum macOS version: $candidate"
+              exit 1
+            fi
+            while IFS= read -r min_version; do
+              if ! version_lte "$min_version" "${{ matrix.deployment_target }}"; then
+                echo "::error::$candidate requires macOS $min_version, above advertised ${{ matrix.deployment_target }}"
+                exit 1
+              fi
+            done <<<"$min_versions"
+          done < <(find "$mounted_app/Contents" -type f -print0)
+          if [ "$macho_count" -eq 0 ]; then
+            echo "::error::mounted application contains no Mach-O code"
+            exit 1
+          fi
+
+          while IFS= read -r -d '' candidate; do
+            basename_lower="$(basename "$candidate" | tr '[:upper:]' '[:lower:]')"
+            case "$basename_lower" in
+              .env|.env.*|credentials.json|service-account.json|key.md|keys.md|*.p8|*.p12|*.pfx|*.pem|*.key|*.mobileprovision)
+                echo "::error::credential-shaped file bundled in DMG: $candidate"
+                exit 1
+                ;;
+              *.onnx|*.safetensors|*.gguf|*.ggml|*.pt|*.pth|*.ckpt|*.tflite|*.mlmodel|*.mlmodelc|*.mlpackage|ggml-*.bin|*model*.bin)
+                echo "::error::model weight bundled despite download-on-consent policy: $candidate"
+                exit 1
+                ;;
+            esac
+          done < <(find "$mounted_app/Contents" -print0)
+
+          secret_pattern='-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk-ant-api03-[A-Za-z0-9_-]{32}|sk-proj-[A-Za-z0-9_-]{32}|github_pat_[A-Za-z0-9_]{40}|gh[pousr]_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{20}'
+          while IFS= read -r -d '' candidate; do
+            if LC_ALL=C grep -aEq "$secret_pattern" "$candidate"; then
+              echo "::error::high-confidence credential material detected in bundled file: $candidate"
+              exit 1
+            fi
+          done < <(find "$mounted_app/Contents" -type f -size -16M -print0)
+
+          smoke_data="$(mktemp -d "$RUNNER_TEMP/civitas-release-smoke.XXXXXX")"
+          smoke_log="$RUNNER_TEMP/civitas-release-smoke.log"
+          read -r app_port focus_port < <(
+            python3 - <<'PY'
+          import socket
+
+          sockets = []
+          try:
+              for _ in range(2):
+                  listener = socket.socket()
+                  listener.bind(("127.0.0.1", 0))
+                  sockets.append(listener)
+              print(*(listener.getsockname()[1] for listener in sockets))
+          finally:
+              for listener in sockets:
+                  listener.close()
+          PY
+          )
+          smoke_token="$(openssl rand -hex 32)"
+          CIVITAS_DATA_DIR="$smoke_data" \
+          CIVITAS_NETWORK_MODE=deny \
+          CIVITAS_PORT="$app_port" \
+          CIVITAS_FOCUS_PORT="$focus_port" \
+          CIVITAS_FOCUS_TOKEN="$smoke_token" \
+            "$mounted_app/Contents/MacOS/civitas-app" >"$smoke_log" 2>&1 &
+          smoke_pid=$!
+
+          smoke_ready=false
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$smoke_pid" 2>/dev/null; then
+              echo "::error::production application exited during cold launch"
+              tail -200 "$smoke_log" || true
+              exit 1
+            fi
+            if curl --fail --silent --show-error --max-time 2 \
+              -H "Authorization: Bearer $smoke_token" \
+              "http://127.0.0.1:${focus_port}/notifications" >/dev/null 2>&1; then
+              smoke_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$smoke_ready" != "true" ]; then
+            echo "::error::production application did not expose its authenticated loopback service"
+            tail -200 "$smoke_log" || true
+            exit 1
+          fi
+          sleep 5
+          kill -0 "$smoke_pid"
+          kill "$smoke_pid"
+          wait "$smoke_pid" 2>/dev/null || true
+          smoke_pid=""
 
       - name: Remove ephemeral release keychain
         if: always()
@@ -493,6 +726,20 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Set up pinned Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          toolchain: "1.93.1"
+          rustflags: ""
+
+      - name: Install pinned updater signature verifier
+        run: cargo install rsign2 --version 0.6.6 --locked
+
       # actions/download-artifact v4
       - name: Download publication metadata
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -528,6 +775,48 @@ jobs:
             .platforms["darwin-x86_64"].url and
             .platforms["darwin-x86_64"].signature
           ' release-assets/latest.json >/dev/null
+
+          updater_public_key="$RUNNER_TEMP/civitas-updater.pub"
+          jq -er '.plugins.updater.pubkey' \
+            apps/civitas-app-tauri/src-tauri/tauri.prod.conf.json |
+            base64 --decode > "$updater_public_key"
+          grep -q '^untrusted comment: minisign public key:' "$updater_public_key"
+
+          for platform in darwin-aarch64 darwin-x86_64; do
+            artifact_url="$(jq -er --arg platform "$platform" '.platforms[$platform].url' release-assets/latest.json)"
+            expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
+            case "$artifact_url" in
+              "$expected_prefix"*) ;;
+              *)
+                echo "::error::${platform} updater URL is outside the immutable release: ${artifact_url}"
+                exit 1
+                ;;
+            esac
+            artifact_name="${artifact_url#"$expected_prefix"}"
+            case "$artifact_name" in
+              ""|*"/"*|*"?"*|*"#"*)
+                echo "::error::${platform} updater URL has an unsafe artifact name: ${artifact_name}"
+                exit 1
+                ;;
+            esac
+            artifact_path="release-assets/${artifact_name}"
+            detached_signature="${artifact_path}.sig"
+            test -f "$artifact_path"
+            test -f "$detached_signature"
+
+            manifest_signature="$RUNNER_TEMP/${platform}.manifest.sig"
+            jq -er --arg platform "$platform" '.platforms[$platform].signature' \
+              release-assets/latest.json > "$manifest_signature"
+            rsign verify "$artifact_path" \
+              --public-key-path "$updater_public_key" \
+              --sig-file "$detached_signature" \
+              --quiet
+            rsign verify "$artifact_path" \
+              --public-key-path "$updater_public_key" \
+              --sig-file "$manifest_signature" \
+              --quiet
+          done
+
           cp publication-metadata/* release-assets/
           checksum_file="$RUNNER_TEMP/SHA256SUMS"
           (

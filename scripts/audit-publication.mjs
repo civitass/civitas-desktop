@@ -950,23 +950,44 @@ function auditReleaseWorkflow(files) {
       );
     }
 
-    const setupRustCount = (
-      workflowContent.match(
-        /uses:\s+actions-rust-lang\/setup-rust-toolchain@[0-9a-f]{40}/g,
-      ) ?? []
-    ).length;
-    const pinnedRustCount = (
-      workflowContent.match(/^\s*toolchain:\s*"1\.93\.1"\s*$/gm) ?? []
-    ).length;
-    if (setupRustCount !== pinnedRustCount) {
-      addFinding(
-        "mutable_rust_toolchain",
-        workflowFile,
-        "Every Rust toolchain setup step must pin Rust 1.93.1 exactly.",
-      );
+    const lines = workflowContent.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      if (
+        !/uses:\s+(?:actions-rust-lang\/setup-rust-toolchain|dtolnay\/rust-toolchain)@[^\s#]+/.test(
+          lines[index],
+        )
+      ) {
+        continue;
+      }
+      const usesIndent = lines[index].length - lines[index].trimStart().length;
+      const stepIndent = /^\s*-\s+uses:/.test(lines[index])
+        ? usesIndent
+        : usesIndent - 2;
+      let end = index + 1;
+      while (end < lines.length) {
+        const rowIndent = lines[end].length - lines[end].trimStart().length;
+        if (
+          lines[end].trim() &&
+          rowIndent === stepIndent &&
+          /^\s*-\s+/.test(lines[end])
+        ) {
+          break;
+        }
+        end += 1;
+      }
+      if (
+        !lines
+          .slice(index + 1, end)
+          .some((line) => /^\s*toolchain:\s*"1\.93\.1"\s*$/.test(line))
+      ) {
+        addFinding(
+          "mutable_rust_toolchain",
+          workflowFile,
+          `Rust setup at line ${index + 1} must pin toolchain 1.93.1 exactly.`,
+        );
+      }
     }
 
-    const lines = workflowContent.split("\n");
     for (let index = 0; index < lines.length; index += 1) {
       if (!/uses:\s+actions\/checkout@[0-9a-f]{40}/.test(lines[index])) {
         continue;
@@ -1023,6 +1044,7 @@ function auditReleaseWorkflow(files) {
       /curl[^\n|]*\|\s*(?:bash|sh)\b/i,
       /DownloadString\([^)]*install/i,
       /rustup-init\.exe/i,
+      /rustup[^\n]*(?:stable|beta|nightly)\b/i,
       /bun-version:\s*(?:latest|1\.2\.2)\b/i,
       /toolchain:\s*stable\b/i,
       /cargo install cargo-audit\s*(?:$|\n)/im,
@@ -1111,6 +1133,17 @@ function auditReleaseWorkflow(files) {
       "--timestamp",
       "codesign --verify --deep --strict",
       "flags=.*runtime",
+      "official_build_requested",
+      "production_identity_selected",
+      "Production bundle configuration and official-build must be selected together.",
+      'effective_identifier" = "team.civitas.app"',
+      "expected_external_bins=(bun ffmpeg ffprobe)",
+      "Pass --config src-tauri/tauri.macos.conf.json",
+      "expected_app_path",
+      '--entitlements "$effective_entitlements"',
+      "Locally signed application entitlements differ from the reviewed exact allowlist.",
+      "effective_minimum_system_version",
+      "above advertised $effective_minimum_system_version",
     ]) {
       if (!localMacBuildContent.includes(required)) {
         addFinding(
@@ -1119,6 +1152,22 @@ function auditReleaseWorkflow(files) {
           `Required local signing control is missing: ${required}`,
         );
       }
+    }
+  }
+
+  const updaterHarness =
+    "apps/civitas-app-tauri/e2e/mock-updates/updater-harness.ts";
+  if (files.includes(updaterHarness)) {
+    const updaterHarnessContent = fs.readFileSync(
+      path.join(repoRoot, updaterHarness),
+      "utf8",
+    );
+    if (updaterHarnessContent.includes("'official-build'")) {
+      addFinding(
+        "updater_harness_uses_release_identity",
+        updaterHarness,
+        "The local updater harness must not use the signed consumer vault identity.",
+      );
     }
   }
 
@@ -1132,11 +1181,37 @@ function auditReleaseWorkflow(files) {
     return;
   }
   const content = fs.readFileSync(path.join(repoRoot, workflow), "utf8");
+  if (
+    !content.includes(
+      "for required_executable in civitas-app bun ffmpeg ffprobe",
+    ) ||
+    !content.includes(
+      "production application contains an unexpected executable",
+    )
+  ) {
+    addFinding(
+      "release_sidecar_allowlist_missing",
+      workflow,
+      "The protected macOS release must assert the exact reviewed executable allowlist.",
+    );
+  }
   for (const required of [
+    "group: civitas-desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}",
     "releaseDraft: true",
     "environment: consumer-release",
+    "runner: macos-26-intel",
     "xcrun stapler validate",
     "codesign --verify",
+    "TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}",
+    "signed application entitlements differ from the reviewed exact allowlist",
+    "hdiutil attach",
+    "unexpected top-level DMG entry",
+    "model weight bundled despite download-on-consent policy",
+    "CIVITAS_NETWORK_MODE=deny",
+    "${focus_port}/notifications",
+    "production application did not expose its authenticated loopback service",
+    "cargo install rsign2 --version 0.6.6 --locked",
+    "rsign verify",
     "SHA256SUMS",
     "attest-build-provenance",
     "audit-publication.mjs",
@@ -1156,6 +1231,31 @@ function auditReleaseWorkflow(files) {
         `Required release control is missing: ${required}`,
       );
     }
+  }
+  const buildMacStart = content.indexOf("\n  build-macos:");
+  const buildMacEnd = content.indexOf("\n  finalize-draft:", buildMacStart);
+  const buildMacContent =
+    buildMacStart >= 0 && buildMacEnd > buildMacStart
+      ? content.slice(buildMacStart, buildMacEnd)
+      : "";
+  const jobEnvironment = buildMacContent.match(
+    /\n    env:\n([\s\S]*?)\n    steps:/,
+  )?.[1];
+  const jobsStart = content.indexOf("\njobs:");
+  const workflowEnvironment =
+    jobsStart >= 0
+      ? (content.slice(0, jobsStart).match(/\nenv:\n([\s\S]*)$/)?.[1] ?? "")
+      : "";
+  if (
+    !jobEnvironment ||
+    /\$\{\{\s*secrets\./.test(jobEnvironment) ||
+    /\$\{\{\s*secrets\./.test(workflowEnvironment)
+  ) {
+    addFinding(
+      "release_job_wide_secret",
+      workflow,
+      "The macOS release job must not expose signing or notarization secrets outside their exact steps.",
+    );
   }
 
   auditRequiredControls(
@@ -1463,12 +1563,55 @@ function auditFfmpegBuild(files) {
     "--disable-nonfree",
     "--disable-network",
     "otool",
+    'deployment_target="${MACOSX_DEPLOYMENT_TARGET:-13.0}"',
+    "xcrun vtool -show-build",
+    '"minimumSystemVersion": "${deployment_target}"',
+    "2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6",
+    "CIVITAS_FFMPEG_SOURCE_ARCHIVE",
+    "--retry-all-errors",
+    "--retry-max-time 3600",
+    "source archive integrity check failed",
+    "unexpected or unsafe path",
+    '"sourceArchiveSha256": "${FFMPEG_ARCHIVE_SHA256}"',
+    'staged_binary="${work_dir}/${binary}-${target}.staged"',
+    'mv -f "$staged_binary"',
   ]) {
     if (!content.includes(required)) {
       addFinding(
         "ffmpeg_integrity_control_missing",
         script,
         `Required FFmpeg control is missing: ${required}`,
+      );
+    }
+  }
+
+  const prebuild = "apps/civitas-app-tauri/scripts/pre_build.js";
+  if (files.includes(prebuild)) {
+    const prebuildContent = fs.readFileSync(
+      path.join(repoRoot, prebuild),
+      "utf8",
+    );
+    for (const required of [
+      "civitas-sidecar-smoke-",
+      "required macOS sidecar is missing",
+      "sandbox verification timed out after 30 seconds",
+      "await fs.copyFile(bin, smokeBinary)",
+    ]) {
+      if (!prebuildContent.includes(required)) {
+        addFinding(
+          "ffmpeg_runtime_gate_missing",
+          prebuild,
+          `Required FFmpeg runtime verification control is missing: ${required}`,
+        );
+      }
+    }
+    if (
+      prebuildContent.includes("sandbox verify timed out after 30s — skipping")
+    ) {
+      addFinding(
+        "ffmpeg_runtime_gate_swallows_timeout",
+        prebuild,
+        "The FFmpeg runtime verification must fail closed on timeout.",
       );
     }
   }
@@ -1578,6 +1721,12 @@ function auditProviderCredentialBoundary(files) {
     [
       "apps/civitas-app-tauri/src-tauri/Cargo.toml",
       ['official-build = ["civitas-secrets/official-build"]'],
+    ],
+    [
+      "apps/civitas-app-tauri/src-tauri/src/main.rs",
+      [
+        'cfg!(any(debug_assertions, feature = "e2e")) && !cfg!(feature = "official-build")',
+      ],
     ],
     [
       "crates/civitas-engine/Cargo.toml",

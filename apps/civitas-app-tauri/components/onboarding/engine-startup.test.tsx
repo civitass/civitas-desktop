@@ -16,18 +16,21 @@ const mocks = vi.hoisted(() => ({
   completeOnboarding: vi.fn(),
   localFetch: vi.fn(),
   spawnCivitas: vi.fn(),
+  checkScreenRecordingPermissionState: vi.fn(),
   getAppIdentifier: vi.fn(),
   getBootPhase: vi.fn(),
   resetAndRequestPermission: vi.fn(),
   openExternalUrl: vi.fn(),
   capture: vi.fn(),
   handleNextSlide: vi.fn(),
+  relaunch: vi.fn(),
 }));
 
 vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({
     settings: mocks.settings,
     updateSettings: mocks.updateSettings,
+    isSettingsLoaded: true,
   }),
   makeDefaultPresets: () => [
     {
@@ -51,6 +54,8 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
     spawnCivitas: mocks.spawnCivitas,
+    checkScreenRecordingPermissionState:
+      mocks.checkScreenRecordingPermissionState,
     getAppIdentifier: mocks.getAppIdentifier,
     getBootPhase: mocks.getBootPhase,
     resetAndRequestPermission: mocks.resetAndRequestPermission,
@@ -66,7 +71,7 @@ vi.mock("@/lib/utils/permission-flow", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-process", () => ({
-  relaunch: vi.fn(),
+  relaunch: mocks.relaunch,
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -153,6 +158,10 @@ describe("EngineStartup completion recovery", () => {
       }),
     );
     mocks.spawnCivitas.mockResolvedValue(undefined);
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "notNeeded",
+      relaunchRequired: false,
+    });
     mocks.getAppIdentifier.mockResolvedValue("team.civitas.desktop");
     mocks.getBootPhase.mockResolvedValue({
       phase: "ready",
@@ -249,5 +258,23 @@ describe("EngineStartup completion recovery", () => {
     expect(
       screen.getByRole("button", { name: "Try Help again" }),
     ).toBeInTheDocument();
+  });
+
+  it("requires a relaunch before starting capture after an in-process screen grant", async () => {
+    mocks.settings.disableVision = false;
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "granted",
+      relaunchRequired: true,
+    });
+
+    render(<EngineStartup handleNextSlide={mocks.handleNextSlide} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.spawnCivitas).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Relaunch Civitas/ }));
+    expect(mocks.relaunch).toHaveBeenCalledOnce();
   });
 });

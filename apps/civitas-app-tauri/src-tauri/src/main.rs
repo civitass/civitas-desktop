@@ -192,9 +192,17 @@ use window::RewindWindowId;
 #[tauri::command]
 #[specta::specta]
 fn get_e2e_seed_flags() -> Vec<String> {
-    std::env::var("CIVITAS_E2E_SEED")
-        .ok()
-        .filter(|s| !s.is_empty())
+    parse_e2e_seed_flags(
+        std::env::var("CIVITAS_E2E_SEED").ok().as_deref(),
+        cfg!(any(debug_assertions, feature = "e2e")) && !cfg!(feature = "official-build"),
+    )
+}
+
+fn parse_e2e_seed_flags(raw: Option<&str>, enabled: bool) -> Vec<String> {
+    if !enabled {
+        return Vec::new();
+    }
+    raw.filter(|value| !value.is_empty())
         .map(|s| {
             s.split(',')
                 .map(|part| part.trim().to_lowercase())
@@ -288,11 +296,18 @@ fn get_mime_type(path: &str) -> String {
     let is_audio = path.to_lowercase().contains("input") || path.to_lowercase().contains("output");
 
     match ext.as_str() {
+        "aac" => "audio/aac".to_string(),
+        "flac" => "audio/flac".to_string(),
+        "m4a" => "audio/mp4".to_string(),
         "mp4" => "video/mp4".to_string(),
         "webm" => "video/webm".to_string(),
         "ogg" => "video/ogg".to_string(),
         "mp3" => "audio/mpeg".to_string(),
         "wav" => "audio/wav".to_string(),
+        "gif" => "image/gif".to_string(),
+        "jpeg" | "jpg" => "image/jpeg".to_string(),
+        "png" => "image/png".to_string(),
+        "webp" => "image/webp".to_string(),
         _ => {
             if is_audio {
                 "audio/mpeg".to_string()
@@ -334,6 +349,13 @@ macro_rules! define_specta_builder {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let _ = fix_path_env::fix();
+    // Source and ad-hoc builds use a data directory paired with their
+    // development OS-vault identity. This must run before any path, lock,
+    // webview profile, log, settings, or database is resolved.
+    config::install_build_isolated_data_dir();
+
+    #[cfg(target_os = "macos")]
+    permissions::initialize_screen_recording_permission_lifecycle();
 
     #[cfg(target_os = "windows")]
     windows_webview_env::install_user_data_dir();
@@ -991,6 +1013,8 @@ async fn main() {
 
             // Resolve data directory from user setting (custom dir or ~/.civitas)
             let (data_dir, data_dir_fell_back) = config::resolve_data_dir(&store.data_dir);
+            config::install_frontend_data_scopes(app_handle, &data_dir)
+                .map_err(std::io::Error::other)?;
             app.manage(config::ResolvedDataDir(data_dir.clone()));
             info!("Recording data directory: {}", data_dir.display());
             if data_dir_fell_back {
@@ -1605,7 +1629,10 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 
 #[cfg(test)]
 mod startup_privacy_tests {
-    use super::{onboarding_allows_capture, tessdata_candidate_is_complete};
+    use super::{
+        get_mime_type, onboarding_allows_capture, parse_e2e_seed_flags,
+        tessdata_candidate_is_complete,
+    };
     use crate::store::OnboardingStore;
 
     #[test]
@@ -1630,6 +1657,18 @@ mod startup_privacy_tests {
     }
 
     #[test]
+    fn production_boundary_ignores_all_e2e_seed_flags() {
+        assert!(
+            parse_e2e_seed_flags(Some("onboarding,no-recording,bedrock-provider"), false)
+                .is_empty()
+        );
+        assert_eq!(
+            parse_e2e_seed_flags(Some(" onboarding, NO-AUDIO "), true),
+            ["onboarding", "no-audio"]
+        );
+    }
+
+    #[test]
     fn bundled_tessdata_requires_language_model_and_tsv_config() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!tessdata_candidate_is_complete(dir.path()));
@@ -1647,5 +1686,12 @@ mod startup_privacy_tests {
         std::fs::remove_dir(dir.path().join("configs/tsv")).unwrap();
         std::fs::write(dir.path().join("configs/tsv"), b"tessedit_create_tsv 1\n").unwrap();
         assert!(tessdata_candidate_is_complete(dir.path()));
+    }
+
+    #[test]
+    fn native_media_reader_reports_browser_safe_image_and_audio_types() {
+        assert_eq!(get_mime_type("/tmp/chart.PNG"), "image/png");
+        assert_eq!(get_mime_type("/tmp/photo.jpeg"), "image/jpeg");
+        assert_eq!(get_mime_type("/tmp/recording.m4a"), "audio/mp4");
     }
 }

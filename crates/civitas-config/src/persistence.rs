@@ -44,7 +44,10 @@ pub fn save_toml(settings: &RecordingSettings, path: &Path) -> Result<(), String
 
 /// Resolve the civitas config directory: `~/.civitas/`
 fn dirs_next() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".civitas"))
+    std::env::var_os("CIVITAS_DATA_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".civitas")))
 }
 
 #[cfg(test)]

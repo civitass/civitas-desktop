@@ -18,8 +18,14 @@ use tracing::{debug, info, warn};
 const RELEASE_SERVICE: &str = "team.civitas.app";
 const KEY_NAME: &str = "store-encryption-key";
 
-fn development_service_name(namespace: Option<&str>) -> String {
-    let namespace = namespace
+/// Normalize a development namespace for every local identity boundary.
+///
+/// The desktop app uses the same value for its development data directory and
+/// this module uses it for the OS-vault service. Keeping the normalization in
+/// one place prevents a valid namespace from selecting one database but a
+/// different encryption key (or vice versa).
+pub fn normalized_development_namespace(namespace: Option<&str>) -> &str {
+    namespace
         .filter(|value| {
             !value.is_empty()
                 && value.len() <= 64
@@ -27,7 +33,11 @@ fn development_service_name(namespace: Option<&str>) -> String {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         })
-        .unwrap_or("default");
+        .unwrap_or("default")
+}
+
+fn development_service_name(namespace: Option<&str>) -> String {
+    let namespace = normalized_development_namespace(namespace);
     format!("{RELEASE_SERVICE}.debug.{namespace}")
 }
 

@@ -16,6 +16,24 @@ provide provider credits, or guarantee a response time.
 Use the structured GitHub issue forms for bugs, documentation, feature
 requests, or focused questions.
 
+## macOS Screen Recording access
+
+macOS grants Screen Recording to an exact app identity. Release, beta, source,
+and ad-hoc builds can therefore appear as separate Civitas entries even when
+one of them is already enabled.
+
+After enabling the entry for the build that is currently open, return to
+Civitas and choose **Relaunch Civitas**. ScreenCaptureKit requires a fresh
+process before it can use a grant made during the current launch. Civitas keeps
+this relaunch requirement across page navigation and continues to expose
+existing Timeline history while new screen capture is paused.
+
+If the app still reports missing access after the relaunch, choose **Reset &
+re-request** in the recovery window, then enable the exact current entry under
+**System Settings → Privacy & Security → Screen & System Audio Recording**.
+The in-app permission surface shows the active bundle identifier to help
+distinguish builds.
+
 ## Share the minimum
 
 Never post:

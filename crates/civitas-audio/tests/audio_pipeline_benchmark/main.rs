@@ -20,6 +20,10 @@
 //! # Full benchmark suite (requires dataset)
 //! AUDIO_BENCHMARK_DATASET=./scripts/generate-audio-dataset/output \
 //!   cargo test --release -p civitas-audio --test audio_pipeline_benchmark -- --nocapture --ignored
+//!
+//! The Silero integration benchmarks also require a checksum-verified model.
+//! Pre-stage it through the app, or explicitly permit the test-only download:
+//! `CIVITAS_TEST_ALLOW_MODEL_DOWNLOAD=1 cargo test ... <test-name> -- --ignored`.
 //! ```
 
 #[allow(dead_code)]
@@ -43,9 +47,17 @@ mod vad_benchmark;
 /// concurrently; only the first pays the download cost.
 #[allow(dead_code)]
 pub async fn new_test_vad() -> civitas_audio::vad::silero::SileroVad {
+    if std::env::var("CIVITAS_TEST_ALLOW_MODEL_DOWNLOAD").as_deref() == Ok("1") {
+        civitas_core::network::set_runtime_network_mode(
+            civitas_core::network::NetworkMode::RemoteEnabled,
+        );
+    }
     civitas_audio::vad::silero::SileroVad::ensure_model_available()
         .await
-        .expect("silero model prefetch failed");
+        .expect(
+            "silero model prefetch failed; pre-stage the verified model or set \
+             CIVITAS_TEST_ALLOW_MODEL_DOWNLOAD=1 for this ignored benchmark",
+        );
     civitas_audio::vad::silero::SileroVad::new()
         .await
         .expect("failed to init SileroVad")

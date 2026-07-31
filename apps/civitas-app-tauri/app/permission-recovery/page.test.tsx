@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   doPermissionsCheck: vi.fn(),
+  checkScreenRecordingPermissionState: vi.fn(),
   stopCivitas: vi.fn(),
   spawnCivitas: vi.fn(),
   closeWindow: vi.fn(),
@@ -22,6 +23,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
     doPermissionsCheck: mocks.doPermissionsCheck,
+    checkScreenRecordingPermissionState:
+      mocks.checkScreenRecordingPermissionState,
     stopCivitas: mocks.stopCivitas,
     spawnCivitas: mocks.spawnCivitas,
     closeWindow: mocks.closeWindow,
@@ -73,6 +76,10 @@ describe("PermissionRecoveryPage failure recovery", () => {
     mocks.closeWindow.mockResolvedValue(undefined);
     mocks.requestPermissionWithFlow.mockResolvedValue(undefined);
     mocks.relaunch.mockResolvedValue(undefined);
+    mocks.checkScreenRecordingPermissionState.mockResolvedValue({
+      status: "granted",
+      relaunchRequired: false,
+    });
     mocks.isMac = false;
   });
 
@@ -134,6 +141,10 @@ describe("PermissionRecoveryPage failure recovery", () => {
       microphone: "denied",
       accessibility: "notNeeded",
     });
+    mocks.checkScreenRecordingPermissionState.mockResolvedValueOnce({
+      status: "denied",
+      relaunchRequired: false,
+    });
     fireEvent.click(screen.getByRole("button", { name: "Retry check" }));
     await act(async () => {
       await Promise.resolve();
@@ -160,6 +171,15 @@ describe("PermissionRecoveryPage failure recovery", () => {
         screenRecording: "granted",
         microphone: "denied",
         accessibility: "granted",
+      });
+    mocks.checkScreenRecordingPermissionState
+      .mockResolvedValueOnce({
+        status: "denied",
+        relaunchRequired: false,
+      })
+      .mockResolvedValue({
+        status: "granted",
+        relaunchRequired: true,
       });
 
     render(<PermissionRecoveryPage />);

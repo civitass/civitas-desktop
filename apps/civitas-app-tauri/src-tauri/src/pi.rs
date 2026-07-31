@@ -546,11 +546,13 @@ async fn build_models_json(provider_config: Option<&PiProviderConfig>) -> serde_
     // Use the real local bearer only for this in-process model-list request.
     // `models.json` stores the environment-variable name, never the bearer
     // itself; Pi resolves it from the child process environment at runtime.
-    let model_list_key = std::env::var("CIVITAS_LOCAL_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "local".to_string());
-    let models = local_gateway_models(CIVITAS_API_URL, Some(model_list_key.as_str())).await;
+    let model_list_key = crate::store::resolved_api_auth_key().or_else(|| {
+        std::env::var("CIVITAS_LOCAL_API_KEY")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    let mut models = local_gateway_models(CIVITAS_API_URL, model_list_key.as_deref()).await;
+    ensure_requested_model_in_catalog(&mut models, provider_config);
     let civitas_provider = json!({
         "baseUrl": CIVITAS_API_URL,
         "api": "openai-completions",
@@ -569,6 +571,43 @@ async fn build_models_json(provider_config: Option<&PiProviderConfig>) -> serde_
     }
 
     json!({"providers": providers_map})
+}
+
+fn ensure_requested_model_in_catalog(
+    models: &mut serde_json::Value,
+    provider_config: Option<&PiProviderConfig>,
+) {
+    let Some(config) = provider_config else {
+        return;
+    };
+    let model = config.model.trim();
+    if model.is_empty() {
+        return;
+    }
+    let Some(catalog) = models.as_array_mut() else {
+        return;
+    };
+    if catalog
+        .iter()
+        .any(|entry| entry.get("id").and_then(Value::as_str) == Some(model))
+    {
+        return;
+    }
+
+    let max_tokens = u64::try_from(config.max_tokens)
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(4096)
+        .min(131_072);
+    catalog.push(json!({
+        "id": model,
+        "name": model,
+        "reasoning": false,
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 128000_u64.max(max_tokens),
+        "maxTokens": max_tokens,
+    }));
 }
 
 /// Write pi's provider config (models.json + auth.json).
@@ -2568,6 +2607,20 @@ mod tests {
         let providers = config["providers"].as_object().unwrap();
         assert_eq!(providers.len(), 1);
         assert!(providers.contains_key("civitas"));
+    }
+
+    #[tokio::test]
+    async fn test_build_models_json_includes_exact_requested_bedrock_profile_id() {
+        let model = "us.anthropic.claude-sonnet-4-6";
+        let pc = make_provider_config("civitas-local", model);
+        let config = build_models_json(Some(&pc)).await;
+        let models = config["providers"]["civitas"]["models"]
+            .as_array()
+            .expect("civitas model catalog");
+
+        assert!(models
+            .iter()
+            .any(|entry| entry["id"].as_str() == Some(model)));
     }
 
     #[tokio::test]

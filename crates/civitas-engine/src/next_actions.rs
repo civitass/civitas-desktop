@@ -736,19 +736,31 @@ mod tests {
 
     #[test]
     fn high_impact_domain_variants_abstain_conservatively() {
-        for title in [
-            "Prepare the quarterly tax filing",
-            "Review the candidate performance review",
-            "Start an invoice payment",
-            "Update the account recovery phrase",
-            "Prepare notes for a medical appointment",
+        for (title, expected_reason) in [
+            (
+                "Prepare the quarterly tax filing",
+                RejectionReason::SensitiveDomain,
+            ),
+            (
+                "Review the candidate performance review",
+                RejectionReason::SensitiveDomain,
+            ),
+            ("Start an invoice payment", RejectionReason::SensitiveDomain),
+            (
+                "Update the account recovery phrase",
+                RejectionReason::SecretMaterial,
+            ),
+            (
+                "Prepare notes for a medical appointment",
+                RejectionReason::SensitiveDomain,
+            ),
         ] {
             let mut candidate = graph_candidate();
             candidate.title = title.to_string();
             assert_eq!(
                 rank_candidate(candidate, Utc::now()),
-                Err(RejectionReason::SensitiveDomain),
-                "expected sensitive-domain abstention for {title}"
+                Err(expected_reason),
+                "expected a safety abstention for {title}"
             );
         }
     }

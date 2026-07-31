@@ -167,7 +167,8 @@ export default function PermissionsStep({
         "Visible pixels and window context · stored locally · pause anytime",
       subtitleGranted:
         "granted · needs a relaunch to fully activate — we handle it at the end",
-      check: () => commands.checkScreenRecordingPermission(),
+      check: async () =>
+        (await commands.checkScreenRecordingPermissionState()).status,
       request: () => requestPermissionWithFlow("screenRecording"),
       recommended: true,
     },
@@ -189,7 +190,9 @@ export default function PermissionsStep({
       subtitle:
         "Calls, media, and alerts, including other people · off until chosen · saved locally · sent remotely only if separately enabled",
       check: async () =>
-        isMac ? commands.checkScreenRecordingPermission() : true,
+        isMac
+          ? (await commands.checkScreenRecordingPermissionState()).status
+          : true,
       request: async () => {
         if (isMac) await requestPermissionWithFlow("screenRecording");
       },

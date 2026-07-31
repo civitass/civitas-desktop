@@ -16,18 +16,41 @@ import { describe, expect, it, vi } from "vitest";
 const openViewerWindowMock = vi.hoisted(() =>
   vi.fn(async (_path: string) => ({ status: "ok" as const })),
 );
+const getMediaFileMock = vi.hoisted(() =>
+  vi.fn(async (_path: string) => ({
+    status: "error" as const,
+    error: "not loaded",
+  })),
+);
 
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
     openViewerWindow: openViewerWindowMock,
+    getMediaFile: getMediaFileMock,
   },
 }));
 
 import {
+  localImageDataUrl,
   openCivitasViewerLink,
   rewriteLocalMarkdownLinksForChat,
   civitasViewerPathFromHref,
 } from "@/components/markdown";
+
+describe("localImageDataUrl", () => {
+  it("accepts only validated native image payloads", () => {
+    expect(localImageDataUrl({ mimeType: "image/png", data: "aGVsbG8=" })).toBe(
+      "data:image/png;base64,aGVsbG8=",
+    );
+    expect(
+      localImageDataUrl({ mimeType: "text/html", data: "aGVsbG8=" }),
+    ).toBeNull();
+    expect(localImageDataUrl({ mimeType: "image/png", data: "" })).toBeNull();
+    expect(
+      localImageDataUrl({ mimeType: "image/png", data: "<script>" }),
+    ).toBeNull();
+  });
+});
 
 describe("civitasViewerPathFromHref", () => {
   it("extracts the path query param from a well-formed civitas://view URL", () => {
@@ -49,7 +72,9 @@ describe("civitasViewerPathFromHref", () => {
   });
 
   it("returns null for non-civitas protocols", () => {
-    expect(civitasViewerPathFromHref("https://example.com/?path=foo")).toBeNull();
+    expect(
+      civitasViewerPathFromHref("https://example.com/?path=foo"),
+    ).toBeNull();
     expect(civitasViewerPathFromHref("file:///tmp/foo.jpg")).toBeNull();
     expect(civitasViewerPathFromHref("javascript:alert(1)")).toBeNull();
   });
@@ -59,7 +84,9 @@ describe("civitasViewerPathFromHref", () => {
     // frame are handled by different surfaces — confusing them would open
     // the wrong window or pop a generic browser fallback.
     expect(
-      civitasViewerPathFromHref("civitas://timeline?timestamp=2026-05-25T00:00:00Z"),
+      civitasViewerPathFromHref(
+        "civitas://timeline?timestamp=2026-05-25T00:00:00Z",
+      ),
     ).toBeNull();
     expect(civitasViewerPathFromHref("civitas://frame/12345")).toBeNull();
   });
@@ -117,10 +144,10 @@ describe("openCivitasViewerLink", () => {
 describe("rewriteLocalMarkdownLinksForChat", () => {
   it("rewrites local document links to viewer deeplinks", () => {
     expect(
-      rewriteLocalMarkdownLinksForChat("[doc](file:///Users/me/test%20note.md)"),
-    ).toBe(
-      "[doc](civitas://view?path=%2FUsers%2Fme%2Ftest%20note.md)",
-    );
+      rewriteLocalMarkdownLinksForChat(
+        "[doc](file:///Users/me/test%20note.md)",
+      ),
+    ).toBe("[doc](civitas://view?path=%2FUsers%2Fme%2Ftest%20note.md)");
   });
 
   it("leaves image markdown untouched so paths with parentheses still render", () => {
@@ -133,8 +160,6 @@ describe("rewriteLocalMarkdownLinksForChat", () => {
       rewriteLocalMarkdownLinksForChat(
         "[clip](file:///Users/me/System%20Audio%20(output)_2026-05-25_11-27-00.mp4)",
       ),
-    ).toBe(
-      "[clip](</Users/me/System Audio (output)_2026-05-25_11-27-00.mp4>)",
-    );
+    ).toBe("[clip](</Users/me/System Audio (output)_2026-05-25_11-27-00.mp4>)");
   });
 });

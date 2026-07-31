@@ -22,7 +22,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::hot_frame_cache::HotFrameCache;
 use crate::power::{PowerManagerHandle, ThermalState};
-use crate::video::{finish_ffmpeg_process, video_quality_to_crf, write_frame_to_ffmpeg};
+#[cfg(not(target_os = "macos"))]
+use crate::video::video_quality_to_crf;
+#[cfg(target_os = "macos")]
+use crate::video::video_quality_to_videotoolbox_bitrate;
+use crate::video::{finish_ffmpeg_process, write_frame_to_ffmpeg};
 
 /// Minimum age before a snapshot is eligible for compaction.
 /// Recent snapshots stay as JPEGs for fast Tauri asset loading.
@@ -375,7 +379,8 @@ async fn compact_chunk(
 /// Spawn ffmpeg with low CPU priority for background compaction.
 /// Uses `nice` on unix / IDLE_PRIORITY_CLASS on Windows.
 /// Accepts JPEG passthrough (image2pipe mjpeg) so Rust doesn't need to decode.
-/// Limits x265 internal threading to 1 pool with 1 thread.
+/// macOS uses the same LGPL-safe VideoToolbox contract as live recording;
+/// other platforms use the existing x265 software path.
 async fn start_ffmpeg_lowpri(
     output_file: &str,
     fps: f64,
@@ -385,8 +390,6 @@ async fn start_ffmpeg_lowpri(
         civitas_core::find_ffmpeg_path().ok_or_else(|| anyhow::anyhow!("ffmpeg not found"))?;
 
     let fps_str = fps.to_string();
-    let crf = video_quality_to_crf(video_quality);
-
     // On unix, wrap with `nice -n 19` for lowest scheduling priority
     #[cfg(unix)]
     let mut command = {
@@ -410,17 +413,9 @@ async fn start_ffmpeg_lowpri(
             "-",
             "-vf",
             "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-vcodec",
-            "libx265",
-            "-tag:v",
-            "hvc1",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            crf,
-            // Limit x265 internal threading to 1 pool with 1 thread
-            "-x265-params",
-            "pools=1:frame-threads=1:bframes=0",
+        ])
+        .args(compaction_encoder_args(video_quality))
+        .args([
             "-threads",
             "1",
             "-movflags",
@@ -443,6 +438,52 @@ async fn start_ffmpeg_lowpri(
     }
 
     Ok(command.spawn()?)
+}
+
+fn compaction_encoder_args(video_quality: &str) -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let bitrate = video_quality_to_videotoolbox_bitrate(video_quality);
+        return [
+            "-vcodec",
+            "hevc_videotoolbox",
+            "-tag:v",
+            "hvc1",
+            "-b:v",
+            bitrate,
+            "-maxrate",
+            bitrate,
+            "-bf",
+            "0",
+            "-allow_sw",
+            "1",
+            "-realtime",
+            "1",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let crf = video_quality_to_crf(video_quality);
+        [
+            "-vcodec",
+            "libx265",
+            "-tag:v",
+            "hvc1",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            crf,
+            "-x265-params",
+            "pools=1:frame-threads=1:bframes=0",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
 }
 
 fn calculate_fps(frames: &[(i64, String, String)]) -> f64 {
@@ -472,6 +513,17 @@ mod tests {
     fn test_calculate_fps_single_frame() {
         let frames = vec![make_frame(1, "/tmp/a.jpg", "2025-01-01T00:00:00Z")];
         assert_eq!(calculate_fps(&frames), 0.5);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_compaction_uses_the_encoder_shipped_in_the_public_sidecar() {
+        let args = compaction_encoder_args("balanced");
+        assert!(args.iter().any(|arg| arg == "hevc_videotoolbox"));
+        assert!(args.iter().any(|arg| arg == "10M"));
+        assert!(!args.iter().any(|arg| arg == "libx265"));
+        assert!(!args.iter().any(|arg| arg == "-preset"));
+        assert!(!args.iter().any(|arg| arg == "-crf"));
     }
 
     #[test]

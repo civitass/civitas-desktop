@@ -11,22 +11,22 @@ name: Rust CI
 on:
   push:
     paths:
-      - '**.rs'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - '.github/workflows/ci.yml'
-      - '.github/scripts/**'
-      - 'scripts/generate_ocr_fixtures.py'
-      - 'scripts/test_generate_ocr_fixtures.py'
+      - "**.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/**"
+      - "scripts/generate_ocr_fixtures.py"
+      - "scripts/test_generate_ocr_fixtures.py"
   pull_request:
     paths:
-      - '**.rs'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - '.github/workflows/ci.yml'
-      - '.github/scripts/**'
-      - 'scripts/generate_ocr_fixtures.py'
-      - 'scripts/test_generate_ocr_fixtures.py'
+      - "**.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/**"
+      - "scripts/generate_ocr_fixtures.py"
+      - "scripts/test_generate_ocr_fixtures.py"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}
@@ -322,10 +322,9 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-          rustup default stable
-          rustup override set stable
-          cargo --version
-          rustc --version
+          rustc --version | grep -Eq '^rustc 1\.93\.1 '
+          cargo --version | grep -Eq '^cargo 1\.93\.1 '
+          rustc -Vv
 
       - name: setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

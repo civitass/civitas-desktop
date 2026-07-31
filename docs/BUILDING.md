@@ -110,6 +110,26 @@ Application identity; non-ad-hoc signatures also receive Apple’s trusted
 timestamp. The protected release workflow remains the only supported path for
 notarized public artifacts.
 
+The helper fails closed if the Tauri bundle identity and credential-vault
+identity disagree. A local production-identity release candidate therefore
+requires both reviewed controls:
+
+```bash
+./scripts/build_macos.sh \
+  --bundles app \
+  --config src-tauri/tauri.prod.conf.json \
+  --config src-tauri/tauri.macos.conf.json \
+  --features official-build,metal,redact-onnx-coreml
+```
+
+That artifact is locally signed, not notarized, and must not be distributed.
+The second configuration restores the reviewed macOS-only `bun`, `ffmpeg`,
+and `ffprobe` sidecar allowlist after the production configuration overlay.
+Every nested executable is also rejected if its deployment target exceeds the
+app's advertised macOS 13 minimum.
+Public DMG and updater artifacts are built, signed, notarized, stapled, and
+verified only by the protected release workflow.
+
 On Linux, use the dedicated command. It downloads only the pinned,
 integrity-checked Tesseract baseline needed by a self-contained AppImage:
 
@@ -118,20 +138,45 @@ cd apps/civitas-app-tauri
 bun run tauri:build:linux
 ```
 
-Source, test, development, and ad-hoc optimized builds use the isolated
-`team.civitas.app.debug.<namespace>` credential-vault service. They never
-request the signed release app's `team.civitas.app` vault item. Set
-`CIVITAS_KEYCHAIN_NAMESPACE` to a 1–64 character alphanumeric, hyphen, or
-underscore value when separate local builds should not share development
-credentials:
+Source, test, development, and ad-hoc optimized builds use both an isolated
+`team.civitas.app.debug.<namespace>` credential-vault service and the matching
+`~/.civitas-development/<namespace>` data directory. They never request the
+signed release app's `team.civitas.app` vault item or open its default
+`~/.civitas` database. This paired boundary prevents two build identities from
+encrypting rows in one database with different keys.
+
+Set `CIVITAS_KEYCHAIN_NAMESPACE` to a 1–64 character alphanumeric, hyphen, or
+underscore value when separate local builds should not share development data
+or credentials:
 
 ```bash
 CIVITAS_KEYCHAIN_NAMESPACE=feature_review bun run tauri build
 ```
 
+An explicit, absolute `CIVITAS_DATA_DIR` takes precedence. When setting it,
+use a directory dedicated to the same development namespace:
+
+```bash
+CIVITAS_KEYCHAIN_NAMESPACE=feature_review \
+  CIVITAS_DATA_DIR=/absolute/path/to/civitas-feature-review \
+  bun run tauri dev
+```
+
+Never point a source build at the signed app's `~/.civitas` directory. The
+secret-store identity check fails closed before a mismatched build can write a
+credential, but it cannot make one database safely share two encryption keys.
+
+Settings and startup metadata remain in the identity-scoped directory. When a
+user selects a different local data directory, capture, timeline media, chat
+history, assistant workspaces, and retrieval use the validated resolved
+directory. Tauri grants the webview access only to the required chat,
+large-context, and media subdirectories; the database, settings store, logs,
+and credential metadata are never added to the webview filesystem scope.
+
 The `official-build` Cargo feature selects the production vault identity and
-is reserved for protected, signed release workflows. Do not enable it for a
-local source build.
+is reserved for the protected workflow and the explicitly configured local
+release-candidate check above. Never enable it with the development Tauri
+configuration.
 
 For the standalone engine:
 

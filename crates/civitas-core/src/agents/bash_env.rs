@@ -169,8 +169,7 @@ pub fn ensure_wrapper(civitas_dir: &Path) -> Result<PathBuf> {
 /// then `ensure_wrapper`. Convenience for spawn sites that don't already
 /// know the data dir.
 pub fn ensure_wrapper_in_default_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("home dir not found")?;
-    ensure_wrapper(&home.join(".civitas"))
+    ensure_wrapper(&crate::paths::default_civitas_data_dir())
 }
 
 #[cfg(test)]

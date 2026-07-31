@@ -215,6 +215,40 @@ describe("source citations", () => {
     });
   });
 
+  it("recognizes Civitas artifacts under namespaced and custom data roots", () => {
+    const citations = sourceCitationsFromMessage({
+      contentBlocks: [
+        {
+          type: "tool",
+          toolCall: {
+            toolName: "read",
+            args: {
+              path: "/Users/example/.civitas-development/review/pipes/lead-radar/output/report.md",
+            },
+            result: "report",
+            isRunning: false,
+          },
+        },
+        {
+          type: "tool",
+          toolCall: {
+            toolName: "read",
+            args: {
+              path: "/Volumes/Private/Civitas/chats/conversation-01.json",
+            },
+            result: "{}",
+            isRunning: false,
+          },
+        },
+      ],
+    });
+
+    expect(citations.map((citation) => citation.kind)).toEqual([
+      "pipe",
+      "civitas",
+    ]);
+  });
+
   it("does not treat sed ranges as file citations", () => {
     const citations = sourceCitationsFromMessage({
       contentBlocks: [

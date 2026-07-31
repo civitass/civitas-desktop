@@ -47,8 +47,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { homeDir, join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
 import { commands, type PiProviderConfig } from "@/lib/utils/tauri";
+import { getCivitasDataRoot } from "@/lib/data-root";
 import {
   mountAgentEventBus,
   onEvicted,
@@ -133,14 +134,24 @@ export type AskTranscriptItem =
 // ─── Error classification & honest copy ───────────────────────────────────────
 
 export type AskChatErrorKind =
-  "runtime" | "quota" | "rate" | "auth" | "unreachable" | "other";
+  | "runtime"
+  | "quota"
+  | "rate"
+  | "auth"
+  | "region"
+  | "network-policy"
+  | "unreachable"
+  | "other";
 
 const AUTH_ERROR_RE =
   /authentication_error|not authenticated|\b401\b|unauthorized/i;
 const RUNTIME_ERROR_RE =
   /optional assistant runtime is not installed|assistant runtime (?:is )?not installed|pi-agent.*(?:missing|not found)/i;
+const REGION_ERROR_RE =
+  /provider_region_restricted|unsupported countries, regions, or territories/i;
+const NETWORK_POLICY_ERROR_RE = /network_policy_blocked|remote ai is off/i;
 const UNREACHABLE_ERROR_RE =
-  /econnrefused|enotfound|econnreset|etimedout|timed out|upstream request timeout|gateway timeout|\b502\b|\b503\b|\b504\b|fetch failed|failed to fetch|networkerror|network error|network request failed|unreachable|connection refused|connection reset|socket hang up|dns error|offline/i;
+  /econnrefused|enotfound|econnreset|etimedout|timed out|upstream request timeout|gateway timeout|\b502\b|\b503\b|\b504\b|fetch failed|failed to fetch|networkerror|network error|network request failed|unreachable|connection error|connection refused|connection reset|socket hang up|dns error|offline/i;
 
 export function classifyAskChatError(errorStr: string): AskChatErrorKind {
   if (RUNTIME_ERROR_RE.test(errorStr)) return "runtime";
@@ -148,6 +159,8 @@ export function classifyAskChatError(errorStr: string): AskChatErrorKind {
   if (quota === "daily") return "quota";
   if (quota === "rate") return "rate";
   if (AUTH_ERROR_RE.test(errorStr)) return "auth";
+  if (REGION_ERROR_RE.test(errorStr)) return "region";
+  if (NETWORK_POLICY_ERROR_RE.test(errorStr)) return "network-policy";
   if (UNREACHABLE_ERROR_RE.test(errorStr)) return "unreachable";
   return "other";
 }
@@ -162,8 +175,12 @@ export const ASK_CHAT_ERROR_COPY: Record<
   quota:
     "The selected provider's usage limit was reached. Review provider billing or choose another AI profile.",
   rate: "The model is rate-limited right now — try again in a minute.",
+  region:
+    "The selected provider doesn’t allow this model from your current country or network location. Choose a provider or model available in your region.",
+  "network-policy":
+    "Remote AI is off. Open Settings → Privacy, allow remote features, then retry. Your message wasn’t lost.",
   unreachable:
-    "The selected provider is unreachable — check its endpoint and your connection. Your message wasn't lost.",
+    "Civitas’s local assistant service is unreachable. Wait a moment and retry; if this persists, restart Civitas. Your message wasn’t lost.",
   other: "The assistant hit an error and stopped. Try sending again.",
 };
 
@@ -1087,8 +1104,7 @@ export function useAskPiSession(options: UseAskPiSessionOptions): AskPiSession {
           presetRef.current,
           connectionsRef.current,
         );
-        const home = await homeDir();
-        const dir = await join(home, ".civitas", ASK_PROJECT_DIR);
+        const dir = await join(await getCivitasDataRoot(), ASK_PROJECT_DIR);
 
         if (!startedRef.current || needsRestartRef.current) {
           const startResult = await commands.piStart(sid, dir, providerConfig);

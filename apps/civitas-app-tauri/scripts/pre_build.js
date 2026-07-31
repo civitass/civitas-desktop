@@ -332,6 +332,8 @@ async function copySystemBinary(binaryName, destination) {
 }
 
 const FFMPEG_SOURCE_COMMIT = "38b88335f99e76ed89ff3c93f877fdefce736c13";
+const FFMPEG_SOURCE_ARCHIVE_SHA256 =
+  "2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6";
 const MACOS_SIDECAR_MANIFEST_SCHEMA = "civitas-macos-ffmpeg-sidecars/v1";
 
 function macosFfmpegSidecars(target) {
@@ -416,9 +418,12 @@ async function verifyMacosFfmpegManifest(target) {
   }
   if (
     manifest.provenance === "pinned-source-build" &&
-    manifest.sourceCommit !== FFMPEG_SOURCE_COMMIT
+    (manifest.sourceCommit !== FFMPEG_SOURCE_COMMIT ||
+      manifest.sourceArchiveSha256 !== FFMPEG_SOURCE_ARCHIVE_SHA256)
   ) {
-    throw new Error(`macOS FFmpeg source commit mismatch in ${manifestPath}`);
+    throw new Error(
+      `macOS FFmpeg source provenance mismatch in ${manifestPath}`,
+    );
   }
 
   const expectedSidecars = macosFfmpegSidecars(target);
@@ -638,41 +643,52 @@ async function verifyMacosSidecarsRun() {
     '(deny file-read* (subpath "/usr/local/Cellar"))' +
     '(deny file-read* (subpath "/opt/local"))';
   console.log(`running ${hostArch} sidecars in a brew-less sandbox...`);
-  for (const bin of sidecars) {
-    if (!(await fs.exists(bin))) continue;
-    // Hard timeout: a successful `-version` returns in <1s. If we hit 30s
-    // it's a tooling bug (sandbox-exec stuck, bun shell wait-loop, etc.),
-    // not the v2.4.243 sidecar crash this guard is looking for — warn and
-    // continue rather than wedging every `bun run build`.
-    const proc = Bun.spawn(
-      ["sandbox-exec", "-p", profile, `./${bin}`, "-version"],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGKILL");
-    }, 30_000);
-    const exitCode = await proc.exited;
-    clearTimeout(timer);
-    if (timedOut) {
-      console.warn(
-        `  WARN: ${bin} sandbox verify timed out after 30s — skipping (likely a tooling issue, not a sidecar regression)`,
+  // Newly linked executables under macOS-protected folders such as Desktop can
+  // be held at dyld start by execution-policy scanning. Execute byte-identical
+  // copies from a private temporary directory so the gate tests portability,
+  // not the workspace's provenance policy. copyFile does not copy xattrs.
+  const smokeDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "civitas-sidecar-smoke-"),
+  );
+  try {
+    for (const bin of sidecars) {
+      if (!(await fs.exists(bin))) {
+        throw new Error(`required macOS sidecar is missing: ${bin}`);
+      }
+      const smokeBinary = path.join(smokeDirectory, bin);
+      await fs.copyFile(bin, smokeBinary);
+      await fs.chmod(smokeBinary, 0o755);
+      const proc = Bun.spawn(
+        ["sandbox-exec", "-p", profile, smokeBinary, "-version"],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+        },
       );
-      continue;
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill("SIGKILL");
+      }, 30_000);
+      const exitCode = await proc.exited;
+      clearTimeout(timer);
+      if (timedOut) {
+        throw new Error(
+          `sidecar ${bin} sandbox verification timed out after 30 seconds`,
+        );
+      }
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(
+          `sidecar ${bin} fails to launch without /opt/homebrew, /usr/local/Cellar, /opt/local:\n` +
+            `${stderr || `exit code ${exitCode}`}\n` +
+            `this is the v2.4.243 crash class — see commit 9a68ae9de.`,
+        );
+      }
+      console.log(`  ok: ${bin}`);
     }
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      throw new Error(
-        `sidecar ${bin} fails to launch without /opt/homebrew, /usr/local/Cellar, /opt/local:\n` +
-          `${stderr || `exit code ${exitCode}`}\n` +
-          `this is the v2.4.243 crash class — see commit 9a68ae9de.`,
-      );
-    }
-    console.log(`  ok: ${bin}`);
+  } finally {
+    await fs.rm(smokeDirectory, { recursive: true, force: true });
   }
 }
 
