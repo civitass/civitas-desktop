@@ -11,9 +11,10 @@
 </p>
 
 <p align="center">
-  <strong>Your private, evidence-linked memory for everyday work.</strong><br>
-  Find what happened, understand why it happened, and decide what to do next—
-  without sending your entire history to a hosted Civitas service.
+  <strong>Rewind your day. Know what to do next.</strong><br>
+  Civitas turns the moments you choose into a private Timeline, then predicts
+  useful next actions from evidence—without sending your entire history to a
+  hosted Civitas service.
 </p>
 
 <p align="center">
@@ -40,12 +41,12 @@ monitoring, fleet administration, or a company control plane. Capture, search,
 the timeline, the graph, feedback, and profile metadata stay on your Mac by
 default. AI is either loopback-local or a provider you explicitly connect.
 
-## See the day. Act on what matters.
+## Rewind the moment. See the next move.
 
-Civitas keeps the original moment close. Move through your private Timeline to
-recover what was on screen, then use evidence-backed action prediction in Next
-Actions to surface grounded commitments and open loops—with the reason,
-evidence age, risk, and control still visible.
+This is the signature Civitas loop. Move through your private Timeline to
+recover the exact work context, then open Next Actions to turn that evidence
+into ranked commitments and open loops. Each prediction keeps its reason,
+evidence age, risk, and controls visible; nothing executes by itself.
 
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
@@ -53,7 +54,7 @@ evidence age, risk, and control still visible.
   </a>
 </p>
 
-<p align="center"><em>Timeline — return to a captured moment without sending the history off the Mac.</em></p>
+<p align="center"><em>Timeline — the original moment, kept local and close.</em></p>
 
 <p align="center">
   <a href="docs/assets/demo/next-actions.png">
@@ -61,7 +62,7 @@ evidence age, risk, and control still visible.
   </a>
 </p>
 
-<p align="center"><em>Next Actions — evidence-backed continuations that remain drafts until you choose otherwise.</em></p>
+<p align="center"><em>Next Actions — the most useful continuation, grounded in evidence and kept as a draft.</em></p>
 
 > These are captures of the real desktop application using an isolated,
 > synthetic local profile. They contain no founder, contributor, or customer
@@ -90,13 +91,13 @@ evidence age, risk, and control still visible.
 - **Remember the day.** Search screen text, accessibility context, and local
   transcripts across time, apps, projects, and people, with local multilingual
   OCR including explicit Simplified and Traditional Chinese support.
+- **Predict the next move.** Pull a ranked set of evidence-backed commitments
+  and open loops, inspect why each one appeared, and choose Done, Not now, or
+  Dismiss. Suggestions never execute by themselves.
 - **Ask with evidence.** Get an answer that separates direct evidence,
   synthesis, and uncertainty, with links back to the source.
 - **See relationships.** Explore decisions and reasons, changing project state,
   recurring procedures, blockers, and contradictions in the knowledge graph.
-- **Review Next Actions.** Pull a ranked set of evidence-backed suggestions,
-  see why each one appeared, and choose Done, Not now, or Dismiss. Suggestions
-  never execute by themselves.
 - **Keep meeting context.** Detect meetings, create local notes, inspect
   transcripts, and export only what you choose.
 - **Use your memory elsewhere.** Give a permissioned MCP client bounded,
