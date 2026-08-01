@@ -96,6 +96,24 @@ async fn seed(pool: &sqlx::SqlitePool) {
     .unwrap();
 }
 
+async fn wait_for_redacted_total(worker: &Worker, expected: u64) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let status = worker.status().await;
+            if status.redacted_total >= expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "redaction worker did not process {expected} row(s) before the integration-test deadline"
+        )
+    });
+}
+
 #[tokio::test]
 async fn worker_redacts_all_five_targets() {
     let pool = setup_db().await;
@@ -111,9 +129,12 @@ async fn worker_redacts_all_five_targets() {
     let worker = Worker::new(pool.clone(), redactor, cfg);
     let handle = worker.clone().spawn();
 
-    // Give the worker a moment to drain the queue.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for observable completion rather than a fixed sleep. The regex
+    // engine is initialized lazily, so cold-start compilation time varies
+    // with host load and parallel test scheduling.
+    wait_for_redacted_total(&worker, 5).await;
     handle.abort();
+    let _ = handle.await;
 
     // Every seeded row should now have its source column overwritten
     // with the redacted version + redacted_at stamped.
@@ -185,8 +206,9 @@ async fn worker_skips_already_redacted_rows() {
     let worker = Worker::new(pool.clone(), redactor, cfg);
     let handle = worker.clone().spawn();
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    wait_for_redacted_total(&worker, 1).await;
     handle.abort();
+    let _ = handle.await;
 
     let status = worker.status().await;
     // Only the un-redacted frame should have been processed.
@@ -213,8 +235,9 @@ async fn worker_overwrites_source_columns_destructively() {
     let worker = Worker::new(pool.clone(), redactor, cfg);
     let handle = worker.clone().spawn();
 
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    wait_for_redacted_total(&worker, 1).await;
     handle.abort();
+    let _ = handle.await;
 
     let row = sqlx::query("SELECT text, redacted_at FROM ocr_text WHERE frame_id = 1")
         .fetch_one(&pool)

@@ -5,6 +5,7 @@
 export type PiDiagnosticKind =
   | "model-not-allowed"
   | "provider-rejected"
+  | "local-gateway-unauthorized"
   | "rate-limited"
   | "image-unsupported"
   | "model-not-found"
@@ -44,6 +45,13 @@ export function classifyPiDiagnostic(line: string): PiDiagnosticKind | null {
     normalized.includes("remote ai is off")
   ) {
     return "network-policy-blocked";
+  }
+  if (
+    normalized.includes("unauthorized: api access requires authentication") ||
+    normalized.includes("your-local-api-key") ||
+    normalized.includes("local app server authentication required")
+  ) {
+    return "local-gateway-unauthorized";
   }
   if (/\b403\b/.test(normalized)) {
     return "provider-rejected";

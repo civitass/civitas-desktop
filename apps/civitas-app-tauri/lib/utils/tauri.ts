@@ -207,6 +207,24 @@ async checkScreenRecordingPermissionState() : Promise<ScreenRecordingPermissionS
     return await TAURI_INVOKE("check_screen_recording_permission_state");
 },
 /**
+ * Return an opaque identity for the exact local library behind the current
+ * renderer session.
+ *
+ * Timeline's IndexedDB cache outlives the SQLite database and can also
+ * outlive a custom data-directory change. Pairing this marker with the
+ * resolved root prevents cached frame paths from one library being rendered
+ * against another. The random value stays on this device and carries no
+ * hardware, account, or advertising identity.
+ */
+async civitasDataIdentity() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("civitas_data_identity") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Return the resolved user-data root selected during startup.
  *
  * Chat history and assistant workspaces use this command so a validated

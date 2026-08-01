@@ -49,6 +49,13 @@ model name from a blog post or another region. After selection:
 4. exercise the intended role with synthetic content before using personal
    evidence.
 
+For Bedrock, distinguish a foundation-model ID from an inference-profile ID.
+The regional catalog can return `anthropic.claude-sonnet-4-6`, while a US
+cross-region invocation uses `us.anthropic.claude-sonnet-4-6`. Both are exact
+IDs, not interchangeable aliases. The region, account entitlement, IAM policy,
+credential lifetime, and selected ID must all agree; a successful catalog row
+does not by itself prove that a cross-region profile can be invoked.
+
 The diagnostic reports separate rows for endpoint policy, DNS, TLS,
 authentication, model list/access, fixed text inference, structured output,
 tool calling, and streaming. Structured output, tools, and streaming are

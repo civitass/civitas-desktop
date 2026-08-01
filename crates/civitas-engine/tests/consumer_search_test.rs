@@ -346,7 +346,15 @@ async fn owner_completes_typed_search_and_saved_query_journey_from_cold_start() 
     assert_eq!(get_response.status(), StatusCode::OK);
     let exact = body_json(get_response).await;
     assert_eq!(exact["id"], saved_id);
-    assert_eq!(exact["followUpReviewedAt"], "2026-07-01T12:00:00Z");
+    let seeded_reviewed_at = chrono::DateTime::parse_from_rfc3339(
+        exact["followUpReviewedAt"]
+            .as_str()
+            .expect("saved review timestamp is a string"),
+    )
+    .expect("saved review timestamp is RFC 3339");
+    let expected_seeded_reviewed_at = chrono::DateTime::parse_from_rfc3339("2026-07-01T12:00:00Z")
+        .expect("fixed test timestamp is RFC 3339");
+    assert_eq!(seeded_reviewed_at, expected_seeded_reviewed_at);
 
     let review_response = profile
         .router
@@ -363,10 +371,13 @@ async fn owner_completes_typed_search_and_saved_query_journey_from_cold_start() 
     let reviewed = body_json(review_response).await;
     assert_eq!(reviewed["reviewed"], true);
     assert_eq!(reviewed["localOnly"], true);
-    assert_ne!(
-        reviewed["search"]["followUpReviewedAt"],
-        "2026-07-01T12:00:00Z"
-    );
+    let refreshed_reviewed_at = chrono::DateTime::parse_from_rfc3339(
+        reviewed["search"]["followUpReviewedAt"]
+            .as_str()
+            .expect("refreshed review timestamp is a string"),
+    )
+    .expect("refreshed review timestamp is RFC 3339");
+    assert_ne!(refreshed_reviewed_at, expected_seeded_reviewed_at);
 
     let invalid_response = profile
         .router

@@ -5,12 +5,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  civitasDataIdentity: vi.fn(),
   civitasDataRoot: vi.fn(),
   civitasSettingsRoot: vi.fn(),
 }));
 
 vi.mock("@/lib/utils/tauri", () => ({
   commands: {
+    civitasDataIdentity: mocks.civitasDataIdentity,
     civitasDataRoot: mocks.civitasDataRoot,
     civitasSettingsRoot: mocks.civitasSettingsRoot,
   },
@@ -18,6 +20,7 @@ vi.mock("@/lib/utils/tauri", () => ({
 
 import {
   __resetCivitasDataRootForTests,
+  getCivitasDataIdentity,
   getCivitasDataRoot,
   getCivitasSettingsRoot,
 } from "./data-root";
@@ -25,6 +28,7 @@ import {
 describe("getCivitasDataRoot", () => {
   beforeEach(() => {
     __resetCivitasDataRootForTests();
+    mocks.civitasDataIdentity.mockReset();
     mocks.civitasDataRoot.mockReset();
     mocks.civitasSettingsRoot.mockReset();
   });
@@ -42,6 +46,29 @@ describe("getCivitasDataRoot", () => {
       "/Users/test/.civitas-development/review",
     );
     expect(mocks.civitasDataRoot).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses and caches the native local-library identity", async () => {
+    mocks.civitasDataIdentity.mockResolvedValue({
+      status: "ok",
+      data: "4ba67742-ad1f-4d50-b415-e5f3a92ab930",
+    });
+
+    await expect(getCivitasDataIdentity()).resolves.toBe(
+      "4ba67742-ad1f-4d50-b415-e5f3a92ab930",
+    );
+    await expect(getCivitasDataIdentity()).resolves.toBe(
+      "4ba67742-ad1f-4d50-b415-e5f3a92ab930",
+    );
+    expect(mocks.civitasDataIdentity).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an empty local-library identity instead of sharing caches", async () => {
+    mocks.civitasDataIdentity.mockResolvedValue({ status: "ok", data: " " });
+
+    await expect(getCivitasDataIdentity()).rejects.toThrow(
+      "empty local data identity",
+    );
   });
 
   it("fails closed and allows a later retry when resolution fails", async () => {

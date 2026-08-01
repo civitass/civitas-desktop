@@ -556,7 +556,11 @@ async fn build_models_json(provider_config: Option<&PiProviderConfig>) -> serde_
     let civitas_provider = json!({
         "baseUrl": CIVITAS_API_URL,
         "api": "openai-completions",
-        "apiKey": "CIVITAS_INFERENCE_API_KEY",
+        // Pi's models.json config-value grammar requires `$NAME` for an
+        // environment lookup. A bare name is a literal credential, which made
+        // Pi send `Bearer CIVITAS_INFERENCE_API_KEY` and the loopback gateway
+        // correctly reject Chat with HTTP 403.
+        "apiKey": "$CIVITAS_INFERENCE_API_KEY",
         "authHeader": true,
         "models": models
     });
@@ -2593,11 +2597,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_models_json_uses_inference_only_env_key() {
-        // models.json points Pi at the local gateway and resolves its short-lived
-        // process credential from the child environment.
+        // models.json points Pi at the local gateway and resolves its
+        // authenticated loopback credential from the child environment.
         let config = build_models_json(None).await;
         let sp = &config["providers"]["civitas"];
-        assert_eq!(sp["apiKey"], "CIVITAS_INFERENCE_API_KEY");
+        assert_eq!(sp["apiKey"], "$CIVITAS_INFERENCE_API_KEY");
     }
 
     #[tokio::test]

@@ -30,10 +30,11 @@ pub use consumer_search::{
     SearchTagCount, SearchTaggedFrame, SearchTagsResult,
 };
 pub use db::{
-    find_matching_a11y_positions, parse_all_text_positions, CountSearchFilters, DatabaseManager,
-    DeleteDerivedDataResult, DeleteTimeRangeResult, EvictTranscribedAudioResult, ImmediateTx,
-    NewMeetingTranscriptSegment, ReadOnlySqlError, ReclaimReport, RetentionPolicyRecord,
-    MEETING_END_REASON_AUTO_END, MEETING_END_REASON_EXPLICIT_STOP, MEETING_END_REASON_SHUTDOWN,
+    find_matching_a11y_positions, parse_all_text_positions, register_sqlite_extensions,
+    CountSearchFilters, DatabaseManager, DeleteDerivedDataResult, DeleteTimeRangeResult,
+    EvictTranscribedAudioResult, ImmediateTx, NewMeetingTranscriptSegment, ReadOnlySqlError,
+    ReclaimReport, RetentionPolicyRecord, MEETING_END_REASON_AUTO_END,
+    MEETING_END_REASON_EXPLICIT_STOP, MEETING_END_REASON_SHUTDOWN,
 };
 pub use entity_corrections::{
     AliasMutation, CorrectionContext, CorrectionHistoryRow, CorrectionSelection,

@@ -48,7 +48,10 @@ async fn evicts_old_transcribed_chunks() {
     set_status(&db, chunk, "transcribed").await;
 
     let cutoff = Utc::now() - Duration::days(7);
-    let result = db.evict_transcribed_audio_before(cutoff).await.unwrap();
+    let result = db
+        .evict_transcribed_audio_before(cutoff, 500)
+        .await
+        .unwrap();
 
     assert_eq!(result.audio_chunks_evicted, 1);
     assert_eq!(result.audio_files, vec!["old_transcribed.mp4".to_string()]);
@@ -70,7 +73,10 @@ async fn keeps_recent_transcribed_chunks() {
     set_status(&db, chunk, "transcribed").await;
 
     let cutoff = Utc::now() - Duration::days(7);
-    let result = db.evict_transcribed_audio_before(cutoff).await.unwrap();
+    let result = db
+        .evict_transcribed_audio_before(cutoff, 500)
+        .await
+        .unwrap();
 
     assert_eq!(result.audio_chunks_evicted, 0);
     assert!(result.audio_files.is_empty());
@@ -92,7 +98,10 @@ async fn keeps_pending_and_failed_chunks() {
     set_status(&db, failed, "failed").await;
 
     let cutoff = Utc::now() - Duration::days(7);
-    let result = db.evict_transcribed_audio_before(cutoff).await.unwrap();
+    let result = db
+        .evict_transcribed_audio_before(cutoff, 500)
+        .await
+        .unwrap();
 
     assert_eq!(
         result.audio_chunks_evicted, 0,
@@ -117,7 +126,10 @@ async fn evicts_old_silent_chunks() {
     set_status(&db, chunk, "silent").await;
 
     let cutoff = Utc::now() - Duration::days(7);
-    let result = db.evict_transcribed_audio_before(cutoff).await.unwrap();
+    let result = db
+        .evict_transcribed_audio_before(cutoff, 500)
+        .await
+        .unwrap();
 
     assert_eq!(
         result.audio_chunks_evicted, 1,
@@ -151,8 +163,41 @@ async fn skips_already_evicted_and_cloud_chunks() {
     set_status(&db, cloud, "transcribed").await;
 
     let cutoff = Utc::now() - Duration::days(7);
-    let result = db.evict_transcribed_audio_before(cutoff).await.unwrap();
+    let result = db
+        .evict_transcribed_audio_before(cutoff, 500)
+        .await
+        .unwrap();
 
     assert_eq!(result.audio_chunks_evicted, 0);
     assert!(result.audio_files.is_empty());
+}
+
+#[tokio::test]
+async fn eviction_respects_the_batch_limit_and_resumes_deterministically() {
+    let db = setup_test_db().await;
+    let old_ts = Utc::now() - Duration::days(10);
+    let first = db
+        .insert_audio_chunk("first.mp4", Some(old_ts - Duration::seconds(1)))
+        .await
+        .unwrap();
+    let second = db
+        .insert_audio_chunk("second.mp4", Some(old_ts))
+        .await
+        .unwrap();
+    set_status(&db, first, "transcribed").await;
+    set_status(&db, second, "silent").await;
+
+    let cutoff = Utc::now() - Duration::days(7);
+    let first_batch = db.evict_transcribed_audio_before(cutoff, 1).await.unwrap();
+    assert_eq!(first_batch.audio_chunks_evicted, 1);
+    assert_eq!(first_batch.audio_files, vec!["first.mp4".to_string()]);
+    assert_eq!(chunk_state(&db, second).await.0, "second.mp4");
+
+    let second_batch = db.evict_transcribed_audio_before(cutoff, 1).await.unwrap();
+    assert_eq!(second_batch.audio_chunks_evicted, 1);
+    assert_eq!(second_batch.audio_files, vec!["second.mp4".to_string()]);
+
+    let complete = db.evict_transcribed_audio_before(cutoff, 1).await.unwrap();
+    assert_eq!(complete.audio_chunks_evicted, 0);
+    assert!(complete.audio_files.is_empty());
 }

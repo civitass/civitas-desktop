@@ -6,6 +6,7 @@ import { commands } from "@/lib/utils/tauri";
 
 let cachedDataRoot: Promise<string> | null = null;
 let cachedSettingsRoot: Promise<string> | null = null;
+let cachedDataIdentity: Promise<string> | null = null;
 
 /**
  * Resolve the native process's validated user-data root.
@@ -24,6 +25,24 @@ export async function getCivitasDataRoot(): Promise<string> {
     });
   }
   return cachedDataRoot;
+}
+
+/**
+ * Resolve the opaque identity of the exact local library behind this process.
+ *
+ * Renderer caches pair this value with the resolved data root so a library
+ * wipe, move, or custom-directory switch cannot resurrect stale local paths.
+ */
+export async function getCivitasDataIdentity(): Promise<string> {
+  if (!cachedDataIdentity) {
+    cachedDataIdentity = resolveNativeIdentity(
+      commands.civitasDataIdentity(),
+    ).catch((error) => {
+      cachedDataIdentity = null;
+      throw error;
+    });
+  }
+  return cachedDataIdentity;
 }
 
 /**
@@ -61,7 +80,22 @@ async function resolveNativeRoot(
   return root;
 }
 
+async function resolveNativeIdentity(
+  resultPromise: ReturnType<typeof commands.civitasDataIdentity>,
+): Promise<string> {
+  const result = await resultPromise;
+  if (result.status === "error") {
+    throw new Error("Civitas could not resolve its local data identity.");
+  }
+  const identity = result.data.trim();
+  if (!identity) {
+    throw new Error("Civitas returned an empty local data identity.");
+  }
+  return identity;
+}
+
 export function __resetCivitasDataRootForTests(): void {
   cachedDataRoot = null;
   cachedSettingsRoot = null;
+  cachedDataIdentity = null;
 }

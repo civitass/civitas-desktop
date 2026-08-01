@@ -12,6 +12,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use civitas_core::network::{EgressClient, EgressPurpose};
+use civitas_db::DatabaseManager;
 use reqwest::{Client, Response as UpstreamResponse, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -2741,6 +2742,83 @@ pub async fn start_audit(
     Ok(id)
 }
 
+/// Start an inference audit through the database's serialized writer.
+///
+/// Interactive inference must not compete with retention or capture through
+/// the read pool: doing so can leave a request in `started` after a provider
+/// response has already arrived. The same transaction reconciles genuinely
+/// abandoned rows from a prior crash while preserving their metadata.
+pub async fn start_audit_serialized(
+    db: &DatabaseManager,
+    profile: &ProviderProfile,
+    metadata: &AuditRequestMetadata,
+) -> Result<String> {
+    const ABANDONED_AUDIT_GRACE_MINUTES: i64 = 10;
+
+    metadata.validate()?;
+    let id = Uuid::new_v4().to_string();
+    let data_classes = serde_json::to_string(
+        &metadata
+            .data_classes
+            .iter()
+            .map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+    )
+    .context("failed to encode inference data classes")?;
+    let now = chrono::Utc::now();
+    let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let abandoned_before = (now - chrono::Duration::minutes(ABANDONED_AUDIT_GRACE_MINUTES))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let mut transaction = db
+        .begin_immediate_with_retry()
+        .await
+        .context("failed to acquire the inference audit writer")?;
+
+    sqlx::query(
+        "UPDATE inference_request_audit
+         SET status = 'interrupted', completed_at = ?
+         WHERE completed_at IS NULL AND created_at < ?",
+    )
+    .bind(&now_text)
+    .bind(&abandoned_before)
+    .execute(&mut **transaction.conn())
+    .await
+    .context("failed to reconcile interrupted inference audits")?;
+
+    sqlx::query(
+        "INSERT INTO inference_request_audit
+         (id, purpose, provider_profile_id, endpoint_host, request_bytes, data_classes,
+          source_count, estimated_input_tokens, redaction_status, timeout_ms, retry_policy,
+          cancellation_policy, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?)",
+    )
+    .bind(&id)
+    .bind(metadata.purpose.as_str())
+    .bind(&profile.id)
+    .bind(profile.endpoint_host()?)
+    .bind(i64::try_from(metadata.request_bytes).unwrap_or(i64::MAX))
+    .bind(data_classes)
+    .bind(i64::from(metadata.source_count))
+    .bind(
+        metadata
+            .estimated_input_tokens
+            .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
+    )
+    .bind(metadata.redaction_status.as_str())
+    .bind(i64::try_from(metadata.timeout_ms).unwrap_or(i64::MAX))
+    .bind(metadata.retry_policy.as_str())
+    .bind(metadata.cancellation_policy.as_str())
+    .bind(&now_text)
+    .execute(&mut **transaction.conn())
+    .await
+    .context("failed to start inference audit")?;
+    transaction
+        .commit()
+        .await
+        .context("failed to commit inference audit start")?;
+    Ok(id)
+}
+
 pub async fn mark_audit_accepted(pool: &SqlitePool, id: &str) -> Result<()> {
     let result = sqlx::query(
         "UPDATE inference_request_audit
@@ -2772,6 +2850,39 @@ pub async fn finish_audit(pool: &SqlitePool, id: &str, status: &str) -> Result<(
     if result.rows_affected() != 1 {
         bail!("inference audit row was missing or already completed");
     }
+    Ok(())
+}
+
+/// Complete an inference audit through the same serialized writer used by
+/// capture and retention. A missing/already-finished row remains a hard error;
+/// provider output is never returned without a durable completion status.
+pub async fn finish_audit_serialized(db: &DatabaseManager, id: &str, status: &str) -> Result<()> {
+    let mut transaction = db
+        .begin_immediate_with_retry()
+        .await
+        .context("failed to acquire the inference audit writer")?;
+    let result = sqlx::query(
+        "UPDATE inference_request_audit
+         SET status = ?, completed_at = ?
+         WHERE id = ? AND completed_at IS NULL",
+    )
+    .bind(status)
+    .bind(now_rfc3339())
+    .bind(id)
+    .execute(&mut **transaction.conn())
+    .await
+    .context("failed to finish inference audit")?;
+    if result.rows_affected() != 1 {
+        transaction
+            .rollback()
+            .await
+            .context("failed to rollback an invalid inference audit completion")?;
+        bail!("inference audit row was missing or already completed");
+    }
+    transaction
+        .commit()
+        .await
+        .context("failed to commit inference audit completion")?;
     Ok(())
 }
 
@@ -4774,6 +4885,63 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(status, "started");
+    }
+
+    #[tokio::test]
+    async fn serialized_audits_reconcile_crashes_and_complete_exactly_once() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let database_path = directory.path().join("serialized-audit.sqlite");
+        let db = DatabaseManager::new(
+            &database_path.to_string_lossy(),
+            civitas_config::DbConfig::default(),
+        )
+        .await
+        .expect("create database manager");
+        let candidate = profile(ProviderId::Local, "http://127.0.0.1:11434/v1");
+        let metadata = test_audit_metadata(InferencePurpose::ProviderTest);
+
+        let interrupted_id = start_audit_serialized(&db, &candidate, &metadata)
+            .await
+            .expect("start audit that simulates a crashed request");
+        sqlx::query(
+            "UPDATE inference_request_audit
+             SET created_at = '2000-01-01T00:00:00.000Z'
+             WHERE id = ?",
+        )
+        .bind(&interrupted_id)
+        .execute(&db.pool)
+        .await
+        .expect("age synthetic audit");
+
+        let current_id = start_audit_serialized(&db, &candidate, &metadata)
+            .await
+            .expect("start current audit");
+        let interrupted: (String, Option<String>) =
+            sqlx::query_as("SELECT status, completed_at FROM inference_request_audit WHERE id = ?")
+                .bind(&interrupted_id)
+                .fetch_one(&db.pool)
+                .await
+                .expect("inspect interrupted audit");
+        assert_eq!(interrupted.0, "interrupted");
+        assert!(interrupted.1.is_some());
+
+        finish_audit_serialized(&db, &current_id, "success")
+            .await
+            .expect("finish current audit");
+        assert!(
+            finish_audit_serialized(&db, &current_id, "success")
+                .await
+                .is_err(),
+            "an audit completion must be durable exactly once"
+        );
+        let current: (String, Option<String>) =
+            sqlx::query_as("SELECT status, completed_at FROM inference_request_audit WHERE id = ?")
+                .bind(&current_id)
+                .fetch_one(&db.pool)
+                .await
+                .expect("inspect completed audit");
+        assert_eq!(current.0, "success");
+        assert!(current.1.is_some());
     }
 
     #[test]

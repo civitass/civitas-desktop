@@ -16,8 +16,17 @@ use axum::{
 use civitas_audio::audio_manager::AudioManagerBuilder;
 use civitas_db::DatabaseManager;
 use civitas_engine::SCServer;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tower::ServiceExt;
+
+const OWNER_KEY: &str = "value-events-owner-key";
+static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -33,8 +42,13 @@ async fn setup_test_app() -> (Router, Arc<DatabaseManager>) {
         std::process::id()
     ));
 
+    let database_id = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+    let database_uri = format!(
+        "file:civitas-value-events-{}-{database_id}?mode=memory&cache=shared",
+        std::process::id()
+    );
     let db = Arc::new(
-        DatabaseManager::new("sqlite::memory:", Default::default())
+        DatabaseManager::new(&database_uri, Default::default())
             .await
             .unwrap(),
     );
@@ -58,9 +72,9 @@ async fn setup_test_app() -> (Router, Arc<DatabaseManager>) {
         false, // use_pii_removal
         "balanced".to_string(),
     );
-    // API auth defaults on (fail closed); these tests exercise the routes and
-    // the in-handler KgAccess owner gate, not the static-key middleware.
-    app.api_auth = false;
+    // Exercise the routes and the in-handler KgAccess owner gate through the
+    // same fail-closed local-owner authentication required in production.
+    app.api_auth_key = Some(OWNER_KEY.to_string());
 
     let router = app.create_router().await;
     init();
@@ -77,6 +91,7 @@ fn post_json(uri: &str, body: &str) -> Request<Body> {
         .method("POST")
         .uri(uri)
         .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {OWNER_KEY}"))
         .body(Body::from(body.to_string()))
         .unwrap()
 }
@@ -92,7 +107,11 @@ fn post_json_bearer(uri: &str, body: &str, token: &str) -> Request<Body> {
 }
 
 fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
+    Request::builder()
+        .uri(uri)
+        .header("authorization", format!("Bearer {OWNER_KEY}"))
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn get_bearer(uri: &str, token: &str) -> Request<Body> {
@@ -241,8 +260,8 @@ async fn value_events_agent_scoped_token_fails_closed() {
         .unwrap_or("")
         .to_string();
     assert!(
-        err.contains("owner-only"),
-        "denial says the surface is owner-only, got: {err}"
+        err.contains("API access requires authentication") && !err.contains(&token),
+        "the outer local-API boundary rejects and redacts the agent token, got: {err}"
     );
 
     // GET fails closed with the same status.

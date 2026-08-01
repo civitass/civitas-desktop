@@ -99,6 +99,12 @@
       "layers": ["storage-privacy"]
     },
     {
+      "id": "next-actions",
+      "label": "Evidence-backed Next Actions journey",
+      "platforms": ["windows", "macos", "linux"],
+      "layers": ["real-ui-e2e"]
+    },
+    {
       "id": "updates",
       "label": "Updater install and rollback safety",
       "platforms": ["windows", "macos", "linux"],
@@ -521,6 +527,16 @@
       "confidence": "strong",
       "ux": "command",
       "notes": "Indexes a Unity-like CJK project root through the real Tauri command bridge and local engine routes, then verifies CJK content/filename search, generated-file exclusion, pause/resume/rescan, exclusion updates, and reversible removal."
+    },
+    {
+      "spec": "publication-demo.spec.ts",
+      "platforms": ["windows", "macos", "linux"],
+      "layers": ["real-ui-e2e", "local-api", "storage-privacy", "settings"],
+      "features": ["next-actions", "provider-settings", "local-memory"],
+      "criticality": "high",
+      "confidence": "strong",
+      "ux": "real-user-flow",
+      "notes": "Creates synthetic commitments through the real UI, verifies ranked local Next Actions, and captures credential-free publication screenshots from the isolated E2E profile."
     }
   ]
 }

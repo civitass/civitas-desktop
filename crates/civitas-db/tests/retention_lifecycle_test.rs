@@ -160,3 +160,117 @@ async fn graph_assertion_without_subject_is_still_owner_deletable() {
     assert!(result.assertion_deleted);
     assert_eq!(count(&db, "kg_claims").await, 0);
 }
+
+#[tokio::test]
+async fn age_based_media_eviction_is_bounded_and_preserves_straddling_chunks() {
+    let db = setup_test_db().await;
+    let cutoff = chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z")
+        .expect("parse cutoff")
+        .with_timezone(&Utc);
+
+    sqlx::query(
+        "INSERT INTO video_chunks (id, file_path, device_name) VALUES
+         (1, '/tmp/civitas-old-video.mp4', 'display-1'),
+         (2, '/tmp/civitas-straddling-video.mp4', 'display-1')",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("seed video chunks");
+    sqlx::query(
+        "INSERT INTO frames (
+             video_chunk_id, offset_index, timestamp, device_name, snapshot_path
+         ) VALUES
+         (1, 0, '2026-06-01T00:00:00Z', 'display-1', '/tmp/civitas-old-a.jpg'),
+         (1, 1, '2026-06-01T00:01:00Z', 'display-1', '/tmp/civitas-old-b.jpg'),
+         (2, 0, '2026-06-30T23:59:00Z', 'display-1', NULL),
+         (2, 1, '2026-07-01T00:01:00Z', 'display-1', '/tmp/civitas-recent.jpg')",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("seed frames");
+
+    sqlx::query(
+        "INSERT INTO audio_chunks (id, file_path) VALUES
+         (1, '/tmp/civitas-old-audio.wav'),
+         (2, '/tmp/civitas-straddling-audio.wav')",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("seed audio chunks");
+    sqlx::query(
+        "INSERT INTO audio_transcriptions (
+             audio_chunk_id, offset_index, timestamp, transcription, device, is_input_device
+         ) VALUES
+         (1, 0, '2026-06-01T00:00:00Z', 'old audio', 'microphone', 1),
+         (2, 0, '2026-06-30T23:59:00Z', 'before cutoff', 'microphone', 1),
+         (2, 1, '2026-07-01T00:01:00Z', 'after cutoff', 'microphone', 1)",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("seed audio transcriptions");
+
+    let first = db
+        .evict_media_before_batch(cutoff, 1)
+        .await
+        .expect("evict first bounded batch");
+    assert_eq!(first.video_chunks_evicted, 1);
+    assert_eq!(first.audio_chunks_evicted, 1);
+    assert_eq!(first.snapshots_evicted, 1);
+
+    let second = db
+        .evict_media_before_batch(cutoff, 1)
+        .await
+        .expect("evict second bounded batch");
+    assert_eq!(second.video_chunks_evicted, 0);
+    assert_eq!(second.audio_chunks_evicted, 0);
+    assert_eq!(second.snapshots_evicted, 1);
+
+    let complete = db
+        .evict_media_before_batch(cutoff, 1)
+        .await
+        .expect("verify bounded eviction is idempotent");
+    assert_eq!(complete.video_chunks_evicted, 0);
+    assert_eq!(complete.audio_chunks_evicted, 0);
+    assert_eq!(complete.snapshots_evicted, 0);
+
+    let video_paths: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, file_path FROM video_chunks ORDER BY id")
+            .fetch_all(&db.pool)
+            .await
+            .expect("inspect video retention");
+    assert_eq!(video_paths[0], (1, String::new()));
+    assert_eq!(
+        video_paths[1],
+        (2, "/tmp/civitas-straddling-video.mp4".to_string())
+    );
+    let audio_paths: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, file_path FROM audio_chunks ORDER BY id")
+            .fetch_all(&db.pool)
+            .await
+            .expect("inspect audio retention");
+    assert_eq!(audio_paths[0], (1, String::new()));
+    assert_eq!(
+        audio_paths[1],
+        (2, "/tmp/civitas-straddling-audio.wav".to_string())
+    );
+    let snapshots: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT snapshot_path FROM frames ORDER BY timestamp, id")
+            .fetch_all(&db.pool)
+            .await
+            .expect("inspect snapshot retention");
+    assert_eq!(
+        snapshots,
+        vec![
+            None,
+            None,
+            None,
+            Some("/tmp/civitas-recent.jpg".to_string())
+        ]
+    );
+    assert_eq!(
+        db.pending_file_deletion_jobs()
+            .await
+            .expect("count durable media deletion jobs"),
+        4
+    );
+}

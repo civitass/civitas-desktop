@@ -1613,6 +1613,13 @@ fn fill_ax_props(node: &mut AccessibilityTreeNode, elem: &ax::UiElement, role_st
 mod tests {
     use super::*;
 
+    // macOS Accessibility is a process-global IPC service. Running multiple
+    // live focused-window walks concurrently can serialize inside AX for its
+    // system timeout (observed at 120 seconds), even though each walk finishes
+    // in milliseconds on its own. Pure helper tests remain parallel; only the
+    // four tests that interrogate the live desktop share this lock.
+    static LIVE_AX_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_should_skip_role() {
         assert!(should_skip_role("AXScrollBar"));
@@ -1760,6 +1767,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn test_walk_focused_window_returns_result() {
+        let _guard = LIVE_AX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let config = TreeWalkerConfig::default();
         let walker = MacosTreeWalker::new(config);
         // Should not panic — returns Ok(Some(...)) or Ok(None) depending on focus
@@ -1770,6 +1780,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn test_walk_respects_max_nodes() {
+        let _guard = LIVE_AX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let config = TreeWalkerConfig {
             max_nodes: 10,
             ..Default::default()
@@ -1783,6 +1796,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn test_walk_respects_max_depth() {
+        let _guard = LIVE_AX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let config = TreeWalkerConfig {
             max_depth: 2,
             ..Default::default()
@@ -1796,6 +1812,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn test_walk_timeout_respected() {
+        let _guard = LIVE_AX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let config = TreeWalkerConfig {
             walk_timeout: std::time::Duration::from_millis(1),
             ..Default::default()

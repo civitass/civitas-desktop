@@ -4,10 +4,11 @@
 
 use crate::{
     native_notification,
+    recording::RecordingState,
     store::{load_settings_or_default, OnboardingStore, SettingsStore},
     window::{RewindWindowId, ShowRewindWindow},
 };
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, State};
 use tracing::{debug, error, info, warn};
 
 pub(crate) fn validate_external_https_url(raw: &str) -> Result<url::Url, String> {
@@ -487,10 +488,10 @@ fn emit_meeting_note_route_with_retries(app: &tauri::AppHandle, deeplink_url: &s
 mod tests {
     use super::{
         bcp47_language_is_available, browser_diagnostic_level, decode_bounded_ocr_png,
-        describe_browser_diagnostic, fallback_local_api_config, parse_meeting_deeplink,
-        parse_ocr_languages, safe_cache_entry_size, validate_external_https_url,
-        validate_safe_civitas_deeplink, BrowserDiagnosticLevel, MAX_BROWSER_LOG_MESSAGE_BYTES,
-        MAX_OCR_BASE64_BYTES,
+        describe_browser_diagnostic, e2e_publication_timeline_fixture_path,
+        fallback_local_api_config, parse_meeting_deeplink, parse_ocr_languages,
+        safe_cache_entry_size, validate_external_https_url, validate_safe_civitas_deeplink,
+        BrowserDiagnosticLevel, MAX_BROWSER_LOG_MESSAGE_BYTES, MAX_OCR_BASE64_BYTES,
     };
 
     #[test]
@@ -578,6 +579,22 @@ mod tests {
             browser_diagnostic_level("attacker-controlled-level"),
             BrowserDiagnosticLevel::Info
         );
+    }
+
+    #[test]
+    fn publication_timeline_fixture_stays_inside_the_read_only_media_scope() {
+        let data_root = std::path::Path::new("/tmp/civitas-publication-profile");
+        let fixture = e2e_publication_timeline_fixture_path(data_root);
+
+        assert_eq!(
+            fixture,
+            data_root
+                .join("data")
+                .join("publication-demo")
+                .join("timeline-frame.png")
+        );
+        assert!(fixture.starts_with(data_root.join("data")));
+        assert!(!fixture.starts_with(data_root.join("chats")));
     }
 
     #[test]
@@ -1038,6 +1055,85 @@ pub fn e2e_main_overlay_visible(app_handle: tauri::AppHandle) -> bool {
         }
         false
     }
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(feature = "e2e"), allow(dead_code))]
+pub struct E2ePublicationTimelineSeedResult {
+    pub frame_ids: Vec<i64>,
+}
+
+fn e2e_publication_timeline_fixture_path(data_root: &std::path::Path) -> std::path::PathBuf {
+    data_root
+        .join("data")
+        .join("publication-demo")
+        .join("timeline-frame.png")
+}
+
+/// E2E helper: seed the real Timeline from a fixed, synthetic image inside the
+/// isolated Civitas data root.
+///
+/// The command is inert in production builds and accepts no path or content
+/// from the webview. Publication tests copy a reviewed privacy-safe fixture to
+/// the fixed location before invoking it, then exercise the normal database,
+/// streaming, frame-serving, and Timeline UI paths.
+#[tauri::command]
+#[specta::specta]
+#[cfg_attr(not(feature = "e2e"), allow(dead_code))]
+pub async fn e2e_seed_publication_timeline(
+    state: State<'_, RecordingState>,
+) -> Result<E2ePublicationTimelineSeedResult, String> {
+    if !cfg!(feature = "e2e") {
+        return Err("e2e_seed_publication_timeline is only available in e2e builds".to_string());
+    }
+
+    let snapshot_path =
+        e2e_publication_timeline_fixture_path(&civitas_core::paths::default_civitas_data_dir());
+    let metadata = tokio::fs::metadata(&snapshot_path)
+        .await
+        .map_err(|error| format!("publication Timeline fixture is unavailable: {error}"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 10 * 1024 * 1024 {
+        return Err(
+            "publication Timeline fixture must be a non-empty file no larger than 10 MB"
+                .to_string(),
+        );
+    }
+
+    let db = {
+        let server = state.server.lock().await;
+        server
+            .as_ref()
+            .map(|core| core.db.clone())
+            .ok_or_else(|| "Civitas local service is not ready".to_string())?
+    };
+    let now = chrono::Utc::now();
+    let mut frame_ids = Vec::with_capacity(3);
+    for minutes_ago in [52_i64, 24, 3] {
+        let frame_id = db
+            .insert_snapshot_frame(
+                "publication-demo-display",
+                now - chrono::Duration::minutes(minutes_ago),
+                &snapshot_path.to_string_lossy(),
+                Some("Preview"),
+                Some("Northstar launch brief"),
+                None,
+                true,
+                Some("publication-demo"),
+                Some(
+                    "Northstar launch brief. Review launch narrative. Confirm rollback owner. Every recommendation points back to local evidence.",
+                ),
+                Some("accessibility"),
+                None,
+                None,
+                None,
+            )
+            .await
+            .map_err(|error| format!("could not seed publication Timeline frame: {error}"))?;
+        frame_ids.push(frame_id);
+    }
+
+    Ok(E2ePublicationTimelineSeedResult { frame_ids })
 }
 
 #[derive(serde::Serialize, specta::Type)]

@@ -19,8 +19,19 @@ mod tests {
     use civitas_screen::OcrEngine; // Adjust this import based on your actual module structure
     use serde::Deserialize;
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use tower::ServiceExt; // for `oneshot` and `ready`
+
+    static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn unique_database_uri(scope: &str) -> String {
+        let database_id = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+        format!(
+            "file:civitas-endpoint-{scope}-{}-{database_id}?mode=memory&cache=shared",
+            std::process::id()
+        )
+    }
 
     // Before the test function, add:
     #[derive(Deserialize)]
@@ -42,8 +53,9 @@ mod tests {
             std::process::id()
         ));
 
+        let database_uri = unique_database_uri("router");
         let db = Arc::new(
-            DatabaseManager::new("sqlite::memory:", Default::default())
+            DatabaseManager::new(&database_uri, Default::default())
                 .await
                 .unwrap(),
         );
@@ -76,10 +88,15 @@ mod tests {
 
         let router = app.create_router().await.layer(axum::middleware::from_fn(
             |mut request: axum::extract::Request, next: axum::middleware::Next| async move {
-                request.headers_mut().insert(
-                    axum::http::header::AUTHORIZATION,
-                    axum::http::HeaderValue::from_static("Bearer endpoint-test-owner-key"),
-                );
+                if !request
+                    .headers()
+                    .contains_key(axum::http::header::AUTHORIZATION)
+                {
+                    request.headers_mut().insert(
+                        axum::http::header::AUTHORIZATION,
+                        axum::http::HeaderValue::from_static("Bearer endpoint-test-owner-key"),
+                    );
+                }
                 next.run(request).await
             },
         ));
@@ -103,8 +120,9 @@ mod tests {
             std::process::id()
         ));
 
+        let database_uri = unique_database_uri("auth-default");
         let db = Arc::new(
-            DatabaseManager::new("sqlite::memory:", Default::default())
+            DatabaseManager::new(&database_uri, Default::default())
                 .await
                 .unwrap(),
         );
@@ -171,8 +189,9 @@ mod tests {
             .as_nanos();
         let civitas_dir =
             std::env::temp_dir().join(format!("civitas-pipe-auth-test-{unique_suffix}"));
+        let database_uri = unique_database_uri("pipe-auth");
         let db = Arc::new(
-            DatabaseManager::new("sqlite::memory:", Default::default())
+            DatabaseManager::new(&database_uri, Default::default())
                 .await
                 .unwrap(),
         );

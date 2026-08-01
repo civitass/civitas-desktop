@@ -24,11 +24,17 @@ use clap::ValueEnum;
 use oasgen::{oasgen, OaSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::server::AppState;
+
+const RETENTION_BATCH_LIMIT: u32 = 500;
+const MAX_RETENTION_BATCHES_PER_CYCLE: usize = 32;
 
 // ============================================================================
 // Types
@@ -641,17 +647,17 @@ fn spawn_retention_loop(
                 } else {
                     Utc::now() - Duration::days(config.transcribed_audio_days as i64)
                 };
-                match db.evict_transcribed_audio_before(cutoff).await {
-                    Ok(result) => {
-                        if result.audio_chunks_evicted > 0 {
+                match do_transcribed_audio_cleanup(&db, &civitas_dir, cutoff).await {
+                    Ok(deleted) => {
+                        if deleted > 0 {
                             info!(
                                 "retention: evicted {} safely-derived audio sources (transcripts kept)",
-                                result.audio_chunks_evicted
+                                deleted
                             );
                             search_cache.invalidate_all();
                             search_cache.run_pending_tasks().await;
                         }
-                        post_derivation_result = Some((Utc::now(), result.audio_chunks_evicted));
+                        post_derivation_result = Some((Utc::now(), deleted));
                     }
                     Err(error) => {
                         warn!("retention: post-derivation source cleanup error: {}", error);
@@ -705,6 +711,47 @@ async fn do_local_cleanup(
     cutoff: DateTime<Utc>,
     mode: RetentionMode,
 ) -> anyhow::Result<u64> {
+    if matches!(mode, RetentionMode::Media) {
+        let mut total = 0_u64;
+        for batch_index in 0..MAX_RETENTION_BATCHES_PER_CYCLE {
+            let result = db
+                .evict_media_before_batch(cutoff, RETENTION_BATCH_LIMIT)
+                .await
+                .map_err(|error| anyhow::anyhow!("bounded media eviction failed: {error}"))?;
+            let batch_total = result.video_chunks_evicted
+                + result.audio_chunks_evicted
+                + result.snapshots_evicted;
+            if batch_total == 0 {
+                break;
+            }
+
+            total = total.saturating_add(batch_total);
+            info!(
+                "retention: bounded batch evicted video_chunks={} audio_chunks={} snapshots={} \
+                 (files: video={} audio={} snapshots={})",
+                result.video_chunks_evicted,
+                result.audio_chunks_evicted,
+                result.snapshots_evicted,
+                result.video_files.len(),
+                result.audio_files.len(),
+                result.snapshot_files.len(),
+            );
+            if let Err(error) = db.process_file_deletion_jobs(civitas_dir, 1_000).await {
+                warn!("retention: bounded media cleanup retry failed: {}", error);
+            }
+
+            if batch_index + 1 == MAX_RETENTION_BATCHES_PER_CYCLE {
+                info!(
+                    "retention: media backlog remains after {} bounded batches; continuing next cycle",
+                    MAX_RETENTION_BATCHES_PER_CYCLE
+                );
+            } else {
+                tokio::task::yield_now().await;
+            }
+        }
+        return Ok(total);
+    }
+
     let batch_size = Duration::hours(1);
     let mut total: u64 = 0;
 
@@ -758,41 +805,7 @@ async fn do_local_cleanup(
                     ));
                 }
             },
-            RetentionMode::Media => match db.evict_media_in_range(batch_start, batch_end).await {
-                Ok(result) => {
-                    let batch_total = result.video_chunks_evicted
-                        + result.audio_chunks_evicted
-                        + result.snapshots_evicted;
-
-                    if batch_total > 0 {
-                        any_deleted = true;
-                        info!(
-                            "retention: batch evicted video_chunks={} audio_chunks={} snapshots={} \
-                             (files: video={} audio={} snapshots={})",
-                            result.video_chunks_evicted,
-                            result.audio_chunks_evicted,
-                            result.snapshots_evicted,
-                            result.video_files.len(),
-                            result.audio_files.len(),
-                            result.snapshot_files.len(),
-                        );
-                    }
-
-                    total += batch_total;
-
-                    if let Err(error) = db.process_file_deletion_jobs(civitas_dir, 1_000).await {
-                        warn!("retention: batch media cleanup retry failed: {}", error);
-                    }
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "batch media eviction failed for range {} to {}: {}",
-                        batch_start,
-                        batch_end,
-                        e
-                    ));
-                }
-            },
+            RetentionMode::Media => unreachable!("media retention uses bounded cutoff batches"),
         }
 
         batch_start = batch_end;
@@ -823,6 +836,47 @@ async fn do_local_cleanup(
         }
     }
 
+    Ok(total)
+}
+
+async fn do_transcribed_audio_cleanup(
+    db: &Arc<DatabaseManager>,
+    civitas_dir: &Path,
+    cutoff: DateTime<Utc>,
+) -> anyhow::Result<u64> {
+    let mut total = 0_u64;
+    for batch_index in 0..MAX_RETENTION_BATCHES_PER_CYCLE {
+        let result = db
+            .evict_transcribed_audio_before(cutoff, RETENTION_BATCH_LIMIT)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("bounded post-derivation audio eviction failed: {error}")
+            })?;
+        if result.audio_chunks_evicted == 0 {
+            break;
+        }
+
+        total = total.saturating_add(result.audio_chunks_evicted);
+        info!(
+            "retention: bounded post-derivation batch evicted {} audio sources",
+            result.audio_chunks_evicted
+        );
+        if let Err(error) = db.process_file_deletion_jobs(civitas_dir, 1_000).await {
+            warn!(
+                "retention: post-derivation audio file cleanup retry failed: {}",
+                error
+            );
+        }
+
+        if batch_index + 1 == MAX_RETENTION_BATCHES_PER_CYCLE {
+            info!(
+                "retention: post-derivation audio backlog remains after {} bounded batches; continuing next cycle",
+                MAX_RETENTION_BATCHES_PER_CYCLE
+            );
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
     Ok(total)
 }
 

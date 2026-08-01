@@ -257,6 +257,8 @@ const AI_PROVIDER_AUTH_MESSAGE =
   "The selected AI provider rejected its credential. Open Settings → AI to test or replace it.";
 const AI_PROVIDER_REJECTED_MESSAGE =
   "The selected provider refused this model or credential. Review the active profile in Settings → AI.";
+const AI_LOCAL_AUTH_MESSAGE =
+  "Civitas couldn’t authenticate its local assistant session. Restart Civitas to refresh it; if this persists, open Settings → AI and run diagnostics.";
 const AI_LOCAL_SERVICE_UNAVAILABLE_MESSAGE =
   "Civitas’s local assistant service is unavailable. Wait a moment and retry; if this persists, restart Civitas.";
 const AI_IMAGE_UNSUPPORTED_MESSAGE =
@@ -276,6 +278,8 @@ function safeAssistantFailureMessage(error: string): string {
       return AI_MODEL_UNAVAILABLE_MESSAGE;
     case "provider-rejected":
       return AI_PROVIDER_REJECTED_MESSAGE;
+    case "local-gateway-unauthorized":
+      return AI_LOCAL_AUTH_MESSAGE;
     case "image-unsupported":
       return AI_IMAGE_UNSUPPORTED_MESSAGE;
     case "provider-region-restricted":
@@ -5572,6 +5576,7 @@ export function StandaloneChat({
         if (
           diagnostic === "model-not-allowed" ||
           diagnostic === "provider-rejected" ||
+          diagnostic === "local-gateway-unauthorized" ||
           diagnostic === "provider-region-restricted" ||
           diagnostic === "network-policy-blocked"
         ) {
@@ -5586,6 +5591,7 @@ export function StandaloneChat({
                       content: {
                         "model-not-allowed": AI_MODEL_UNAVAILABLE_MESSAGE,
                         "provider-rejected": AI_PROVIDER_REJECTED_MESSAGE,
+                        "local-gateway-unauthorized": AI_LOCAL_AUTH_MESSAGE,
                         "provider-region-restricted":
                           AI_PROVIDER_REGION_MESSAGE,
                         "network-policy-blocked": AI_NETWORK_POLICY_MESSAGE,

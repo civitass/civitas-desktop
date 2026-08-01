@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic Northstar launch brief</title>
+  <desc id="desc">A fictional, privacy-safe work document used only as captured content in Civitas Timeline publication tests.</desc>
+  <rect width="1440" height="900" fill="#f5f5f7"/>
+  <rect x="30" y="28" width="1380" height="844" rx="22" fill="#ffffff" stroke="#d5d5da"/>
+  <path d="M30 86h1380" stroke="#dedee2"/>
+  <circle cx="68" cy="57" r="7" fill="#c9c9cd"/>
+  <circle cx="92" cy="57" r="7" fill="#c9c9cd"/>
+  <circle cx="116" cy="57" r="7" fill="#c9c9cd"/>
+  <text x="720" y="64" text-anchor="middle" font-family="Helvetica" font-size="17" font-weight="600" fill="#55555b">Northstar launch brief</text>
+
+  <rect x="31" y="87" width="286" height="784" fill="#f7f7f8"/>
+  <path d="M317 87v784" stroke="#dedee2"/>
+  <text x="72" y="142" font-family="Helvetica" font-size="13" font-weight="600" fill="#8a8a90" letter-spacing="1.2">WORKSPACE</text>
+  <rect x="52" y="166" width="244" height="48" rx="12" fill="#e9e7e5"/>
+  <circle cx="79" cy="190" r="8" fill="none" stroke="#6d6259" stroke-width="2"/>
+  <path d="M76 190l2 2 5-6" fill="none" stroke="#6d6259" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="103" y="196" font-family="Helvetica" font-size="18" font-weight="600" fill="#242426">Launch brief</text>
+  <text x="72" y="260" font-family="Helvetica" font-size="17" fill="#6e6e74">Research notes</text>
+  <text x="72" y="306" font-family="Helvetica" font-size="17" fill="#6e6e74">Customer language</text>
+  <text x="72" y="352" font-family="Helvetica" font-size="17" fill="#6e6e74">Release checklist</text>
+  <path d="M52 398h244" stroke="#dedee2"/>
+  <text x="72" y="442" font-family="Helvetica" font-size="13" font-weight="600" fill="#8a8a90" letter-spacing="1.2">TODAY</text>
+  <text x="72" y="486" font-family="Helvetica" font-size="16" fill="#5f5f65">Review launch narrative</text>
+  <text x="72" y="528" font-family="Helvetica" font-size="16" fill="#5f5f65">Confirm rollback owner</text>
+
+  <text x="382" y="154" font-family="Helvetica" font-size="15" font-weight="600" fill="#7a6a5f">NORTHSTAR</text>
+  <text x="382" y="213" font-family="Helvetica" font-size="44" font-weight="700" letter-spacing="-1.4" fill="#1d1d1f">Launch brief</text>
+  <text x="382" y="254" font-family="Helvetica" font-size="20" fill="#6e6e73">A focused release story for people coordinating work across a busy week.</text>
+
+  <rect x="382" y="305" width="956" height="132" rx="18" fill="#faf9f8" stroke="#dedad6"/>
+  <text x="416" y="346" font-family="Helvetica" font-size="15" font-weight="600" fill="#6d6259">RELEASE SIGNAL</text>
+  <text x="416" y="385" font-family="Helvetica" font-size="24" font-weight="650" fill="#242426">Make the next step obvious without making the user surrender context.</text>
+  <rect x="416" y="407" width="864" height="6" rx="3" fill="#e2dfdc"/>
+  <rect x="416" y="407" width="622" height="6" rx="3" fill="#8c7767"/>
+
+  <text x="382" y="504" font-family="Helvetica" font-size="22" font-weight="650" fill="#242426">What needs to be true</text>
+  <circle cx="397" cy="554" r="10" fill="#eeeae7"/>
+  <path d="M392 554l4 4 7-9" fill="none" stroke="#746458" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="426" y="561" font-family="Helvetica" font-size="19" fill="#414146">The value is visible in the first minute.</text>
+  <circle cx="397" cy="610" r="10" fill="#eeeae7"/>
+  <path d="M392 610l4 4 7-9" fill="none" stroke="#746458" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="426" y="617" font-family="Helvetica" font-size="19" fill="#414146">Every recommendation points back to local evidence.</text>
+  <circle cx="397" cy="666" r="10" fill="#ffffff" stroke="#aaa3a0" stroke-width="2"/>
+  <text x="426" y="673" font-family="Helvetica" font-size="19" fill="#414146">Rollback ownership is confirmed before release.</text>
+
+  <rect x="382" y="724" width="956" height="100" rx="18" fill="#f2f2f3"/>
+  <text x="416" y="765" font-family="Helvetica" font-size="14" font-weight="600" fill="#76767c">NEXT REVIEW</text>
+  <text x="416" y="796" font-family="Helvetica" font-size="19" font-weight="600" fill="#2f2f32">Refine the opening example, then send the brief for final review.</text>
+</svg>

@@ -181,6 +181,15 @@ sensitive work context.
    `bedrock-runtime.<region>.amazonaws.com`.
 6. Acknowledge the boundary, save, and test.
 
+Bedrock distinguishes a foundation-model ID from a cross-region inference
+profile ID. Use the exact value enabled for the selected region. For example,
+Claude Sonnet 4.6 uses the foundation-model ID
+`anthropic.claude-sonnet-4-6`; a US cross-region profile uses
+`us.anthropic.claude-sonnet-4-6`. Do not append a version suffix copied from a
+different Claude generation, and do not substitute a display name. **Find
+models** lists foundation models; inference-profile IDs remain manual entries
+and are verified by the fixed invocation test.
+
 Long-lived AWS access keys are discouraged. Prefer a named profile backed by
 short-lived credentials or a Bedrock short-term key. Civitas validates region
 syntax and pins the runtime host to the selected region. With a short-term
@@ -263,11 +272,13 @@ the provider reports it. The current matrix and limitations are in
 | DNS row fails | Endpoint spelling, DNS, VPN, or managed-network resolver. No inference probes are sent after this failure. |
 | TLS row fails | Official HTTPS host, system time, certificate trust, or TLS-inspection policy. Loopback HTTP correctly shows “not applicable.” |
 | Authentication row fails | Credential validity, project/account permissions, AWS IAM, and provider billing. Replace the credential explicitly. |
+| Chat says the provider refused a model or credential, but the profile diagnostic passes | Restart Civitas so a fresh assistant process receives the current authenticated loopback credential. This is a local assistant-to-gateway handshake, not evidence that the remote key is invalid. If it persists, open **Settings → AI**, confirm the assistant runtime is healthy, and run diagnostics before rotating a provider credential. |
+| Local assistant authentication fails | Restart Civitas. The assistant receives its loopback bearer through the child-process environment at spawn and must never be given the device-owner API key manually. If a restart does not recover it, remove and reinstall only the optional runtime from **Settings → AI**; this does not delete work data or provider profiles. |
 | Model list/access row fails | Exact model ID, region, list permission, and model entitlement. A Bedrock short-term API key can list foundation models through the regional control plane; signed modes and inference-profile IDs are verified by invocation. |
 | Fixed inference fails | Endpoint contract, exact model ID, region, quota, and basic chat compatibility. |
 | Bedrock streaming fails | Confirm `bedrock:InvokeModelWithResponseStream`, the exact region, and that the selected model reports streaming support. Basic Converse may still work. |
 | JSON/tools/streaming row fails | The basic profile may still work, but do not assign it to a feature requiring that failed optional capability. Tool and structured-output support are model-specific even when the adapter can translate the contract. |
-| Audit unavailable | Local SQLite must be writable. Civitas blocks egress or withholds the result instead of producing an unaudited provider exchange. |
+| Audit unavailable | Local SQLite must be writable. Civitas serializes these short audit writes and reconciles interrupted rows on the next request; it still blocks egress or withholds the result instead of producing an unaudited provider exchange. Check free disk space and local-data-directory permissions, then retry. |
 | Remote profile blocked | Enable remote features in **Settings → Privacy**. If `CIVITAS_NETWORK_MODE=deny` is set, remove it and restart; the environment override cannot be weakened in the UI. |
 | Local server unreachable | Start the server and confirm its `/v1/models` or compatible endpoint on loopback. |
 | Profile saves but cannot activate | Complete the boundary acknowledgement and ensure its protected or current-session credential is available. |

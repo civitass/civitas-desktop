@@ -5,10 +5,10 @@
 use crate::tray::QUIT_REQUESTED;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-#[allow(unused_imports)] // used on macOS
-use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicBool;
+#[allow(unused_imports)] // used on macOS
+use std::sync::atomic::Ordering;
 use tracing::{debug, error, info, warn};
 
 /// ScreenCaptureKit does not reliably adopt a Screen Recording grant made
@@ -439,16 +439,12 @@ pub fn check_screen_recording_permission() -> OSPermissionStatus {
 pub fn check_screen_recording_permission_state() -> ScreenRecordingPermissionState {
     let status = check_screen_recording_permission();
     #[cfg(target_os = "macos")]
-    let unavailable_since_launch =
-        SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH.load(Ordering::SeqCst);
+    let unavailable_since_launch = SCREEN_RECORDING_UNAVAILABLE_SINCE_LAUNCH.load(Ordering::SeqCst);
     #[cfg(not(target_os = "macos"))]
     let unavailable_since_launch = false;
 
     ScreenRecordingPermissionState {
-        relaunch_required: screen_recording_relaunch_required(
-            unavailable_since_launch,
-            &status,
-        ),
+        relaunch_required: screen_recording_relaunch_required(unavailable_since_launch, &status),
         status,
     }
 }

@@ -909,6 +909,7 @@ components:
       - scheduled-preparation
       - open-loop
       - user-routine
+      - saved-query
       - changed-blocker
       - work-graph
       type: string
@@ -1997,6 +1998,8 @@ components:
           items:
             $ref: '#/components/schemas/InspectorSample'
           type: array
+        storageProtection:
+          $ref: '#/components/schemas/InspectorStorageProtection'
         tableCounts:
           items:
             $ref: '#/components/schemas/TableCount'
@@ -2011,10 +2014,24 @@ components:
       - tableCounts
       - sourceSamples
       - knowledgeSamples
+      - storageProtection
       - retention
       - sampleLimit
       - truncated
       - localOnly
+      type: object
+    DateFacetValue:
+      properties:
+        count:
+          type: integer
+        localDate:
+          type: string
+        representativeTimestamp:
+          type: string
+      required:
+      - localDate
+      - representativeTimestamp
+      - count
       type: object
     DecisionItem:
       description: A single decision item returned by `GET /kg/decisions`.
@@ -2164,6 +2181,19 @@ components:
       - dependentRowsDeleted
       - orphanEntitiesDeleted
       type: object
+    DeleteSavedSearchResponse:
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: integer
+        localOnly:
+          type: boolean
+      required:
+      - id
+      - deleted
+      - localOnly
+      type: object
     DeleteSpeakerRequest:
       properties:
         id:
@@ -2222,6 +2252,8 @@ components:
       type: object
     DeletionPreviewResponse:
       properties:
+        chats:
+          $ref: '#/components/schemas/MediaCount'
         localOnly:
           type: boolean
         media:
@@ -2236,6 +2268,8 @@ components:
           type: array
         totalRows:
           type: integer
+        unsafeChatReferences:
+          type: integer
         unsafeMediaReferences:
           type: integer
       required:
@@ -2245,6 +2279,8 @@ components:
       - totalRows
       - media
       - unsafeMediaReferences
+      - chats
+      - unsafeChatReferences
       - localOnly
       type: object
     DeviceControl:
@@ -2780,6 +2816,7 @@ components:
       - memories
       - work-graph
       - timeline
+      - saved-search
       type: string
     ExclusionCapabilityInfo:
       properties:
@@ -2844,6 +2881,79 @@ components:
       - audio_chunk_count
       - duration_secs
       - file_size_bytes
+      type: object
+    ExtractionTrace:
+      description: 'Privacy-safe derivation metadata carried with every visible assertion.
+
+
+        Provider profile IDs, inference audit IDs, endpoints, prompts, evidence
+
+        bodies, responses, and credentials stay in the owner''s local database/export
+
+        and are intentionally not returned through graph read APIs.'
+      properties:
+        derivation_kind:
+          type: string
+        evidence_count:
+          type: integer
+        evidence_kind:
+          type: string
+        extracted_at:
+          type: string
+        extractor:
+          type: string
+        extractor_version:
+          type: string
+        failure_code:
+          nullable: true
+          type: string
+        model:
+          nullable: true
+          type: string
+        prompt_version:
+          nullable: true
+          type: string
+        provider:
+          nullable: true
+          type: string
+        quality_flags:
+          items:
+            type: string
+          type: array
+        runtime:
+          type: string
+        schema_version:
+          type: string
+        validation_status:
+          type: string
+      required:
+      - provider
+      - model
+      - runtime
+      - prompt_version
+      - schema_version
+      - extractor
+      - extractor_version
+      - derivation_kind
+      - evidence_kind
+      - evidence_count
+      - validation_status
+      - quality_flags
+      - failure_code
+      - extracted_at
+      type: object
+    FacetValue:
+      properties:
+        count:
+          type: integer
+        label:
+          type: string
+        value:
+          type: string
+      required:
+      - value
+      - label
+      - count
       type: object
     FrameContent:
       properties:
@@ -2981,13 +3091,22 @@ components:
           type: string
         previewToken:
           type: string
+        rendererCleanup:
+          $ref: '#/components/schemas/RendererCleanupAcknowledgement'
       required:
       - confirmation
       - previewToken
+      - rendererCleanup
       type: object
     FullWipeResponse:
       properties:
         captureMustRemainPaused:
+          type: boolean
+        chatBytesFreed:
+          type: integer
+        chatFilesDeleted:
+          type: integer
+        complete:
           type: boolean
         localOnly:
           type: boolean
@@ -3012,6 +3131,9 @@ components:
       - mediaBytesFreed
       - mediaDeletionsPending
       - mediaDeletionFailures
+      - chatFilesDeleted
+      - chatBytesFreed
+      - complete
       - captureMustRemainPaused
       - localOnly
       type: object
@@ -3515,6 +3637,20 @@ components:
       - element_role
       - element_name
       type: object
+    InspectorBackupExclusion:
+      enum:
+      - excluded
+      - not_excluded
+      - unsupported
+      - failed
+      type: string
+    InspectorCloudSyncProvider:
+      enum:
+      - icloud_drive
+      - onedrive
+      - dropbox
+      - google_drive
+      type: string
     InspectorQuery:
       properties:
         sample_limit:
@@ -3586,6 +3722,33 @@ components:
       - excerpt
       - provenance
       type: object
+    InspectorStorageProtection:
+      properties:
+        backupExclusion:
+          $ref: '#/components/schemas/InspectorBackupExclusion'
+        cloudSyncProvider:
+          $ref: '#/components/schemas/InspectorCloudSyncProvider'
+        requiresAttention:
+          type: boolean
+        statusCode:
+          $ref: '#/components/schemas/InspectorStorageProtectionCode'
+        summary:
+          type: string
+      required:
+      - backupExclusion
+      - cloudSyncProvider
+      - requiresAttention
+      - statusCode
+      - summary
+      type: object
+    InspectorStorageProtectionCode:
+      enum:
+      - protected
+      - cloud_sync_location
+      - backup_exclusion_inactive
+      - backup_exclusion_unsupported
+      - backup_exclusion_failed
+      type: string
     KeyText:
       properties:
         app_name:
@@ -4390,6 +4553,48 @@ components:
       - ok
       - id
       type: object
+    NearestFrame:
+      properties:
+        appName:
+          nullable: true
+          type: string
+        frameId:
+          nullable: true
+          type: integer
+        requestedTimestamp:
+          type: string
+      required:
+      - requestedTimestamp
+      - frameId
+      - appName
+      type: object
+    NearestFramesRequest:
+      properties:
+        timestamps:
+          items:
+            type: string
+          type: array
+        windowSeconds:
+          type: integer
+      required:
+      - timestamps
+      - windowSeconds
+      type: object
+    NearestFramesResponse:
+      properties:
+        frames:
+          items:
+            $ref: '#/components/schemas/NearestFrame'
+          type: array
+        localOnly:
+          type: boolean
+        schemaVersion:
+          type: string
+      required:
+      - schemaVersion
+      - frames
+      - localOnly
+      type: object
     NewSplitEntity:
       properties:
         aliases:
@@ -4969,6 +5174,36 @@ components:
           type: string
         includeMedia:
           type: boolean
+        rendererData:
+          properties:
+            browserDiagnostics:
+              additionalProperties:
+                type: object
+              type: object
+            browserStates:
+              additionalProperties:
+                type: object
+              type: object
+            dailySummaries:
+              additionalProperties:
+                type: object
+              type: object
+            notificationHistory:
+              type: object
+            schemaVersion:
+              type: string
+            timelineCache:
+              additionalProperties:
+                type: object
+              type: object
+          required:
+          - schemaVersion
+          - timelineCache
+          - dailySummaries
+          - browserStates
+          - notificationHistory
+          - browserDiagnostics
+          type: object
         settingsMetadata:
           additionalProperties:
             type: object
@@ -4977,10 +5212,13 @@ components:
       - destination
       - includeMedia
       - settingsMetadata
+      - rendererData
       type: object
     PortableExportResponse:
       properties:
         bytesWritten:
+          type: integer
+        chatFilesIncluded:
           type: integer
         destination:
           type: string
@@ -5001,6 +5239,7 @@ components:
       - recordsWritten
       - bytesWritten
       - mediaFilesIncluded
+      - chatFilesIncluded
       - localOnly
       type: object
     PrecedentItem:
@@ -5507,6 +5746,8 @@ components:
         episode_date:
           nullable: true
           type: string
+        extraction:
+          $ref: '#/components/schemas/ExtractionTrace'
         review_flag:
           type: boolean
         source:
@@ -5519,6 +5760,7 @@ components:
       - episode_date
       - contradictions
       - review_flag
+      - extraction
       type: object
     RankFactors:
       properties:
@@ -5774,6 +6016,21 @@ components:
       required:
       - success
       type: object
+    RendererCleanupAcknowledgement:
+      properties:
+        schemaVersion:
+          type: string
+        stores:
+          items:
+            type: string
+          type: array
+        verifiedEmpty:
+          type: boolean
+      required:
+      - schemaVersion
+      - verifiedEmpty
+      - stores
+      type: object
     RetentionConfigureRequest:
       properties:
         delete_source_after_derivation:
@@ -5955,7 +6212,197 @@ components:
       - rejectedAt
       - reviewGuidance
       type: object
+    ReviewSavedSearchResponse:
+      properties:
+        localOnly:
+          type: boolean
+        reviewed:
+          type: boolean
+        search:
+          $ref: '#/components/schemas/SavedSearchView'
+      required:
+      - search
+      - reviewed
+      - localOnly
+      type: object
     RollbackRequest:
+      type: object
+    SaveSearchRequest:
+      properties:
+        appName:
+          nullable: true
+          type: string
+        domain:
+          nullable: true
+          type: string
+        followUpEnabled:
+          type: boolean
+        followUpIntervalDays:
+          type: integer
+        localDate:
+          nullable: true
+          type: string
+        name:
+          type: string
+        query:
+          type: string
+        scope:
+          $ref: '#/components/schemas/SavedSearchScope'
+        tags:
+          items:
+            type: string
+          type: array
+      required:
+      - name
+      - query
+      - scope
+      - appName
+      - domain
+      - localDate
+      - tags
+      - followUpEnabled
+      - followUpIntervalDays
+      type: object
+    SavedSearchScope:
+      enum:
+      - all
+      - screen
+      - input
+      - chats
+      type: string
+    SavedSearchView:
+      properties:
+        appName:
+          nullable: true
+          type: string
+        createdAt:
+          type: string
+        domain:
+          nullable: true
+          type: string
+        followUpEnabled:
+          type: boolean
+        followUpIntervalDays:
+          type: integer
+        followUpReviewedAt:
+          nullable: true
+          type: string
+        id:
+          type: integer
+        localDate:
+          nullable: true
+          type: string
+        localOnly:
+          type: boolean
+        name:
+          type: string
+        query:
+          type: string
+        scope:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        updatedAt:
+          type: string
+      required:
+      - id
+      - name
+      - query
+      - scope
+      - appName
+      - domain
+      - localDate
+      - tags
+      - followUpEnabled
+      - followUpIntervalDays
+      - followUpReviewedAt
+      - createdAt
+      - updatedAt
+      - localOnly
+      type: object
+    SavedSearchesResponse:
+      properties:
+        localOnly:
+          type: boolean
+        schemaVersion:
+          type: string
+        searches:
+          items:
+            $ref: '#/components/schemas/SavedSearchView'
+          type: array
+      required:
+      - schemaVersion
+      - searches
+      - localOnly
+      type: object
+    SearchFacetsQuery:
+      properties:
+        limit:
+          type: integer
+        q:
+          type: string
+        utcOffsetMinutes:
+          type: integer
+      required:
+      - q
+      - utcOffsetMinutes
+      - limit
+      type: object
+    SearchFacetsResponse:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        domains:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        evidenceTypes:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        localDates:
+          items:
+            $ref: '#/components/schemas/DateFacetValue'
+          type: array
+        localOnly:
+          type: boolean
+        people:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        projects:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        query:
+          type: string
+        sampledFrames:
+          type: integer
+        schemaVersion:
+          type: string
+        tags:
+          items:
+            $ref: '#/components/schemas/FacetValue'
+          type: array
+        truncated:
+          type: boolean
+      required:
+      - schemaVersion
+      - query
+      - sampledFrames
+      - truncated
+      - apps
+      - domains
+      - localDates
+      - tags
+      - projects
+      - people
+      - evidenceTypes
+      - localOnly
       type: object
     SearchMatch:
       properties:
@@ -6524,6 +6971,39 @@ components:
       required:
       - name
       type: object
+    SearchTagsQuery:
+      properties:
+        frameLimit:
+          type: integer
+        limit:
+          type: integer
+        q:
+          type: string
+      required:
+      - q
+      - limit
+      - frameLimit
+      type: object
+    SearchTagsResponse:
+      properties:
+        frames:
+          items:
+            $ref: '#/components/schemas/TaggedFrame'
+          type: array
+        localOnly:
+          type: boolean
+        schemaVersion:
+          type: string
+        tags:
+          items:
+            $ref: '#/components/schemas/TagSuggestion'
+          type: array
+      required:
+      - schemaVersion
+      - tags
+      - frames
+      - localOnly
+      type: object
     SemanticActionItem:
       properties:
         app_name:
@@ -6748,6 +7228,41 @@ components:
       - vision
       - audio
       type: string
+    TagSuggestion:
+      properties:
+        count:
+          type: integer
+        label:
+          type: string
+        name:
+          type: string
+        namespace:
+          nullable: true
+          type: string
+      required:
+      - name
+      - label
+      - namespace
+      - count
+      type: object
+    TaggedFrame:
+      properties:
+        appName:
+          type: string
+        frameId:
+          type: integer
+        tagNames:
+          items:
+            type: string
+          type: array
+        timestamp:
+          type: string
+      required:
+      - frameId
+      - timestamp
+      - appName
+      - tagNames
+      type: object
     TextBounds:
       properties:
         height:
@@ -6803,44 +7318,6 @@ components:
       - frames
       - start_time
       - end_time
-      type: object
-    TrajectoryItem:
-      properties:
-        created_at:
-          type: string
-        run_id:
-          type: string
-        state:
-          type: string
-        step_count:
-          type: integer
-        step_digest:
-          type: string
-        successful:
-          type: boolean
-        task:
-          type: string
-      required:
-      - run_id
-      - task
-      - created_at
-      - state
-      - successful
-      - step_count
-      - step_digest
-      type: object
-    TrajectoryQuery:
-      properties:
-        limit:
-          type: integer
-        min_steps:
-          type: integer
-        successful_only:
-          type: boolean
-      required:
-      - limit
-      - min_steps
-      - successful_only
       type: object
     TreeWalkerSnapshot:
       description: Point-in-time snapshot of tree walker health metrics (no private data).
@@ -8962,44 +9439,6 @@ paths:
                 type: object
           description: OK
       summary: Routes episodes label episode
-  /experimental/frames/merge:
-    post:
-      operationId: routes_content_merge_frames_handler
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MergeVideosRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MergeVideosResponse'
-          description: OK
-      tags:
-      - Experimental
-      summary: Merge video frames
-  /experimental/validate/media:
-    get:
-      operationId: routes_content_validate_media_handler
-      parameters:
-      - in: query
-        name: file_path
-        schema:
-          type: string
-        style: form
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-          description: OK
-      tags:
-      - Experimental
-      summary: Validate media files
   /export:
     post:
       description: 'Render a recording to a single MP4 (screen frames + synced audio) via the engine
@@ -11219,6 +11658,36 @@ paths:
       summary: Search screen and audio content
       description: Query captured screen text (OCR), audio transcriptions, and UI elements with filters for time range, app,
         window, content type, and more.
+  /search/facets:
+    get:
+      description: Server-side facet aggregation for the current screen-search query.
+      operationId: routes_consumer_search_search_facets
+      parameters:
+      - in: query
+        name: q
+        schema:
+          type: string
+        style: form
+      - in: query
+        name: utcOffsetMinutes
+        schema:
+          type: integer
+        style: form
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        style: form
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchFacetsResponse'
+          description: OK
+      tags:
+      - Search
+      summary: Get bounded local search facets
   /search/keyword:
     get:
       operationId: routes_search_keyword_search_handler
@@ -11286,6 +11755,182 @@ paths:
       - Search
       summary: Keyword search
       description: Fast keyword-based search across all content types.
+  /search/nearest-frames:
+    post:
+      description: Batch nearest-frame lookup for transcript previews.
+      operationId: routes_consumer_search_nearest_frames
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NearestFramesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NearestFramesResponse'
+          description: OK
+      tags:
+      - Search
+      summary: Match timestamps to nearby frames
+  /search/saved:
+    get:
+      description: Deterministically ordered owner-authored local searches.
+      operationId: routes_consumer_search_list_saved_searches
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearchesResponse'
+          description: OK
+      tags:
+      - Search
+      summary: List saved local searches
+    post:
+      operationId: routes_consumer_search_create_saved_search
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveSearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearchView'
+          description: OK
+      tags:
+      - Search
+      summary: Create a saved local search
+      description: Validate and persist a query, scope, and optional app, hostname, local date, and tag filters on this device.
+  /search/saved/{id}:
+    delete:
+      operationId: routes_consumer_search_delete_saved_search
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        style: simple
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSavedSearchResponse'
+          description: OK
+      tags:
+      - Search
+      summary: Delete a saved local search
+      description: Owner-only deletion of one saved search; captured evidence is unchanged.
+    get:
+      description: Retrieve one exact owner-authored local saved search.
+      operationId: routes_consumer_search_get_saved_search
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        style: simple
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearchView'
+          description: OK
+      tags:
+      - Search
+      summary: Routes consumer search get saved search
+    patch:
+      operationId: routes_consumer_search_update_saved_search
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        style: simple
+        required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveSearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedSearchView'
+          description: OK
+      tags:
+      - Search
+      summary: Update a saved local search
+      description: Owner-only validated replacement of one saved search.
+  /search/saved/{id}/reviewed:
+    post:
+      description: 'Advance an enabled saved-query follow-up after the owner reopens it.
+
+
+        The endpoint is intentionally content-free beyond the saved query already
+
+        held locally, and remains a no-op for an opted-out query.'
+      operationId: routes_consumer_search_review_saved_search
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        style: simple
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSavedSearchResponse'
+          description: OK
+      tags:
+      - Search
+      summary: Routes consumer search review saved search
+  /search/tags:
+    get:
+      description: Typed tag autocomplete and recent tagged frames.
+      operationId: routes_consumer_search_search_tags
+      parameters:
+      - in: query
+        name: q
+        schema:
+          type: string
+        style: form
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        style: form
+      - in: query
+        name: frameLimit
+        schema:
+          type: integer
+        style: form
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchTagsResponse'
+          description: OK
+      tags:
+      - Search
+      summary: Search local tags
   /speakers/delete:
     post:
       operationId: routes_speakers_delete_speaker_handler
@@ -11573,70 +12218,6 @@ paths:
       - Tags
       summary: Add tags
       description: Add tags to a specific content item (frame or audio chunk).
-  /trajectories:
-    get:
-      description: List recent demonstrated workflow trajectories.
-      operationId: routes_trajectories_list_trajectories_handler
-      parameters:
-      - in: query
-        name: limit
-        schema:
-          type: integer
-        style: form
-      - in: query
-        name: min_steps
-        schema:
-          type: integer
-        style: form
-      - in: query
-        name: successful_only
-        schema:
-          type: boolean
-        style: form
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-          description: OK
-      summary: Routes trajectories list trajectories
-  /trajectories/sft:
-    get:
-      description: 'Export trajectories as supervised-fine-tuning examples (one per step
-
-        transition) in the chat format ms-swift / LLaMA-Factory consume for the
-
-        OpenCUA-7B LoRA fine-tune. The image (screenshot) slot is referenced by the
-
-        step''s frame but NOT inlined here — the trainer resolves frames separately;
-
-        this keeps the export light and avoids base64-bloating the API.'
-      operationId: routes_trajectories_export_sft_handler
-      parameters:
-      - in: query
-        name: limit
-        schema:
-          type: integer
-        style: form
-      - in: query
-        name: min_steps
-        schema:
-          type: integer
-        style: form
-      - in: query
-        name: successful_only
-        schema:
-          type: boolean
-        style: form
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-          description: OK
-      summary: Routes trajectories export sft
   /value/events:
     get:
       description: '`GET /value/events?since=&limit=` — newest-first ledger read (owner-only).'

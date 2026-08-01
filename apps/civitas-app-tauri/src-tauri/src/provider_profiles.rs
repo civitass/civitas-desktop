@@ -212,6 +212,12 @@ async fn open_pool() -> Result<SqlitePool, String> {
     let data_dir = civitas_core::paths::default_civitas_data_dir();
     let db_path = data_dir.join("db.sqlite");
     let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    // SQLite auto-extensions apply only to connections opened after
+    // registration. Legacy credential migration runs before the server-core
+    // DatabaseManager on a clean profile, while the canonical schema already
+    // contains sqlite-vec checks.
+    civitas_db::register_sqlite_extensions()
+        .map_err(|error| format!("failed to prepare SQLite extensions: {error}"))?;
     let pool = sqlx::SqlitePool::connect(&db_url)
         .await
         .map_err(|error| format!("failed to open local provider database: {error}"))?;

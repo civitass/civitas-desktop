@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 use tauri::Manager as _;
 use tauri_plugin_fs::FsExt as _;
@@ -14,6 +15,8 @@ use tracing::warn;
 
 const DEVELOPMENT_DATA_DIR: &str = ".civitas-development";
 const AUDIO_EXCLUSIONS_PATH_ENV: &str = "CIVITAS_AUDIO_EXCLUSIONS_PATH";
+const TIMELINE_CACHE_IDENTITY_FILE: &str = ".timeline-cache-identity";
+static TIMELINE_CACHE_IDENTITY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Exact data root selected during startup after custom-path validation and
 /// fallback. Commands that must inspect the pre-server filesystem (notably
@@ -31,6 +34,52 @@ pub struct ResolvedDataDir(pub PathBuf);
 #[specta::specta]
 pub fn civitas_data_root(data_dir: tauri::State<'_, ResolvedDataDir>) -> Result<String, String> {
     prepare_data_root_for_frontend(&data_dir.0)
+}
+
+/// Return an opaque identity for the exact local library behind the current
+/// renderer session.
+///
+/// Timeline's IndexedDB cache outlives the SQLite database and can also
+/// outlive a custom data-directory change. Pairing this marker with the
+/// resolved root prevents cached frame paths from one library being rendered
+/// against another. The random value stays on this device and carries no
+/// hardware, account, or advertising identity.
+#[tauri::command]
+#[specta::specta]
+pub fn civitas_data_identity(
+    data_dir: tauri::State<'_, ResolvedDataDir>,
+) -> Result<String, String> {
+    data_identity_for_root(&data_dir.0)
+}
+
+fn data_identity_for_root(data_root: &Path) -> Result<String, String> {
+    let _guard = TIMELINE_CACHE_IDENTITY_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "the local library identity lock is unavailable".to_string())?;
+    fs::create_dir_all(data_root)
+        .map_err(|error| format!("failed to prepare the Civitas data directory: {error}"))?;
+
+    let identity_path = data_root.join(TIMELINE_CACHE_IDENTITY_FILE);
+    match fs::read_to_string(&identity_path) {
+        Ok(value) => {
+            let value = value.trim();
+            if uuid::Uuid::parse_str(value).is_ok() {
+                return Ok(value.to_string());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "failed to read the local library identity: {error}"
+            ));
+        }
+    }
+
+    let identity = uuid::Uuid::new_v4().to_string();
+    fs::write(&identity_path, identity.as_bytes())
+        .map_err(|error| format!("failed to persist the local library identity: {error}"))?;
+    Ok(identity)
 }
 
 /// Return the identity-scoped root that owns settings and startup metadata.
@@ -281,6 +330,27 @@ mod tests {
             custom.to_string_lossy()
         );
         assert!(custom.is_dir());
+    }
+
+    #[test]
+    fn timeline_cache_identity_is_stable_per_library_and_repairs_invalid_markers() {
+        let parent = tempfile::tempdir().unwrap();
+        let first_root = parent.path().join("first");
+        let second_root = parent.path().join("second");
+
+        let first = data_identity_for_root(&first_root).unwrap();
+        assert_eq!(data_identity_for_root(&first_root).unwrap(), first);
+        assert_ne!(data_identity_for_root(&second_root).unwrap(), first);
+        assert!(uuid::Uuid::parse_str(&first).is_ok());
+
+        fs::write(
+            first_root.join(TIMELINE_CACHE_IDENTITY_FILE),
+            "incomplete-write",
+        )
+        .unwrap();
+        let repaired = data_identity_for_root(&first_root).unwrap();
+        assert_ne!(repaired, first);
+        assert!(uuid::Uuid::parse_str(&repaired).is_ok());
     }
 
     #[test]

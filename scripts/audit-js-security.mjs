@@ -30,7 +30,13 @@ function run(binary, args, options = {}) {
   return result;
 }
 
-const bunBinary = process.env.BUN_SECURITY_AUDIT_BIN?.trim() || "bun";
+// When this gate is launched by a reviewed bundled Bun (for example on a
+// clean machine without the pinned version on PATH), keep every child install
+// and audit on that exact executable. A user-provided override still wins for
+// CI wrappers; Node invocations continue to resolve `bun` from PATH.
+const bunBinary =
+  process.env.BUN_SECURITY_AUDIT_BIN?.trim() ||
+  (process.versions.bun ? process.execPath : "bun");
 const versionResult = run(bunBinary, ["--version"], { capture: true });
 if (versionResult.status !== 0) {
   fail(`could not verify Bun: ${(versionResult.stderr || "").trim()}`);

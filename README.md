@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/civitas-desktop-wordmark.svg" width="100%" alt="Civitas Desktop">
+  <img src="docs/assets/civitas-desktop-wordmark.svg" width="820" alt="Civitas Desktop">
 </p>
 
 <p align="center">
@@ -11,9 +11,9 @@
 </p>
 
 <p align="center">
-  <strong>A private, evidence-linked memory for the work you do on your computer.</strong><br>
-  Search what happened, understand how projects connect, and get careful next
-  steps without sending your entire history to a hosted Civitas service.
+  <strong>Your private, evidence-linked memory for everyday work.</strong><br>
+  Find what happened, understand why it happened, and decide what to do next—
+  without sending your entire history to a hosted Civitas service.
 </p>
 
 <p align="center">
@@ -28,11 +28,62 @@
 
 ---
 
-Civitas turns the work context you choose into a personal knowledge graph:
-people, projects, decisions, reasons, blockers, procedures, and commitments,
-each linked back to local evidence. It is designed for individuals who need to
-recover context across apps—not for employee monitoring or a company control
-plane.
+## Your work has a memory. Make it useful.
+
+Civitas turns the work context you choose into a personal knowledge graph of
+people, projects, decisions, reasons, blockers, procedures, and commitments.
+Every answer and suggestion can lead back to local evidence, so you can inspect
+what Civitas used instead of trusting a fluent guess.
+
+It is built for one person recovering context across apps—not for employee
+monitoring, fleet administration, or a company control plane. Capture, search,
+the timeline, the graph, feedback, and profile metadata stay on your Mac by
+default. AI is either loopback-local or a provider you explicitly connect.
+
+## See the day. Act on what matters.
+
+Civitas keeps the original moment close. Move through your private Timeline to
+recover what was on screen, then use evidence-backed action prediction in Next
+Actions to surface grounded commitments and open loops—with the reason,
+evidence age, risk, and control still visible.
+
+<p align="center">
+  <a href="docs/assets/demo/timeline.png">
+    <img src="docs/assets/demo/timeline.png" width="1200" alt="The actual Civitas Desktop Timeline showing a synthetic Northstar launch brief and local time scrubber">
+  </a>
+</p>
+
+<p align="center"><em>Timeline — return to a captured moment without sending the history off the Mac.</em></p>
+
+<p align="center">
+  <a href="docs/assets/demo/next-actions.png">
+    <img src="docs/assets/demo/next-actions.png" width="1200" alt="The actual Civitas Desktop Next Actions view showing a ranked synthetic commitment with its evidence and safety state">
+  </a>
+</p>
+
+<p align="center"><em>Next Actions — evidence-backed continuations that remain drafts until you choose otherwise.</em></p>
+
+> These are captures of the real desktop application using an isolated,
+> synthetic local profile. They contain no founder, contributor, or customer
+> data. The same privacy-safe capture is exercised by the publication E2E suite.
+
+## Three everyday wins
+
+| When you need to… | Civitas helps you… | Without hiding… |
+| --- | --- | --- |
+| Recover a decision | Search across apps and time, then open the supporting local moment | the source, evidence age, or uncertainty |
+| Re-enter a project | Reconstruct people, state changes, blockers, procedures, and reasons | where the graph inferred a relationship |
+| Close open loops | Review ranked commitments and follow-ups in Next Actions | confidence, safety state, or your feedback controls |
+
+## Start in three steps
+
+1. Download the verified macOS DMG from
+   [GitHub Releases](https://github.com/civitass/civitas-desktop/releases), or
+   [build from source](docs/BUILDING.md).
+2. Choose exactly what Civitas may capture. Screen and microphone permissions
+   remain separate, and capture can be paused immediately from the tray.
+3. Search locally first. If you want AI answers, add a local model or one of
+   your own provider credentials under **Settings → AI**.
 
 ## What you can do
 
@@ -135,6 +186,14 @@ integration automatically.
 | OpenRouter | OpenRouter API key | `openrouter.ai` and the chosen upstream route | You want a routed model catalog |
 | Amazon Bedrock | Short-term key, AWS profile, or temporary access keys | Region-pinned Bedrock Runtime | You manage models and access in AWS |
 | Compatible endpoint | Optional API key | Exact HTTPS or loopback host shown in Settings | You operate a trusted OpenAI-compatible server |
+
+<p align="center">
+  <a href="docs/assets/demo/ai-providers.png">
+    <img src="docs/assets/demo/ai-providers.png" width="920" alt="The actual Civitas Desktop AI settings showing local inference and supported bring-your-own-provider choices">
+  </a>
+</p>
+
+<p align="center"><em>Choose the boundary first. Add a credential only when a remote provider is intentional.</em></p>
 
 The app provides save, replace, test, activate, and delete flows. Diagnostics
 use the fixed prompt `Reply with OK.` and never return the credential.

@@ -12,10 +12,11 @@ use crate::calendar::CalendarEventItem;
 use crate::store::IcsCalendarEntry;
 use crate::store::IcsCalendarSettingsStore;
 use chrono::Utc;
+#[cfg(test)]
+use civitas_connect::ics_calendar::parse_ics_to_events as parse_shared_ics_to_events;
 use civitas_connect::ics_calendar::{
     fetch_and_parse_feed_checked, fetch_ics_calendar_events as fetch_shared_ics_calendar_events,
-    parse_ics_to_events as parse_shared_ics_to_events, IcsCalendarEntry as SharedIcsCalendarEntry,
-    IcsCalendarEventItem,
+    IcsCalendarEntry as SharedIcsCalendarEntry, IcsCalendarEventItem,
 };
 use civitas_core::network::{effective_egress_policy, EgressPolicy, EgressPurpose};
 use tauri::AppHandle;
@@ -42,6 +43,7 @@ fn map_ics_event(event: IcsCalendarEventItem) -> CalendarEventItem {
     }
 }
 
+#[cfg(test)]
 fn parse_ics_to_events(
     ics_text: &str,
     feed_name: &str,

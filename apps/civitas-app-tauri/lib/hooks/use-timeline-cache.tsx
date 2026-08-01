@@ -4,6 +4,10 @@
 
 import localforage from "localforage";
 import { StreamTimeSeriesResponse } from "@/components/rewind/timeline";
+import {
+  getCivitasDataIdentity,
+  getCivitasDataRoot,
+} from "@/lib/data-root";
 
 // Configure localforage for timeline cache
 const timelineCache = localforage.createInstance({
@@ -14,17 +18,27 @@ const timelineCache = localforage.createInstance({
 const CACHE_KEY = "cached_frames";
 const CACHE_DATE_KEY = "cached_date";
 const CACHE_TIMESTAMP_KEY = "cache_timestamp";
+const CACHE_SCOPE_KEY = "cache_scope";
 const MAX_CACHED_FRAMES = 200; // Keep last 200 frames for instant load
 const PORTABLE_CACHE_KEYS = [
   CACHE_KEY,
   CACHE_DATE_KEY,
   CACHE_TIMESTAMP_KEY,
+  CACHE_SCOPE_KEY,
 ] as const;
 
 export interface TimelineCache {
   frames: StreamTimeSeriesResponse[];
   date: string; // ISO date string
   timestamp: number; // When cache was saved
+}
+
+async function currentCacheScope(): Promise<string> {
+  const [dataRoot, dataIdentity] = await Promise.all([
+    getCivitasDataRoot(),
+    getCivitasDataIdentity(),
+  ]);
+  return JSON.stringify([dataRoot, dataIdentity]);
 }
 
 /**
@@ -35,12 +49,20 @@ export async function saveFramesToCache(
   date: Date,
 ): Promise<void> {
   try {
+    const scope = await currentCacheScope();
     // Only cache the most recent frames to keep storage reasonable
     const framesToCache = frames.slice(0, MAX_CACHED_FRAMES);
 
+    // Invalidate the previous commit marker before replacing any member of the
+    // cache tuple. If the renderer exits or IndexedDB rejects a later write,
+    // the next load clears the partial tuple instead of accepting it under an
+    // older matching scope.
+    await timelineCache.removeItem(CACHE_SCOPE_KEY);
     await timelineCache.setItem(CACHE_KEY, framesToCache);
     await timelineCache.setItem(CACHE_DATE_KEY, date.toISOString());
     await timelineCache.setItem(CACHE_TIMESTAMP_KEY, Date.now());
+    // Write the scope last: it is the commit marker for the other cache keys.
+    await timelineCache.setItem(CACHE_SCOPE_KEY, scope);
   } catch (error) {
     console.warn("Timeline frames could not be saved to the local cache.");
   }
@@ -51,10 +73,19 @@ export async function saveFramesToCache(
  */
 export async function loadCachedFrames(): Promise<TimelineCache | null> {
   try {
-    const frames =
-      await timelineCache.getItem<StreamTimeSeriesResponse[]>(CACHE_KEY);
-    const dateStr = await timelineCache.getItem<string>(CACHE_DATE_KEY);
-    const timestamp = await timelineCache.getItem<number>(CACHE_TIMESTAMP_KEY);
+    const [frames, dateStr, timestamp, storedScope, activeScope] =
+      await Promise.all([
+        timelineCache.getItem<StreamTimeSeriesResponse[]>(CACHE_KEY),
+        timelineCache.getItem<string>(CACHE_DATE_KEY),
+        timelineCache.getItem<number>(CACHE_TIMESTAMP_KEY),
+        timelineCache.getItem<string>(CACHE_SCOPE_KEY),
+        currentCacheScope(),
+      ]);
+
+    if (!storedScope || storedScope !== activeScope) {
+      await timelineCache.clear();
+      return null;
+    }
 
     if (!frames || frames.length === 0 || !dateStr) {
       return null;
@@ -75,13 +106,7 @@ export async function loadCachedFrames(): Promise<TimelineCache | null> {
  * Check if we have any cached data (for determining UI state)
  */
 export async function hasCachedData(): Promise<boolean> {
-  try {
-    const frames =
-      await timelineCache.getItem<StreamTimeSeriesResponse[]>(CACHE_KEY);
-    return frames !== null && frames.length > 0;
-  } catch {
-    return false;
-  }
+  return (await loadCachedFrames()) !== null;
 }
 
 /**

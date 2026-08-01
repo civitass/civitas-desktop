@@ -36,6 +36,17 @@ describe("classifyPiDiagnostic", () => {
     );
   });
 
+  it("does not mislabel loopback authentication drift as a provider refusal", () => {
+    expect(
+      classifyPiDiagnostic(
+        '403 "unauthorized: API access requires authentication. Pass `Authorization: Bearer <your-local-api-key>`."',
+      ),
+    ).toBe("local-gateway-unauthorized");
+    expect(
+      classifyPiDiagnostic("401 local app server authentication required"),
+    ).toBe("local-gateway-unauthorized");
+  });
+
   it("preserves actionable local-policy and provider-region failures", () => {
     expect(classifyPiDiagnostic("error type: network_policy_blocked")).toBe(
       "network-policy-blocked",

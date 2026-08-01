@@ -709,6 +709,7 @@ fn snapshot_last_good_from_plaintext(
 /// Write `store.bin.last-good` if the current file parses and has aiPresets.
 /// This compatibility wrapper reads encrypted stores into memory only. It never
 /// materializes decrypted bytes on disk.
+#[cfg(test)]
 fn snapshot_last_good_with_policy(
     store_path: &Path,
     encryption_enabled: bool,

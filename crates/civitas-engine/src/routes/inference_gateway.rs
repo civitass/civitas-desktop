@@ -51,7 +51,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Response {
         retry_policy: RetryPolicy::Never,
         cancellation_policy: CancellationPolicy::Deadline,
     };
-    let audit_id = match inference::start_audit(&state.db.pool, &profile, &metadata).await {
+    let audit_id = match inference::start_audit_serialized(&state.db, &profile, &metadata).await {
         Ok(id) => id,
         Err(_) => return audit_unavailable_response(),
     };
@@ -61,7 +61,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     } else {
         "provider_error"
     };
-    if inference::finish_audit(&state.db.pool, &audit_id, audit_status)
+    if inference::finish_audit_serialized(&state.db, &audit_id, audit_status)
         .await
         .is_err()
     {
@@ -170,22 +170,24 @@ pub async fn chat_completions(
         object.remove("civitas");
     }
 
-    let audit_id = match inference::start_audit(&state.db.pool, &profile, &audit_metadata).await {
-        Ok(id) => id,
-        Err(_) => {
-            warn!(
-                provider = profile.provider.as_str(),
-                profile_id = profile.id,
-                "inference request audit could not be started"
-            );
-            return audit_unavailable_response();
-        }
-    };
+    let audit_id =
+        match inference::start_audit_serialized(&state.db, &profile, &audit_metadata).await {
+            Ok(id) => id,
+            Err(_) => {
+                warn!(
+                    provider = profile.provider.as_str(),
+                    profile_id = profile.id,
+                    "inference request audit could not be started"
+                );
+                return audit_unavailable_response();
+            }
+        };
     let request_metadata =
         match GenerateRequestMetadata::from_audit(&profile, audit_id.clone(), audit_metadata) {
             Ok(metadata) => metadata,
             Err(_) => {
-                let _ = inference::finish_audit(&state.db.pool, &audit_id, "metadata_error").await;
+                let _ = inference::finish_audit_serialized(&state.db, &audit_id, "metadata_error")
+                    .await;
                 return safe_gateway_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "invalid_request_metadata",
@@ -206,7 +208,7 @@ pub async fn chat_completions(
             let materialized = match materialize_provider_response(response).await {
                 Ok(response) => response,
                 Err(_) => {
-                    if inference::finish_audit(&state.db.pool, &audit_id, "response_error")
+                    if inference::finish_audit_serialized(&state.db, &audit_id, "response_error")
                         .await
                         .is_err()
                     {
@@ -219,8 +221,8 @@ pub async fn chat_completions(
                     );
                 }
             };
-            if inference::finish_audit(
-                &state.db.pool,
+            if inference::finish_audit_serialized(
+                &state.db,
                 &audit_id,
                 if status.is_success() {
                     "success"
@@ -247,7 +249,7 @@ pub async fn chat_completions(
             } else {
                 "transport_error"
             };
-            if inference::finish_audit(&state.db.pool, &audit_id, audit_status)
+            if inference::finish_audit_serialized(&state.db, &audit_id, audit_status)
                 .await
                 .is_err()
             {

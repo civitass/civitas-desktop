@@ -364,8 +364,14 @@ from a signed-out browser and a clean machine:
   allowlisted tags—no historic feature, automation/session, audit, pull-request,
   or private release refs;
 - cloud/platform/archive repositories remain private;
-- README circular logo, wordmark, links, license, notices, security route, and
-  DMG downloads render correctly;
+- README circular logo, transparent wordmark, links, license, notices,
+  security route, and DMG downloads render correctly;
+- every README product image comes from the release-candidate desktop UI under
+  the isolated synthetic publication profile; no reconstructed mockup,
+  credential, personal path, real conversation, capture, OCR, transcript,
+  calendar item, contact, or device identifier is present;
+- screenshot dimensions, light/dark rendering, alt text, and mobile GitHub
+  layout were reviewed against the exact committed image bytes;
 - branch protections and required checks still apply;
 - source archives and release assets match approved hashes;
 - vulnerability reporting works privately;

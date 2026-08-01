@@ -14,19 +14,33 @@ mod tests {
     use civitas_engine::SCServer;
     use std::net::SocketAddr;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    async fn setup_test_app() -> Router {
+    const OWNER_KEY: &str = "transcribe-owner-key";
+    static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
+
+    async fn setup_test_app(audio_disabled: bool) -> Router {
+        let database_id = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+        let database_uri = format!(
+            "file:civitas-transcribe-{}-{database_id}?mode=memory&cache=shared",
+            std::process::id()
+        );
+        let profile_path = std::env::temp_dir().join(format!(
+            "civitas-transcribe-{}-{database_id}",
+            std::process::id()
+        ));
         let db = Arc::new(
-            DatabaseManager::new("sqlite::memory:", Default::default())
+            DatabaseManager::new(&database_uri, Default::default())
                 .await
                 .unwrap(),
         );
 
         let audio_manager = Arc::new(
             AudioManagerBuilder::new()
-                .output_path("/tmp/civitas-test".into())
+                .is_disabled(audio_disabled)
+                .output_path(profile_path.clone())
                 .build(db.clone())
                 .await
                 .unwrap(),
@@ -35,18 +49,29 @@ mod tests {
         let mut app = SCServer::new(
             db,
             SocketAddr::from(([127, 0, 0, 1], 0)),
-            PathBuf::from("/tmp/civitas-test"),
+            PathBuf::from(profile_path),
             false,
             false,
             audio_manager,
             false,
             "balanced".to_string(),
         );
-        // API auth defaults on (fail closed); these tests exercise the routes,
-        // not the auth middleware, so opt out explicitly.
-        app.api_auth = false;
+        app.api_auth_key = Some(OWNER_KEY.to_string());
 
-        app.create_router().await
+        app.create_router().await.layer(axum::middleware::from_fn(
+            |mut request: axum::extract::Request, next: axum::middleware::Next| async move {
+                if !request
+                    .headers()
+                    .contains_key(axum::http::header::AUTHORIZATION)
+                {
+                    request.headers_mut().insert(
+                        axum::http::header::AUTHORIZATION,
+                        axum::http::HeaderValue::from_static("Bearer transcribe-owner-key"),
+                    );
+                }
+                next.run(request).await
+            },
+        ))
     }
 
     fn build_multipart_body(
@@ -87,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transcribe_missing_file_returns_400() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(true).await;
 
         // Send empty multipart (no file field)
         let boundary = "----TestBoundary";
@@ -116,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transcribe_empty_file_returns_400() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(true).await;
 
         let (content_type, body) = build_multipart_body(b"", "empty.wav", &[]);
 
@@ -137,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transcribe_invalid_audio_returns_400() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(true).await;
 
         // Send garbage bytes as audio
         let (content_type, body) =
@@ -163,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transcribe_unknown_engine_returns_400() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(true).await;
 
         // Need a valid tiny WAV so we get past the ffmpeg decode step.
         // Minimal 44-byte WAV header + 16 zero samples (32 bytes of f32)
@@ -193,7 +218,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires transcription engine (whisper models or API key), run locally with --ignored"]
     async fn test_transcribe_real_audio_returns_text() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(false).await;
 
         let test_file = std::env::var_os("CIVITAS_AUDIO_TRANSCRIPTION_FIXTURE")
             .map(PathBuf::from)
@@ -229,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transcribe_accepts_openai_compat_fields() {
-        let app = setup_test_app().await;
+        let app = setup_test_app(true).await;
 
         // Minimal valid WAV
         let wav = make_minimal_wav(16000, 16000); // 1 second of silence
@@ -252,17 +277,30 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        // A development machine without bundled FFmpeg may reject the audio at
-        // the decode boundary. That is independent of the compatibility fields;
-        // any other 400 response means the multipart contract regressed.
-        if response.status() == StatusCode::BAD_REQUEST {
-            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            let message = json["error"]["message"].as_str().unwrap();
-            assert!(
-                message.contains("failed to decode audio file"),
-                "OpenAI-compatible fields must be accepted; got: {message}"
-            );
+        // A development machine without bundled FFmpeg can stop at the decode
+        // boundary; this fixture intentionally disables model loading, so a
+        // successfully decoded upload stops at the explicit readiness boundary.
+        // Either result proves the compatibility fields were parsed and ignored.
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        match status {
+            StatusCode::BAD_REQUEST => assert!(
+                json["error"]["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("failed to decode audio file"),
+                "OpenAI-compatible fields must be accepted before decode: {json}"
+            ),
+            StatusCode::SERVICE_UNAVAILABLE => assert_eq!(
+                json["error"]["message"].as_str(),
+                Some("transcription engine not ready yet"),
+                "a decoded upload reaches the explicit disabled-engine boundary"
+            ),
+            StatusCode::OK => assert!(json["text"].is_string()),
+            unexpected => panic!(
+                "OpenAI-compatible fields reached an unexpected response {unexpected}: {json}"
+            ),
         }
     }
 

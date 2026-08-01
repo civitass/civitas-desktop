@@ -5,7 +5,7 @@ use crate::{AudioChunkInfo, UntranscribedChunk};
 use chrono::{DateTime, Utc};
 use civitas_config::DbConfig;
 use image::DynamicImage;
-use libsqlite3_sys::sqlite3_auto_extension;
+use libsqlite3_sys::{sqlite3_auto_extension, SQLITE_OK};
 use sqlite_vec::sqlite3_vec_init;
 use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -21,7 +21,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, error, info, warn};
@@ -1062,6 +1062,40 @@ async fn flush_level0_bulk(
     Ok(())
 }
 
+static SQLITE_EXTENSION_REGISTRATION: OnceLock<i32> = OnceLock::new();
+
+/// Register SQLite extensions used by the canonical Civitas schema before a
+/// caller opens any connection that may run migrations.
+///
+/// SQLite's auto-extension registry applies only to connections opened after
+/// registration. Startup paths such as credential migration can legitimately
+/// reach the database before [`DatabaseManager::new`], so keeping this as an
+/// explicit public boundary prevents fresh-profile migrations from failing on
+/// schema checks such as `vec_length(...)`.
+pub fn register_sqlite_extensions() -> Result<(), SqlxError> {
+    let result = *SQLITE_EXTENSION_REGISTRATION.get_or_init(|| unsafe {
+        type SqliteExtensionInit = unsafe extern "C" fn(
+            *mut libsqlite3_sys::sqlite3,
+            *mut *mut std::os::raw::c_char,
+            *const libsqlite3_sys::sqlite3_api_routines,
+        ) -> std::os::raw::c_int;
+
+        // sqlite-vec exposes the loadable-extension symbol as `fn()`, while
+        // SQLite requires its documented extension-entry ABI here.
+        let extension_init =
+            std::mem::transmute::<*const (), SqliteExtensionInit>(sqlite3_vec_init as *const ());
+        sqlite3_auto_extension(Some(extension_init))
+    });
+
+    if result == SQLITE_OK {
+        Ok(())
+    } else {
+        Err(SqlxError::Configuration(Box::new(std::io::Error::other(
+            format!("failed to register sqlite-vec extension: SQLite code {result}"),
+        ))))
+    }
+}
+
 impl DatabaseManager {
     pub async fn new(database_path: &str, config: DbConfig) -> Result<Self, sqlx::Error> {
         debug!(
@@ -1073,20 +1107,7 @@ impl DatabaseManager {
         );
         let connection_string = format!("sqlite:{}", database_path);
 
-        unsafe {
-            type SqliteExtensionInit = unsafe extern "C" fn(
-                *mut libsqlite3_sys::sqlite3,
-                *mut *mut std::os::raw::c_char,
-                *const libsqlite3_sys::sqlite3_api_routines,
-            ) -> std::os::raw::c_int;
-
-            // sqlite-vec exposes the loadable-extension symbol as `fn()`, while
-            // SQLite requires its documented extension-entry ABI here.
-            let extension_init = std::mem::transmute::<*const (), SqliteExtensionInit>(
-                sqlite3_vec_init as *const (),
-            );
-            sqlite3_auto_extension(Some(extension_init));
-        }
+        register_sqlite_extensions()?;
 
         // Ensure the data dir exists before opening the file — a missing parent
         // dir makes SQLite fail with "unable to open database file"
@@ -8479,30 +8500,242 @@ impl DatabaseManager {
         })
     }
 
+    /// Evict a bounded batch of local source media whose complete source
+    /// interval is older than `cutoff`.
+    ///
+    /// Age-based retention calls this method repeatedly instead of walking
+    /// every historical hour. Candidate lookups use the existing
+    /// `(chunk_id, timestamp)` and timestamp indexes, and the explicit limit
+    /// bounds both the SQLite write lock and the durable deletion outbox work.
+    /// A chunk that straddles the cutoff is retained in full.
+    pub async fn evict_media_before_batch(
+        &self,
+        cutoff: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<EvictMediaResult, sqlx::Error> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+        let cutoff_text = cutoff.to_rfc3339();
+        let limit = i64::from(limit.max(1));
+
+        for statement in [
+            "CREATE TEMP TABLE IF NOT EXISTS _civitas_evict_video_batch (
+                 id INTEGER PRIMARY KEY,
+                 file_path TEXT NOT NULL
+             )",
+            "CREATE TEMP TABLE IF NOT EXISTS _civitas_evict_audio_batch (
+                 id INTEGER PRIMARY KEY,
+                 file_path TEXT NOT NULL
+             )",
+            "CREATE TEMP TABLE IF NOT EXISTS _civitas_evict_snapshot_batch (
+                 id INTEGER PRIMARY KEY,
+                 file_path TEXT NOT NULL
+             )",
+            "DELETE FROM _civitas_evict_video_batch",
+            "DELETE FROM _civitas_evict_audio_batch",
+            "DELETE FROM _civitas_evict_snapshot_batch",
+        ] {
+            sqlx::query(statement).execute(&mut **tx.conn()).await?;
+        }
+
+        sqlx::query(
+            r#"INSERT INTO _civitas_evict_video_batch (id, file_path)
+               SELECT chunk.id, chunk.file_path
+               FROM video_chunks AS chunk
+               WHERE chunk.evicted_at IS NULL
+                 AND chunk.file_path != ''
+                 AND chunk.file_path NOT LIKE 'cloud://%'
+                 AND EXISTS (
+                     SELECT 1 FROM frames AS frame
+                     WHERE frame.video_chunk_id = chunk.id
+                       AND frame.timestamp < ?1
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM frames AS frame
+                     WHERE frame.video_chunk_id = chunk.id
+                       AND frame.timestamp >= ?1
+                 )
+               ORDER BY chunk.id
+               LIMIT ?2"#,
+        )
+        .bind(&cutoff_text)
+        .bind(limit)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        sqlx::query(
+            r#"INSERT INTO _civitas_evict_audio_batch (id, file_path)
+               SELECT chunk.id, chunk.file_path
+               FROM audio_chunks AS chunk
+               WHERE chunk.evicted_at IS NULL
+                 AND chunk.file_path != ''
+                 AND chunk.file_path NOT LIKE 'cloud://%'
+                 AND EXISTS (
+                     SELECT 1 FROM audio_transcriptions AS transcript
+                     WHERE transcript.audio_chunk_id = chunk.id
+                       AND transcript.timestamp < ?1
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM audio_transcriptions AS transcript
+                     WHERE transcript.audio_chunk_id = chunk.id
+                       AND transcript.timestamp >= ?1
+                 )
+               ORDER BY chunk.id
+               LIMIT ?2"#,
+        )
+        .bind(&cutoff_text)
+        .bind(limit)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        sqlx::query(
+            r#"INSERT INTO _civitas_evict_snapshot_batch (id, file_path)
+               SELECT frame.id, frame.snapshot_path
+               FROM frames AS frame
+               WHERE frame.timestamp < ?1
+                 AND frame.snapshot_path IS NOT NULL
+                 AND frame.snapshot_path != ''
+                 AND frame.snapshot_path NOT LIKE 'cloud://%'
+               ORDER BY frame.timestamp, frame.id
+               LIMIT ?2"#,
+        )
+        .bind(&cutoff_text)
+        .bind(limit)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        let video_files: Vec<String> =
+            sqlx::query_scalar("SELECT file_path FROM _civitas_evict_video_batch ORDER BY id")
+                .fetch_all(&mut **tx.conn())
+                .await?;
+        let audio_files: Vec<String> =
+            sqlx::query_scalar("SELECT file_path FROM _civitas_evict_audio_batch ORDER BY id")
+                .fetch_all(&mut **tx.conn())
+                .await?;
+        let snapshot_files: Vec<String> =
+            sqlx::query_scalar("SELECT file_path FROM _civitas_evict_snapshot_batch ORDER BY id")
+                .fetch_all(&mut **tx.conn())
+                .await?;
+
+        enqueue_file_deletion_jobs(
+            &mut **tx.conn(),
+            &video_files,
+            "video",
+            "evict_media_before_batch",
+        )
+        .await?;
+        enqueue_file_deletion_jobs(
+            &mut **tx.conn(),
+            &audio_files,
+            "audio",
+            "evict_media_before_batch",
+        )
+        .await?;
+        enqueue_file_deletion_jobs(
+            &mut **tx.conn(),
+            &snapshot_files,
+            "snapshot",
+            "evict_media_before_batch",
+        )
+        .await?;
+
+        let video_evict = sqlx::query(
+            "UPDATE video_chunks
+             SET file_path = '', evicted_at = CURRENT_TIMESTAMP
+             WHERE id IN (SELECT id FROM _civitas_evict_video_batch)",
+        )
+        .execute(&mut **tx.conn())
+        .await?;
+        let audio_evict = sqlx::query(
+            "UPDATE audio_chunks
+             SET file_path = '', evicted_at = CURRENT_TIMESTAMP
+             WHERE id IN (SELECT id FROM _civitas_evict_audio_batch)",
+        )
+        .execute(&mut **tx.conn())
+        .await?;
+        let snapshot_evict = sqlx::query(
+            "UPDATE frames
+             SET snapshot_path = NULL
+             WHERE id IN (SELECT id FROM _civitas_evict_snapshot_batch)",
+        )
+        .execute(&mut **tx.conn())
+        .await?;
+
+        tx.commit().await.map_err(|error| {
+            error!(
+                "failed to commit evict_media_before_batch transaction: {}",
+                error
+            );
+            error
+        })?;
+
+        debug!(
+            "evict_media_before_batch committed: video_chunks={}, audio_chunks={}, snapshots={}",
+            video_evict.rows_affected(),
+            audio_evict.rows_affected(),
+            snapshot_evict.rows_affected(),
+        );
+
+        Ok(EvictMediaResult {
+            video_chunks_evicted: video_evict.rows_affected(),
+            audio_chunks_evicted: audio_evict.rows_affected(),
+            snapshots_evicted: snapshot_evict.rows_affected(),
+            video_files,
+            audio_files,
+            snapshot_files,
+        })
+    }
+
     /// Evict raw audio files whose transcript is already safely in the
     /// database. Audio is the heaviest, least-revisited artifact — once a
     /// chunk is `transcribed` (or `silent`, i.e. no speech found), the mp4
     /// adds nothing search can't answer. `pending`/`failed` chunks are kept
     /// so (re)transcription still has its source material.
     ///
-    /// Marks chunks with `evicted_at` and clears `file_path` like
-    /// `evict_media_in_range`. The same transaction queues local paths in the
-    /// durable file-deletion outbox; callers should drain it after commit.
+    /// Marks at most `limit` chunks with `evicted_at` and clears `file_path`
+    /// like `evict_media_in_range`. The same transaction queues local paths in
+    /// the durable file-deletion outbox; callers should drain it after commit
+    /// and repeat until the returned batch is empty.
     pub async fn evict_transcribed_audio_before(
         &self,
         cutoff: DateTime<Utc>,
+        limit: u32,
     ) -> Result<EvictTranscribedAudioResult, sqlx::Error> {
         let mut tx = self.begin_immediate_with_retry().await?;
+        let limit = i64::from(limit.max(1));
 
-        let audio_files: Vec<String> = sqlx::query_scalar(
-            r#"SELECT file_path FROM audio_chunks
+        sqlx::query(
+            "CREATE TEMP TABLE IF NOT EXISTS _civitas_evict_transcribed_audio_batch (
+                 id INTEGER PRIMARY KEY,
+                 file_path TEXT NOT NULL
+             )",
+        )
+        .execute(&mut **tx.conn())
+        .await?;
+        sqlx::query("DELETE FROM _civitas_evict_transcribed_audio_batch")
+            .execute(&mut **tx.conn())
+            .await?;
+        sqlx::query(
+            r#"INSERT INTO _civitas_evict_transcribed_audio_batch (id, file_path)
+               SELECT id, file_path
+               FROM audio_chunks
                WHERE evicted_at IS NULL
-               AND file_path != ''
-               AND file_path NOT LIKE 'cloud://%'
-               AND transcription_status IN ('transcribed', 'silent')
-               AND timestamp < ?1"#,
+                 AND file_path != ''
+                 AND file_path NOT LIKE 'cloud://%'
+                 AND transcription_status IN ('transcribed', 'silent')
+                 AND timestamp < ?1
+               ORDER BY timestamp, id
+               LIMIT ?2"#,
         )
         .bind(cutoff)
+        .bind(limit)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        let audio_files: Vec<String> = sqlx::query_scalar(
+            "SELECT file_path
+             FROM _civitas_evict_transcribed_audio_batch
+             ORDER BY id",
+        )
         .fetch_all(&mut **tx.conn())
         .await?;
 
@@ -8517,13 +8750,10 @@ impl DatabaseManager {
         let evicted = sqlx::query(
             r#"UPDATE audio_chunks
                SET file_path = '', evicted_at = CURRENT_TIMESTAMP
-               WHERE evicted_at IS NULL
-               AND file_path != ''
-               AND file_path NOT LIKE 'cloud://%'
-               AND transcription_status IN ('transcribed', 'silent')
-               AND timestamp < ?1"#,
+               WHERE id IN (
+                   SELECT id FROM _civitas_evict_transcribed_audio_batch
+               )"#,
         )
-        .bind(cutoff)
         .execute(&mut **tx.conn())
         .await?;
 

@@ -392,8 +392,11 @@ export function NextActionsPanel() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-8 pb-16 pt-6">
-      <header className="flex flex-col gap-5 border-b border-border/60 pb-4 sm:flex-row sm:items-end sm:justify-between">
+    <div
+      className="mx-auto w-full max-w-5xl px-8 pb-16 pt-6"
+      data-testid="next-actions-panel"
+    >
+      <header className="flex flex-col gap-5 border-b border-border/60 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground/[0.055]">
@@ -413,6 +416,7 @@ export function NextActionsPanel() {
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
+            data-testid="next-actions-add-commitment"
             onClick={() => {
               setComposerOpen((open) => !open);
               setCommitmentError(null);
@@ -428,6 +432,7 @@ export function NextActionsPanel() {
           </Button>
           {!composerOpen && (
             <Button
+              data-testid="next-actions-refresh"
               onClick={() => void load()}
               disabled={state === "loading"}
               className="h-9 rounded-md px-4 shadow-sm active:scale-[0.98] motion-reduce:transform-none"
@@ -482,6 +487,7 @@ export function NextActionsPanel() {
               <Label htmlFor="next-action-title">Action</Label>
               <Input
                 id="next-action-title"
+                data-testid="next-action-title"
                 autoFocus
                 maxLength={180}
                 value={commitmentTitle}
@@ -497,6 +503,7 @@ export function NextActionsPanel() {
               <Label htmlFor="next-action-kind">Signal</Label>
               <select
                 id="next-action-kind"
+                data-testid="next-action-kind"
                 value={commitmentKind}
                 onChange={(event) => {
                   setCommitmentKind(event.target.value as CommitmentKind);
@@ -552,6 +559,7 @@ export function NextActionsPanel() {
               <Label htmlFor="next-action-project">Project (optional)</Label>
               <Input
                 id="next-action-project"
+                data-testid="next-action-project"
                 maxLength={80}
                 value={commitmentProject}
                 onChange={(event) => setCommitmentProject(event.target.value)}
@@ -563,6 +571,7 @@ export function NextActionsPanel() {
               <Label htmlFor="next-action-effort">Estimated minutes</Label>
               <Input
                 id="next-action-effort"
+                data-testid="next-action-effort"
                 type="number"
                 min={1}
                 max={480}
@@ -582,6 +591,7 @@ export function NextActionsPanel() {
               Saved locally · editable in Memories
             </p>
             <Button
+              data-testid="next-action-save"
               onClick={() => void saveCommitment()}
               disabled={savingCommitment}
               className="h-9 rounded-md px-4 active:scale-[0.98] motion-reduce:transform-none"
@@ -659,6 +669,7 @@ export function NextActionsPanel() {
           {actions.map((candidate, index) => (
             <article
               key={candidate.id}
+              data-testid="next-action-card"
               aria-label={`${candidate.title}, ${candidate.confidenceLabel} confidence`}
               className={cn(
                 "group rounded-lg border border-border/70 bg-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.025)] transition-colors duration-150 ease-out hover:bg-muted/[0.12] motion-reduce:transition-none sm:p-6",

@@ -10,11 +10,20 @@ use axum::{
 use civitas_audio::audio_manager::AudioManagerBuilder;
 use civitas_screen::OcrEngine;
 use serde_json::json;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tower::ServiceExt;
 
 use civitas_db::DatabaseManager;
 use civitas_engine::{ContentItem, PaginatedResponse, SCServer};
+
+const OWNER_KEY: &str = "tags-owner-key";
+static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
 
 // Add this function to initialize the logger
 fn init() {
@@ -22,15 +31,23 @@ fn init() {
 }
 
 async fn setup_test_app() -> (Router, Arc<DatabaseManager>) {
+    let database_id = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+    let database_uri = format!(
+        "file:civitas-tags-{}-{database_id}?mode=memory&cache=shared",
+        std::process::id()
+    );
+    let profile_path =
+        std::env::temp_dir().join(format!("civitas-tags-{}-{database_id}", std::process::id()));
     let db = Arc::new(
-        DatabaseManager::new("sqlite::memory:", Default::default())
+        DatabaseManager::new(&database_uri, Default::default())
             .await
             .unwrap(),
     );
 
     let audio_manager = Arc::new(
         AudioManagerBuilder::new()
-            .output_path("/tmp/civitas".into())
+            .is_disabled(true)
+            .output_path(profile_path.join("audio"))
             .build(db.clone())
             .await
             .unwrap(),
@@ -39,18 +56,29 @@ async fn setup_test_app() -> (Router, Arc<DatabaseManager>) {
     let mut app = SCServer::new(
         db.clone(),
         SocketAddr::from(([127, 0, 0, 1], 23948)),
-        PathBuf::from(""),
+        profile_path,
         false,
         false,
         audio_manager,
         false, // use_pii_removal
         "balanced".to_string(),
     );
-    // API auth defaults on (fail closed); these tests exercise the routes,
-    // not the auth middleware, so opt out explicitly.
-    app.api_auth = false;
+    app.api_auth_key = Some(OWNER_KEY.to_string());
 
-    let router = app.create_router().await;
+    let router = app.create_router().await.layer(axum::middleware::from_fn(
+        |mut request: axum::extract::Request, next: axum::middleware::Next| async move {
+            if !request
+                .headers()
+                .contains_key(axum::http::header::AUTHORIZATION)
+            {
+                request.headers_mut().insert(
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::HeaderValue::from_static("Bearer tags-owner-key"),
+                );
+            }
+            next.run(request).await
+        },
+    ));
     init();
     (router, db)
 }
