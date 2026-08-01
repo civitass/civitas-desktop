@@ -526,20 +526,18 @@ fn verify_source_unchanged(
     let source_metadata = source.metadata()?;
     let path_snapshot = SourceSnapshot::new(&path_metadata);
     let source_snapshot = SourceSnapshot::new(&source_metadata);
-    let mut unchanged = expected.len == source_snapshot.len
+    let unchanged = expected.len == source_snapshot.len
         && expected.modified == source_snapshot.modified
         && source_snapshot.len == path_snapshot.len
         && source_snapshot.modified == path_snapshot.modified;
     #[cfg(unix)]
-    {
-        unchanged = unchanged
-            && expected.dev == source_snapshot.dev
-            && expected.ino == source_snapshot.ino
-            && expected.ctime == source_snapshot.ctime
-            && expected.ctime_nsec == source_snapshot.ctime_nsec
-            && source_snapshot.dev == path_snapshot.dev
-            && source_snapshot.ino == path_snapshot.ino;
-    }
+    let unchanged = unchanged
+        && expected.dev == source_snapshot.dev
+        && expected.ino == source_snapshot.ino
+        && expected.ctime == source_snapshot.ctime
+        && expected.ctime_nsec == source_snapshot.ctime_nsec
+        && source_snapshot.dev == path_snapshot.dev
+        && source_snapshot.ino == path_snapshot.ino;
     if !unchanged {
         return Err(VaultError::Other(format!(
             "vault source changed during transformation: {}",

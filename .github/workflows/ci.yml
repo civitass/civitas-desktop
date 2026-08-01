@@ -91,7 +91,7 @@ jobs:
 
       - name: Run cargo tests
         timeout-minutes: 60
-        run: cargo test --workspace --exclude civitas-rfdetr-mlx
+        run: cargo test --workspace
 
       # The 5,000-frame Timeline benchmark intentionally runs outside the
       # parallel libtest pool. In the ordinary workspace suite it competes
@@ -103,7 +103,7 @@ jobs:
       - name: Run isolated large Timeline performance acceptance test
         timeout-minutes: 5
         run: >-
-          cargo test --workspace --exclude civitas-rfdetr-mlx
+          cargo test --workspace
           test_find_video_chunks_performance_large -- --ignored
           --nocapture --test-threads=1
 
@@ -112,7 +112,7 @@ jobs:
         # Reuse the workspace feature graph here as well. The name filter is
         # unique to the two consented multilingual OCR acceptance cases.
         run: >-
-          cargo test --workspace --exclude civitas-rfdetr-mlx
+          cargo test --workspace
           tesseract_recognizes_ -- --ignored --nocapture --test-threads=1
 
   test-windows:

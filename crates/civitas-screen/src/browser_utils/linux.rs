@@ -196,7 +196,7 @@ impl LinuxUrlDetector {
         for target in targets {
             if target.get_role().await? == Role::DocumentWeb {
                 let doc_proxy = Self::create_document_proxy(conn, &target).await?;
-                if let Ok(Some(url)) = Self::get_url_from_document(&doc_proxy, is_vivaldi).await {
+                if let Ok(Some(_)) = Self::get_url_from_document(&doc_proxy, is_vivaldi).await {
                     debug!("found web document with a valid URL");
                     return Ok(target);
                 }

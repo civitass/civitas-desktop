@@ -62,6 +62,33 @@ class GenerateOcrFixturesTest(unittest.TestCase):
         self.assertLessEqual(right - left, MODULE.TEXT_RIGHT - MODULE.TEXT_LEFT)
         self.assertLessEqual(fitted.size, original.size)
 
+    def test_cjk_collection_uses_region_correct_faces(self) -> None:
+        faces = [
+            ("Noto Sans CJK JP", "Regular"),
+            ("Noto Sans CJK KR", "Regular"),
+            ("Noto Sans CJK SC", "Regular"),
+            ("Noto Sans CJK TC", "Regular"),
+            ("Noto Sans CJK HK", "Regular"),
+        ]
+
+        self.assertEqual(MODULE.select_cjk_face_index(faces, "simplified"), 2)
+        self.assertEqual(MODULE.select_cjk_face_index(faces, "traditional"), 3)
+
+    def test_multiface_font_without_requested_cjk_region_fails_closed(self) -> None:
+        faces = [
+            ("Noto Sans CJK JP", "Regular"),
+            ("Noto Sans CJK KR", "Regular"),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "no simplified Chinese face"):
+            MODULE.select_cjk_face_index(faces, "simplified")
+
+    def test_single_face_unicode_font_is_a_safe_fallback(self) -> None:
+        self.assertEqual(
+            MODULE.select_cjk_face_index([("Arial Unicode MS", "Regular")], "traditional"),
+            0,
+        )
+
     def test_fixture_phrases_are_synthetic_and_stable(self) -> None:
         english_fixture = " ".join(MODULE.FIXTURES["english.png"]).lower()
         for expected_keyword in (

@@ -31,6 +31,23 @@ IMAGE_SIZE = (1600, 560)
 TEXT_LEFT = 132
 TEXT_RIGHT = 1468
 MIN_FONT_SIZE = 32
+MAX_FONT_FACES = 64
+CJK_FACE_MARKERS = {
+    "simplified": (
+        "cjk sc",
+        "sans sc",
+        "heiti sc",
+        "simplified chinese",
+        "source han sans cn",
+    ),
+    "traditional": (
+        "cjk tc",
+        "sans tc",
+        "heiti tc",
+        "traditional chinese",
+        "source han sans tw",
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,6 +132,52 @@ def fit_font_to_width(
     return fitted
 
 
+def discover_font_faces(
+    font_path: Path, probe_size: int = MIN_FONT_SIZE
+) -> list[tuple[str, str]]:
+    """Return every named face in a font or TrueType Collection."""
+    faces: list[tuple[str, str]] = []
+    for index in range(MAX_FONT_FACES):
+        try:
+            font = ImageFont.truetype(str(font_path), probe_size, index=index)
+        except OSError as error:
+            if index == 0:
+                raise ValueError(f"could not open font: {font_path}") from error
+            break
+        faces.append(font.getname())
+    if not faces:
+        raise ValueError(f"font exposes no readable faces: {font_path}")
+    return faces
+
+
+def select_cjk_face_index(
+    face_names: list[tuple[str, str]], script: str
+) -> int:
+    """Select the region-correct CJK face instead of a collection's index 0."""
+    markers = CJK_FACE_MARKERS.get(script)
+    if markers is None:
+        raise ValueError(f"unsupported CJK script: {script}")
+
+    for index, (family, style) in enumerate(face_names):
+        normalized_name = f"{family} {style}".casefold().replace("-", " ")
+        if any(marker in normalized_name for marker in markers):
+            return index
+
+    # Standalone fonts such as Arial Unicode have one face and cover both
+    # scripts. A multi-face collection is different: silently using index 0
+    # commonly selects Japanese glyph variants and makes a Chinese OCR fixture
+    # test the wrong regional shapes.
+    if len(face_names) == 1:
+        return 0
+
+    available = ", ".join(
+        f"{index}:{family} {style}" for index, (family, style) in enumerate(face_names)
+    )
+    raise ValueError(
+        f"font collection has no {script} Chinese face; available faces: {available}"
+    )
+
+
 def main() -> None:
     args = parse_args()
     for font_path in (args.latin_font, args.cjk_font):
@@ -124,8 +187,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     latin_primary = ImageFont.truetype(str(args.latin_font), 112)
     latin_secondary = ImageFont.truetype(str(args.latin_font), 68)
-    cjk_primary = ImageFont.truetype(str(args.cjk_font), 112)
-    cjk_secondary = ImageFont.truetype(str(args.cjk_font), 68)
+    cjk_faces = discover_font_faces(args.cjk_font)
+    simplified_face = select_cjk_face_index(cjk_faces, "simplified")
+    traditional_face = select_cjk_face_index(cjk_faces, "traditional")
 
     render_fixture(
         args.output_dir / "english.png",
@@ -133,12 +197,15 @@ def main() -> None:
         latin_primary,
         latin_secondary,
     )
-    for filename in ("simplified-chinese.png", "traditional-chinese.png"):
+    for filename, face_index in (
+        ("simplified-chinese.png", simplified_face),
+        ("traditional-chinese.png", traditional_face),
+    ):
         render_fixture(
             args.output_dir / filename,
             FIXTURES[filename],
-            cjk_primary,
-            cjk_secondary,
+            ImageFont.truetype(str(args.cjk_font), 112, index=face_index),
+            ImageFont.truetype(str(args.cjk_font), 68, index=face_index),
         )
 
 

@@ -6,12 +6,98 @@ use civitas_core::Language;
 use civitas_screen::perform_ocr_tesseract_checked;
 use std::path::PathBuf;
 
+const MINIMUM_EXPLICIT_CJK_CHARACTER_ACCURACY: f64 = 0.75;
+
 fn fixture(variable: &str) -> PathBuf {
     let path = std::env::var_os(variable)
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("{variable} must point to a consented synthetic OCR fixture"));
     assert!(path.is_file(), "fixture does not exist: {}", path.display());
     path
+}
+
+fn normalized_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !character.is_whitespace()
+                && !matches!(
+                    *character,
+                    '.' | ',' | '·' | '‧' | '。' | '，' | '、' | ':' | '：'
+                )
+        })
+        .collect()
+}
+
+fn is_cjk(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F
+    )
+}
+
+fn cjk_characters(text: &str) -> Vec<char> {
+    text.chars()
+        .filter(|character| is_cjk(*character))
+        .collect()
+}
+
+fn edit_distance(left: &[char], right: &[char]) -> usize {
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+
+    for (left_index, left_character) in left.iter().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_character) in right.iter().enumerate() {
+            let substitution_cost = if left_character == right_character {
+                0
+            } else {
+                1
+            };
+            let substitution = previous[right_index] + substitution_cost;
+            current[right_index + 1] = (current[right_index] + 1)
+                .min(previous[right_index + 1] + 1)
+                .min(substitution);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right.len()]
+}
+
+fn cjk_character_accuracy(actual: &str, expected: &str) -> f64 {
+    let actual = cjk_characters(actual);
+    let expected = cjk_characters(expected);
+    let denominator = actual.len().max(expected.len());
+    if denominator == 0 {
+        return 1.0;
+    }
+    1.0 - edit_distance(&actual, &expected) as f64 / denominator as f64
+}
+
+fn assert_semantic_tokens(text: &str, expected_tokens: &[&str], context: &str) {
+    let normalized = normalized_text(text);
+    for token in expected_tokens {
+        assert!(
+            normalized.contains(*token),
+            "{context} did not recover semantic token {token:?}: {text:?}"
+        );
+    }
+}
+
+fn assert_explicit_cjk_quality(
+    text: &str,
+    expected_text: &str,
+    expected_tokens: &[&str],
+    context: &str,
+) {
+    assert_semantic_tokens(text, expected_tokens, context);
+    let accuracy = cjk_character_accuracy(text, expected_text);
+    assert!(
+        accuracy >= MINIMUM_EXPLICIT_CJK_CHARACTER_ACCURACY,
+        "{context} CJK character accuracy {:.1}% was below {:.0}%: {text:?}",
+        accuracy * 100.0,
+        MINIMUM_EXPLICIT_CJK_CHARACTER_ACCURACY * 100.0
+    );
 }
 
 #[test]
@@ -23,9 +109,11 @@ fn tesseract_recognizes_simplified_chinese_ui_text() {
         perform_ocr_tesseract_checked(&image, vec![Language::ChineseSimplified])
             .expect("Tesseract Simplified Chinese OCR failed");
 
-    assert!(
-        text.contains("管理分支"),
-        "OCR did not recover the expected Simplified Chinese phrase: {text:?}"
+    assert_explicit_cjk_quality(
+        &text,
+        "管理分支与发布清单本地知识图谱",
+        &["清单", "本地", "知识", "图谱"],
+        "Simplified Chinese OCR",
     );
     assert_ne!(positions, "[]", "OCR positions must be available");
     assert!(
@@ -35,9 +123,10 @@ fn tesseract_recognizes_simplified_chinese_ui_text() {
 
     let (automatic_text, _, automatic_confidence) = perform_ocr_tesseract_checked(&image, vec![])
         .expect("Tesseract automatic baseline OCR failed");
-    assert!(
-        automatic_text.contains("管理分支"),
-        "Automatic baseline did not recover Simplified Chinese: {automatic_text:?}"
+    assert_semantic_tokens(
+        &automatic_text,
+        &["本地", "知识", "图谱"],
+        "Automatic Simplified Chinese baseline",
     );
     assert!(
         automatic_confidence.is_some_and(|value| value > 50.0),
@@ -56,9 +145,11 @@ fn tesseract_recognizes_traditional_chinese_ui_text() {
     )
     .expect("Tesseract Traditional Chinese OCR failed");
 
-    assert!(
-        text.contains("個人工作知識圖譜"),
-        "OCR did not recover the expected Traditional Chinese phrase: {text:?}"
+    assert_explicit_cjk_quality(
+        &text,
+        "個人工作知識圖譜本機記憶",
+        &["個人", "工作", "圖譜", "本機", "記憶"],
+        "Traditional Chinese OCR",
     );
     assert_ne!(positions, "[]", "OCR positions must be available");
     assert!(
@@ -68,12 +159,32 @@ fn tesseract_recognizes_traditional_chinese_ui_text() {
 
     let (automatic_text, _, automatic_confidence) = perform_ocr_tesseract_checked(&image, vec![])
         .expect("Tesseract automatic baseline OCR failed");
-    assert!(
-        automatic_text.contains("個人工作知識圖譜"),
-        "Automatic baseline did not recover Traditional Chinese: {automatic_text:?}"
+    assert_semantic_tokens(
+        &automatic_text,
+        &["個人", "工作", "圖譜", "本機", "記憶"],
+        "Automatic Traditional Chinese baseline",
     );
     assert!(
         automatic_confidence.is_some_and(|value| value > 50.0),
         "Automatic baseline confidence was unexpectedly low: {automatic_confidence:?}"
+    );
+}
+
+#[test]
+fn cjk_accuracy_counts_substitutions_without_rewarding_latin_text() {
+    let accuracy = cjk_character_accuracy(
+        "井理分和与友布清单 Civitas 本地知识图谱 2026",
+        "管理分支与发布清单本地知识图谱",
+    );
+    assert!((accuracy - 0.8).abs() < f64::EPSILON);
+    assert_eq!(cjk_character_accuracy("Civitas 2026", "個人工作"), 0.0);
+}
+
+#[test]
+fn semantic_token_matching_tolerates_ocr_token_spacing_only() {
+    assert_semantic_tokens(
+        "Civitas 本 地 知识 图 谱 · 2026",
+        &["本地", "知识", "图谱"],
+        "spacing regression",
     );
 }

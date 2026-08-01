@@ -2188,10 +2188,12 @@ mod tests {
     use super::{
         normalize_media_path, prepare_export_destination, row_to_stable_json, truncate_text,
         validate_renderer_cleanup, validate_renderer_data, validate_settings_metadata,
-        validate_settings_value, walk_chat_directory, ChatEntry, PortableRendererData,
-        RendererCleanupAcknowledgement, DERIVED_EXPORT_TABLES, RENDERER_PORTABLE_SCHEMA_VERSION,
-        RENDERER_WIPE_SCHEMA_VERSION, SAMPLE_TEXT_LIMIT, SOURCE_EXPORT_TABLES, WIPE_CONFIRMATION,
+        validate_settings_value, PortableRendererData, RendererCleanupAcknowledgement,
+        DERIVED_EXPORT_TABLES, RENDERER_PORTABLE_SCHEMA_VERSION, RENDERER_WIPE_SCHEMA_VERSION,
+        SAMPLE_TEXT_LIMIT, SOURCE_EXPORT_TABLES, WIPE_CONFIRMATION,
     };
+    #[cfg(unix)]
+    use super::{walk_chat_directory, ChatEntry};
     use civitas_db::PERSONAL_DATA_TABLES;
     use proptest::prelude::*;
     use serde_json::json;

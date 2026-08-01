@@ -42,6 +42,7 @@ enum CaptureError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CaptureBackend {
+    #[cfg(target_os = "macos")]
     ScreenCaptureKit,
     Xcap,
 }
@@ -49,6 +50,7 @@ enum CaptureBackend {
 impl CaptureBackend {
     const fn diagnostic_code(self) -> &'static str {
         match self {
+            #[cfg(target_os = "macos")]
             Self::ScreenCaptureKit => "screen_capture_kit",
             Self::Xcap => "xcap",
         }
@@ -1214,17 +1216,21 @@ mod tests {
 
     #[test]
     fn capture_backend_errors_expose_only_closed_diagnostic_codes() {
-        let screen_capture_kit =
-            CaptureError::CaptureBackendError(CaptureBackend::ScreenCaptureKit).to_string();
         let xcap = CaptureError::CaptureBackendError(CaptureBackend::Xcap).to_string();
 
-        assert_eq!(
-            screen_capture_kit,
-            "window capture backend failed (screen_capture_kit)"
-        );
         assert_eq!(xcap, "window capture backend failed (xcap)");
-        assert!(!screen_capture_kit.contains("private window title"));
         assert!(!xcap.contains("https://private.example"));
+
+        #[cfg(target_os = "macos")]
+        {
+            let screen_capture_kit =
+                CaptureError::CaptureBackendError(CaptureBackend::ScreenCaptureKit).to_string();
+            assert_eq!(
+                screen_capture_kit,
+                "window capture backend failed (screen_capture_kit)"
+            );
+            assert!(!screen_capture_kit.contains("private window title"));
+        }
     }
 
     // ==================== is_url_blocked tests ====================

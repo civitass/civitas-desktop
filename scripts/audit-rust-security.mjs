@@ -161,18 +161,14 @@ function assertNotReachable(directory, label, packageKey) {
   }
 }
 
-function auditCommand() {
+function auditInvocation() {
   const configuredBinary = process.env.CARGO_AUDIT_BIN?.trim();
-  return configuredBinary || "cargo";
-}
-
-function auditArgs() {
-  const args = ["audit"];
+  const args = configuredBinary ? [] : ["audit"];
   if (process.env.CIVITAS_RUSTSEC_NO_FETCH === "1") args.push("--no-fetch");
   for (const advisory of ignoredAdvisories) {
     args.push("--ignore", advisory);
   }
-  return args;
+  return { command: configuredBinary || "cargo", args };
 }
 
 for (const lockfile of lockfiles) {
@@ -216,10 +212,20 @@ for (const lockfile of lockfiles) {
     assertNotReachable(lockfile.directory, lockfile.label, packageKey);
   }
 
-  const audit = run(auditCommand(), auditArgs(), {
+  const invocation = auditInvocation();
+  const audit = run(invocation.command, invocation.args, {
     cwd: lockfile.directory,
+    capture: true,
   });
   if (audit.status !== 0) {
+    const detail = (audit.stderr || audit.stdout || "").trim();
+    if (/no such command.*audit|command not found|not recognized/i.test(detail)) {
+      fail(
+        `${lockfile.label}: cargo-audit is unavailable; install cargo-audit 0.22.2 or set CARGO_AUDIT_BIN`,
+      );
+    }
+    if (audit.stdout) process.stderr.write(audit.stdout);
+    if (audit.stderr) process.stderr.write(audit.stderr);
     fail(`${lockfile.label}: cargo-audit reported a blocking advisory`);
   }
 

@@ -143,8 +143,11 @@ CIVITAS_OCR_FIXTURE_ZH_HANT=/absolute/path/traditional.png \
   test_apple_native_ocr_chinese_traditional -- --ignored --nocapture
 ```
 
-The fixture tests assert meaningful Chinese phrases and confidence, not merely
-that some text was returned.
+The fixture tests assert multiple meaningful Chinese tokens, confidence, and a
+minimum character-accuracy threshold for explicitly selected scripts—not
+merely that some text was returned. Font collections are resolved to their
+Simplified or Traditional Chinese face so the test never renders Japanese
+regional glyph variants by silently accepting collection index zero.
 
 ## Primary references
 
