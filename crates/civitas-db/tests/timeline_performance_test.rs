@@ -207,6 +207,7 @@ mod timeline_performance_tests {
     /// Test with large dataset - simulates a full day of recording
     /// This is the scenario that causes the customer's "loading timeline" hang
     #[tokio::test]
+    #[ignore = "runs as an isolated, single-threaded CI acceptance test"]
     async fn test_find_video_chunks_performance_large() {
         let db = setup_test_db().await;
         let frame_count = 5000; // ~2.5 hours at 0.5 FPS
@@ -218,14 +219,30 @@ mod timeline_performance_tests {
         println!("This simulates a partial day of recording");
 
         let insert_start = Instant::now();
-        insert_frames_with_ocr(&db, frame_count, start_time).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            insert_frames_with_ocr(&db, frame_count, start_time),
+        )
+        .await
+        .expect("large Timeline fixture insertion exceeded 60 seconds");
         println!("Insert time: {:?}", insert_start.elapsed());
 
         // Also add some audio
-        insert_audio_transcriptions(&db, frame_count / 10, start_time).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            insert_audio_transcriptions(&db, frame_count / 10, start_time),
+        )
+        .await
+        .expect("large Timeline audio fixture insertion exceeded 30 seconds");
 
         let query_start = Instant::now();
-        let result = db.find_video_chunks(start_time, end_time).await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            db.find_video_chunks(start_time, end_time),
+        )
+        .await
+        .expect("large Timeline query exceeded 5 seconds")
+        .expect("large Timeline query failed");
         let query_duration = query_start.elapsed();
 
         println!("Query time: {:?}", query_duration);
@@ -251,10 +268,15 @@ mod timeline_performance_tests {
             estimated_json_size / 1024
         );
 
-        if query_duration.as_secs() > 5 {
-            println!("CRITICAL: Query exceeds 5 seconds - this is the customer's hang!");
-            println!("User is trapped in fullscreen overlay while this query runs.");
-        }
+        assert_eq!(
+            result.frames.len(),
+            frame_count,
+            "large Timeline query returned an incomplete frame set"
+        );
+        assert!(
+            query_duration < std::time::Duration::from_secs(5),
+            "large Timeline query exceeded its five-second publication budget: {query_duration:?}"
+        );
     }
 
     // =========================================================================

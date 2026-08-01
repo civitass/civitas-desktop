@@ -41,6 +41,7 @@ permissions:
 jobs:
   test-ubuntu:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       RUSTFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
     steps:
@@ -89,9 +90,22 @@ jobs:
           echo "CIVITAS_OCR_FIXTURE_ZH_HANT=$RUNNER_TEMP/civitas-ocr-fixtures/traditional-chinese.png" >> "$GITHUB_ENV"
 
       - name: Run cargo tests
+        timeout-minutes: 60
         run: cargo test --workspace --exclude civitas-rfdetr-mlx
 
+      # The 5,000-frame Timeline benchmark intentionally runs outside the
+      # parallel libtest pool. In the ordinary workspace suite it competes
+      # with eleven other SQLite performance cases, which can starve one
+      # writer indefinitely and turn a 20 ms query check into a hung job.
+      - name: Run isolated large Timeline performance acceptance test
+        timeout-minutes: 5
+        run: >-
+          cargo test -p civitas-db --test timeline_performance_test
+          test_find_video_chunks_performance_large -- --ignored --nocapture
+          --test-threads=1
+
       - name: Run multilingual Tesseract OCR acceptance tests
+        timeout-minutes: 10
         run: cargo test -p civitas-screen --test tesseract_ocr_test -- --ignored --nocapture
 
   test-windows:
