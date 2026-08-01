@@ -97,16 +97,23 @@ jobs:
       # parallel libtest pool. In the ordinary workspace suite it competes
       # with eleven other SQLite performance cases, which can starve one
       # writer indefinitely and turn a 20 ms query check into a hung job.
+      # Keep the same workspace package selection as the preceding command:
+      # switching to `-p civitas-db` changes Cargo's unified feature graph and
+      # needlessly recompiles the dependency tree instead of measuring the test.
       - name: Run isolated large Timeline performance acceptance test
         timeout-minutes: 5
         run: >-
-          cargo test -p civitas-db --test timeline_performance_test
-          test_find_video_chunks_performance_large -- --ignored --nocapture
-          --test-threads=1
+          cargo test --workspace --exclude civitas-rfdetr-mlx
+          test_find_video_chunks_performance_large -- --ignored
+          --nocapture --test-threads=1
 
       - name: Run multilingual Tesseract OCR acceptance tests
         timeout-minutes: 10
-        run: cargo test -p civitas-screen --test tesseract_ocr_test -- --ignored --nocapture
+        # Reuse the workspace feature graph here as well. The name filter is
+        # unique to the two consented multilingual OCR acceptance cases.
+        run: >-
+          cargo test --workspace --exclude civitas-rfdetr-mlx
+          tesseract_recognizes_ -- --ignored --nocapture --test-threads=1
 
   test-windows:
     # windows-2019 reached end-of-life on the GitHub-hosted runner fleet
