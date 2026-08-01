@@ -560,7 +560,12 @@ jobs:
           expected_entitlements_json="$RUNNER_TEMP/civitas-release-entitlements-expected.json"
           actual_entitlements_sorted="$RUNNER_TEMP/civitas-release-entitlements-actual.sorted.json"
           expected_entitlements_sorted="$RUNNER_TEMP/civitas-release-entitlements-expected.sorted.json"
-          codesign -d --entitlements :- "$mounted_app" > "$actual_entitlements" 2>/dev/null
+          codesign -d --entitlements - --xml "$mounted_app" > "$actual_entitlements" 2>/dev/null
+          if [[ ! -s "$actual_entitlements" ]]; then
+            echo "::error::signed application did not expose a readable entitlement dictionary"
+            exit 1
+          fi
+          plutil -lint "$actual_entitlements"
           plutil -convert json -o "$actual_entitlements_json" "$actual_entitlements"
           plutil -convert json -o "$expected_entitlements_json" \
             apps/civitas-app-tauri/src-tauri/entitlements.plist

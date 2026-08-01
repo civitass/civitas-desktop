@@ -36,7 +36,6 @@ reqwest = { workspace = true }
 async-trait = "0.1"
 civitas-secrets = { path = "../civitas-secrets", optional = true }
 civitas-vault = { path = "../civitas-vault", optional = true }
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"], optional = true }
 
 once_cell = "1.19.0"
 
@@ -53,7 +52,7 @@ default = ["security"]
 # without changing behavior (it's never enabled at compile time).
 cargo-clippy = []
 security = ["dep:regex", "dep:lazy_static"]
-secrets = ["dep:civitas-secrets", "dep:civitas-vault", "dep:sqlx"]
+secrets = ["dep:civitas-secrets", "dep:civitas-vault"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

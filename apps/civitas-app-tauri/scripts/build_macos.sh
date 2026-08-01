@@ -269,7 +269,15 @@ cleanup_entitlement_files() {
   rm -f -- "$actual_entitlements" "$actual_entitlements_json" "$expected_entitlements_json"
 }
 trap cleanup_entitlement_files EXIT
-codesign -d --entitlements :- "$app_path" >"$actual_entitlements" 2>/dev/null
+# Ask current codesign to materialize the entitlement dictionary as XML.
+# The historical `:-` pseudo-path is deprecated and can yield an empty file;
+# comparing two empty JSON files would turn this release gate into a false pass.
+codesign -d --entitlements - --xml "$app_path" >"$actual_entitlements" 2>/dev/null
+if [ ! -s "$actual_entitlements" ]; then
+  echo "Signed bundle did not expose a readable entitlement dictionary." >&2
+  exit 1
+fi
+plutil -lint "$actual_entitlements" >/dev/null
 plutil -convert json -o - "$actual_entitlements" | jq --sort-keys . >"$actual_entitlements_json"
 plutil -convert json -o - "$effective_entitlements" | jq --sort-keys . >"$expected_entitlements_json"
 if ! cmp -s "$actual_entitlements_json" "$expected_entitlements_json"; then

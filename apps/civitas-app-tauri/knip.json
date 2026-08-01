@@ -20,15 +20,11 @@
   "ignore": [
     "**/__tests__/**",
     "**/*.test.{ts,tsx}",
-    "components/notification-bell.tsx",
-    "components/onboarding/connect-apps.tsx",
     "components/settings/feedback-section.tsx",
     "components/ui/hover-card.tsx"
   ],
   "ignoreDependencies": [
     "ts-node",
-    "mocha",
-    "@wdio/cli",
     "@wdio/local-runner",
     "@wdio/globals",
     "@radix-ui/react-hover-card"

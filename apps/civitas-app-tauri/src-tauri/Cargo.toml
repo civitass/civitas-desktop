@@ -32,7 +32,6 @@ tauri = { version = "=2.11.2", features = [
   "image-png",
   "image-ico",
 ] }
-tauri-utils = { version = "=2.9.2", features = [] }
 # plugins
 tauri-plugin-fs = "=2.4.5"
 tauri-plugin-notification = "=2.3.3"
@@ -50,7 +49,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"
 plist = "1.10.0"
-arc-swap = "1"
 
 tower-http = { version = "0.4.0", features = ["cors", "trace"] }
 http = "0.2"
@@ -114,7 +112,6 @@ tauri-plugin-opener = "2.5.3"
 uuid = { version = "1.0", features = ["v4"] }
 urlencoding = "2"
 url = "2"
-async-trait = "0.1"
 
 # Civitas core
 civitas-core = { path = "../../../crates/civitas-core", features = ["secrets"] }
@@ -245,11 +242,9 @@ serial_test = "4.0.1"
 
 
 [package.metadata.cargo-machete]
-# civitas-redact: workspace dep added for async PII reconciliation (PR #3188);
-# wiring lands in a follow-up. Cargo compiles it for the workspace either way.
 # eventkit-rs: lib crate is imported as `eventkit` (calendar.rs, permissions.rs);
 # cargo-machete matches the package name `eventkit_rs` so it can't see the use.
-ignored = ["tauri-utils", "civitas-redact", "eventkit-rs"]
+ignored = ["eventkit-rs"]
 
 [patch.crates-io]
 # macOS tray menus can outlive the Rust `Menu` that created them while the

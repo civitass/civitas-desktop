@@ -199,6 +199,10 @@ jobs:
           "record",
           "--debug",
           "--disable-telemetry",
+          # Fresh consumer profiles intentionally start with screen capture off.
+          # This isolated CI profile explicitly consents to all monitors so the
+          # journey exercises real Windows capture instead of only UIA events.
+          "--use-all-monitors",
           "--audio-transcription-engine",
           "disabled",
           "--data-dir",

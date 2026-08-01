@@ -46,7 +46,7 @@ pub async fn resolve_api_auth_key(data_dir: &Path, settings_key: Option<&str>) -
 
     let resolution =
         resolve_api_auth_key_with_store(&store, environment_key.as_deref(), settings_key).await?;
-    if resolution.recovered_unreadable_row {
+    if resolution.recovered_unreadable_row || resolution.replaced_legacy_generated_key {
         remove_legacy_auth_cache(data_dir);
     }
     Ok(resolution.key)
@@ -56,6 +56,7 @@ pub async fn resolve_api_auth_key(data_dir: &Path, settings_key: Option<&str>) -
 struct ApiAuthKeyResolution {
     key: String,
     recovered_unreadable_row: bool,
+    replaced_legacy_generated_key: bool,
 }
 
 async fn resolve_api_auth_key_with_store(
@@ -88,7 +89,7 @@ async fn resolve_api_auth_key_with_store(
         }
     };
 
-    let (key, source) = if let Some(key) = environment_key {
+    let (mut key, mut source) = if let Some(key) = environment_key {
         (key.to_string(), "CIVITAS_LOCAL_API_KEY env")
     } else if let Some(key) = settings_key.filter(|key| !key.is_empty()) {
         (key.to_string(), "legacy settings migration")
@@ -97,6 +98,17 @@ async fn resolve_api_auth_key_with_store(
     } else {
         (generate_api_key(), "auto-generated")
     };
+    // Civitas versions before the consumer hardening generated `sp-` plus
+    // eight hex characters (32 bits). Rotate only that exact first-party
+    // legacy shape. Arbitrary stored values and explicit environment overrides
+    // may belong to existing clients, so they are never classified as legacy
+    // merely because they are short.
+    let replaced_legacy_generated_key =
+        environment_key.is_none() && is_legacy_generated_api_key(&key);
+    if replaced_legacy_generated_key {
+        key = generate_api_key();
+        source = "rotated legacy generated key";
+    }
 
     // Persist before returning. A successful resolution must never advertise a
     // key that sibling processes cannot discover after restart.
@@ -112,10 +124,23 @@ async fn resolve_api_auth_key_with_store(
              provider and integration secrets were left untouched"
         );
     }
+    if replaced_legacy_generated_key {
+        tracing::warn!(
+            "api auth: rotated a legacy 32-bit local-only owner token; \
+             provider and integration secrets were left untouched"
+        );
+    }
     tracing::info!("api auth: key resolved via {}", source);
     Ok(ApiAuthKeyResolution {
         key,
         recovered_unreadable_row,
+        replaced_legacy_generated_key,
+    })
+}
+
+fn is_legacy_generated_api_key(key: &str) -> bool {
+    key.strip_prefix("sp-").is_some_and(|suffix| {
+        suffix.len() == 8 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
     })
 }
 
@@ -150,9 +175,9 @@ pub async fn set_api_auth_key(data_dir: &Path, key: &str) -> Result<()> {
 }
 
 /// Reject local API credentials that are weak or cannot round-trip through an
-/// HTTP Authorization header. Existing resolution sources are intentionally
-/// left untouched so an upgrade never rotates a working credential silently;
-/// this boundary applies when a user explicitly replaces the key.
+/// HTTP Authorization header. The resolver automatically rotates only the
+/// exact historical first-party `sp-` plus eight-hex shape; this boundary
+/// applies when a user explicitly replaces the key.
 fn validate_user_api_key(key: &str) -> Result<()> {
     anyhow::ensure!(
         (32..=4096).contains(&key.len()),
@@ -251,7 +276,10 @@ pub async fn find_api_auth_key() -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_api_key, resolve_api_auth_key_with_store, validate_user_api_key};
+    use super::{
+        generate_api_key, is_legacy_generated_api_key, resolve_api_auth_key_with_store,
+        validate_user_api_key,
+    };
 
     #[test]
     fn generated_keys_have_expected_entropy_and_shape() {
@@ -262,6 +290,20 @@ mod tests {
         assert_eq!(first.len(), 67);
         assert!(first[3..].bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn legacy_generated_key_detection_is_exact() {
+        assert!(is_legacy_generated_api_key("sp-1a2B3c4D"));
+        for value in [
+            "sp-1a2b3c4",
+            "sp-1a2b3c4d5",
+            "sp-1a2b3c4g",
+            "sp_1a2b3c4d",
+            "custom-key",
+        ] {
+            assert!(!is_legacy_generated_api_key(value), "{value}");
+        }
     }
 
     #[test]
@@ -308,6 +350,58 @@ mod tests {
             .expect("generated key row");
 
         assert_eq!(persisted, resolved.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn legacy_generated_owner_key_is_rotated_and_persisted() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open test database");
+        let store = civitas_secrets::SecretStore::new(pool, [6_u8; 32])
+            .await
+            .expect("open protected test store");
+        store
+            .set("api_auth_key", b"sp-1a2b3c4d")
+            .await
+            .expect("seed legacy owner key");
+
+        let first = resolve_api_auth_key_with_store(&store, None, None)
+            .await
+            .expect("rotate legacy owner key");
+        assert!(first.replaced_legacy_generated_key);
+        assert!(!first.recovered_unreadable_row);
+        assert_eq!(first.key.len(), 67);
+        assert_ne!(first.key, "sp-1a2b3c4d");
+        assert_eq!(
+            store
+                .get("api_auth_key")
+                .await
+                .expect("read rotated key")
+                .expect("rotated key row"),
+            first.key.as_bytes()
+        );
+
+        let second = resolve_api_auth_key_with_store(&store, None, None)
+            .await
+            .expect("reuse rotated owner key");
+        assert!(!second.replaced_legacy_generated_key);
+        assert_eq!(second.key, first.key);
+    }
+
+    #[tokio::test]
+    async fn explicit_environment_key_is_not_classified_as_legacy() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open test database");
+        let store = civitas_secrets::SecretStore::new(pool, [5_u8; 32])
+            .await
+            .expect("open protected test store");
+
+        let resolution = resolve_api_auth_key_with_store(&store, Some("sp-1a2b3c4d"), None)
+            .await
+            .expect("honor explicit environment override");
+        assert!(!resolution.replaced_legacy_generated_key);
+        assert_eq!(resolution.key, "sp-1a2b3c4d");
     }
 
     #[tokio::test]

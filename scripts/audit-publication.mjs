@@ -1114,6 +1114,28 @@ function auditReleaseWorkflow(files) {
     }
   }
 
+  const macEntitlements =
+    "apps/civitas-app-tauri/src-tauri/entitlements.plist";
+  if (!files.includes(macEntitlements)) {
+    addFinding(
+      "missing_macos_entitlements",
+      macEntitlements,
+      "The reviewed macOS entitlement allowlist is missing.",
+    );
+  } else {
+    const macEntitlementsContent = fs.readFileSync(
+      path.join(repoRoot, macEntitlements),
+      "utf8",
+    );
+    if (/[^\x00-\x7f]/.test(macEntitlementsContent)) {
+      addFinding(
+        "non_ascii_macos_entitlements",
+        macEntitlements,
+        "The entitlement plist must remain ASCII so codesign can round-trip its XML entitlement blob reliably.",
+      );
+    }
+  }
+
   const localMacBuild = "apps/civitas-app-tauri/scripts/build_macos.sh";
   if (!files.includes(localMacBuild)) {
     addFinding(
@@ -1141,6 +1163,8 @@ function auditReleaseWorkflow(files) {
       "Pass --config src-tauri/tauri.macos.conf.json",
       "expected_app_path",
       '--entitlements "$effective_entitlements"',
+      'codesign -d --entitlements - --xml "$app_path"',
+      "Signed bundle did not expose a readable entitlement dictionary.",
       "Locally signed application entitlements differ from the reviewed exact allowlist.",
       "effective_minimum_system_version",
       "above advertised $effective_minimum_system_version",
@@ -1203,6 +1227,8 @@ function auditReleaseWorkflow(files) {
     "xcrun stapler validate",
     "codesign --verify",
     "TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}",
+    'codesign -d --entitlements - --xml "$mounted_app"',
+    "signed application did not expose a readable entitlement dictionary",
     "signed application entitlements differ from the reviewed exact allowlist",
     "hdiutil attach",
     "unexpected top-level DMG entry",
