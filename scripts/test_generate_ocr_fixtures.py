@@ -39,8 +39,28 @@ class GenerateOcrFixturesTest(unittest.TestCase):
             with Image.open(destination) as image:
                 self.assertEqual(image.format, "PNG")
                 self.assertEqual(image.mode, "RGB")
-                self.assertEqual(image.size, (1600, 560))
+                self.assertEqual(image.size, MODULE.IMAGE_SIZE)
             self.assertLess(destination.stat().st_size, 500_000)
+
+    def test_platform_font_metrics_are_fitted_inside_safe_width(self) -> None:
+        font_path = Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf")
+        if not font_path.is_file():
+            self.skipTest("the local test system has no suitable Unicode font")
+
+        image = Image.new("RGB", MODULE.IMAGE_SIZE, "white")
+        draw = MODULE.ImageDraw.Draw(image)
+        original = MODULE.ImageFont.truetype(str(font_path), 112)
+        text = "Civitas synthetic privacy · local memory · 2026"
+        fitted = MODULE.fit_font_to_width(
+            draw,
+            text,
+            original,
+            MODULE.TEXT_RIGHT - MODULE.TEXT_LEFT,
+        )
+        left, _, right, _ = draw.textbbox((0, 0), text, font=fitted)
+
+        self.assertLessEqual(right - left, MODULE.TEXT_RIGHT - MODULE.TEXT_LEFT)
+        self.assertLessEqual(fitted.size, original.size)
 
     def test_fixture_phrases_are_synthetic_and_stable(self) -> None:
         english_fixture = " ".join(MODULE.FIXTURES["english.png"]).lower()

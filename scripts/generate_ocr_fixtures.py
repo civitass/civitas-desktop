@@ -27,6 +27,11 @@ FIXTURES = {
     ),
 }
 
+IMAGE_SIZE = (1600, 560)
+TEXT_LEFT = 132
+TEXT_RIGHT = 1468
+MIN_FONT_SIZE = 32
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -59,7 +64,7 @@ def render_fixture(
     primary_font: ImageFont.FreeTypeFont,
     secondary_font: ImageFont.FreeTypeFont,
 ) -> None:
-    image = Image.new("RGB", (1600, 560), "white")
+    image = Image.new("RGB", IMAGE_SIZE, "white")
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle(
         (72, 68, 1528, 492),
@@ -68,9 +73,46 @@ def render_fixture(
         outline=(207, 207, 213),
         width=3,
     )
-    draw.text((132, 128), lines[0], font=primary_font, fill=(20, 20, 24))
-    draw.text((132, 324), lines[1], font=secondary_font, fill=(70, 70, 78))
+    safe_width = TEXT_RIGHT - TEXT_LEFT
+    fitted_primary = fit_font_to_width(draw, lines[0], primary_font, safe_width)
+    fitted_secondary = fit_font_to_width(draw, lines[1], secondary_font, safe_width)
+    draw.text(
+        (TEXT_LEFT, 128), lines[0], font=fitted_primary, fill=(20, 20, 24)
+    )
+    draw.text(
+        (TEXT_LEFT, 324), lines[1], font=fitted_secondary, fill=(70, 70, 78)
+    )
     image.save(destination, format="PNG", optimize=False, compress_level=9)
+
+
+def fit_font_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> ImageFont.FreeTypeFont:
+    """Fit platform-specific font metrics without clipping fixture text."""
+    if max_width <= 0:
+        raise ValueError("max_width must be positive")
+
+    def text_width(candidate: ImageFont.FreeTypeFont) -> int:
+        left, _, right, _ = draw.textbbox((0, 0), text, font=candidate)
+        return right - left
+
+    if text_width(font) <= max_width:
+        return font
+
+    width = text_width(font)
+    size = max(MIN_FONT_SIZE, int(font.size * max_width / width))
+    fitted = font.font_variant(size=size)
+    while size > MIN_FONT_SIZE and text_width(fitted) > max_width:
+        size -= 1
+        fitted = font.font_variant(size=size)
+    if text_width(fitted) > max_width:
+        raise ValueError(
+            f"fixture text cannot fit within {max_width}px at {MIN_FONT_SIZE}px: {text!r}"
+        )
+    return fitted
 
 
 def main() -> None:

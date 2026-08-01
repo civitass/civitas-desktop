@@ -65,9 +65,27 @@ mod tests {
             .expect("Windows OCR pipeline failed");
         assert_eq!(result.capture.window_ocr_results.len(), 1);
         let recognized = &result.capture.window_ocr_results[0].text;
+        let normalized_tokens = recognized
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .filter(|token| !token.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect::<std::collections::HashSet<_>>();
+        let expected_tokens = [
+            "receiver",
+            "civitas",
+            "synthetic",
+            "privacy",
+            "local",
+            "memory",
+        ];
+        let missing_tokens = expected_tokens
+            .iter()
+            .filter(|token| !normalized_tokens.contains(**token))
+            .copied()
+            .collect::<Vec<_>>();
         assert!(
-            recognized.to_ascii_lowercase().contains("receiver_count"),
-            "Windows OCR did not recover the expected synthetic phrase: {recognized:?}"
+            missing_tokens.is_empty(),
+            "Windows OCR missed required synthetic words {missing_tokens:?}: {recognized:?}"
         );
         assert_eq!(result.cache_hits, 0);
         assert_eq!(result.cache_misses, 1);
