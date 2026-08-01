@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat-square&color=8b2327"></a>
+  <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat-square&color=1d1d1f"></a>
   <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square"></a>
   <a href="https://github.com/civitass/civitas-desktop/actions/workflows/release-app.yml"><img alt="Release verification" src="https://img.shields.io/github/actions/workflow/status/civitass/civitas-desktop/release-app.yml?style=flat-square&label=release%20gates"></a>
   <img alt="Local first" src="https://img.shields.io/badge/data-local--first-675d58?style=flat-square">
