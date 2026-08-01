@@ -39,6 +39,7 @@ CJK_FACE_MARKERS = {
         "heiti sc",
         "simplified chinese",
         "source han sans cn",
+        "microsoft yahei",
     ),
     "traditional": (
         "cjk tc",
@@ -46,6 +47,7 @@ CJK_FACE_MARKERS = {
         "heiti tc",
         "traditional chinese",
         "source han sans tw",
+        "microsoft jhenghei",
     ),
 }
 
@@ -68,9 +70,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cjk-font",
-        required=True,
         type=Path,
-        help="Local TrueType/OpenType font with Simplified and Traditional Chinese glyphs.",
+        help=(
+            "Shared local TrueType/OpenType font for both Chinese fixtures. "
+            "Use the script-specific options when the platform ships separate fonts."
+        ),
+    )
+    parser.add_argument(
+        "--simplified-cjk-font",
+        type=Path,
+        help="Optional Simplified Chinese font; overrides --cjk-font for that fixture.",
+    )
+    parser.add_argument(
+        "--traditional-cjk-font",
+        type=Path,
+        help="Optional Traditional Chinese font; overrides --cjk-font for that fixture.",
     )
     return parser.parse_args()
 
@@ -180,16 +194,29 @@ def select_cjk_face_index(
 
 def main() -> None:
     args = parse_args()
-    for font_path in (args.latin_font, args.cjk_font):
+    simplified_font_path = args.simplified_cjk_font or args.cjk_font
+    traditional_font_path = args.traditional_cjk_font or args.cjk_font
+    if simplified_font_path is None or traditional_font_path is None:
+        raise SystemExit(
+            "provide --cjk-font or both --simplified-cjk-font and "
+            "--traditional-cjk-font"
+        )
+
+    for font_path in {
+        args.latin_font,
+        simplified_font_path,
+        traditional_font_path,
+    }:
         if not font_path.is_file():
             raise SystemExit(f"font does not exist: {font_path}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     latin_primary = ImageFont.truetype(str(args.latin_font), 112)
     latin_secondary = ImageFont.truetype(str(args.latin_font), 68)
-    cjk_faces = discover_font_faces(args.cjk_font)
-    simplified_face = select_cjk_face_index(cjk_faces, "simplified")
-    traditional_face = select_cjk_face_index(cjk_faces, "traditional")
+    simplified_faces = discover_font_faces(simplified_font_path)
+    traditional_faces = discover_font_faces(traditional_font_path)
+    simplified_face = select_cjk_face_index(simplified_faces, "simplified")
+    traditional_face = select_cjk_face_index(traditional_faces, "traditional")
 
     render_fixture(
         args.output_dir / "english.png",
@@ -197,15 +224,15 @@ def main() -> None:
         latin_primary,
         latin_secondary,
     )
-    for filename, face_index in (
-        ("simplified-chinese.png", simplified_face),
-        ("traditional-chinese.png", traditional_face),
+    for filename, font_path, face_index in (
+        ("simplified-chinese.png", simplified_font_path, simplified_face),
+        ("traditional-chinese.png", traditional_font_path, traditional_face),
     ):
         render_fixture(
             args.output_dir / filename,
             FIXTURES[filename],
-            ImageFont.truetype(str(args.cjk_font), 112, index=face_index),
-            ImageFont.truetype(str(args.cjk_font), 68, index=face_index),
+            ImageFont.truetype(str(font_path), 112, index=face_index),
+            ImageFont.truetype(str(font_path), 68, index=face_index),
         )
 
 

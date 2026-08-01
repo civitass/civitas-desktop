@@ -147,13 +147,18 @@ The fixture tests assert multiple meaningful Chinese tokens, confidence, and a
 minimum character-accuracy threshold for explicitly selected scripts—not
 merely that some text was returned. Font collections are resolved to their
 Simplified or Traditional Chinese face so the test never renders Japanese
-regional glyph variants by silently accepting collection index zero.
+regional glyph variants by silently accepting collection index zero. Windows
+fixtures deliberately use Microsoft YaHei (`Hans`) for Simplified Chinese and
+Microsoft JhengHei (`Hant`) for Traditional Chinese; a font family for one
+script is rejected if it is accidentally supplied for the other.
 
 ## Primary references
 
 - [Apple: Recognizing text in images](https://developer.apple.com/documentation/vision/recognizing-text-in-images)
 - [Apple: VNRecognizeTextRequest](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)
 - [Microsoft: installed OCR recognizer languages](https://learn.microsoft.com/en-us/uwp/api/windows.media.ocr.ocrengine.availablerecognizerlanguages)
+- [Microsoft: Microsoft YaHei Simplified Chinese font](https://learn.microsoft.com/en-us/typography/font-list/microsoft-yahei)
+- [Microsoft: Microsoft JhengHei Traditional Chinese font](https://learn.microsoft.com/en-us/typography/font-list/microsoft-jhenghei)
 - [Tesseract: data files and engine compatibility](https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html)
 - [Tesseract: command-line language selection](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html)
 - [Official `tessdata_best` models](https://github.com/tesseract-ocr/tessdata_best)

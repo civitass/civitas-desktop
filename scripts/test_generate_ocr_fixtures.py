@@ -83,6 +83,27 @@ class GenerateOcrFixturesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no simplified Chinese face"):
             MODULE.select_cjk_face_index(faces, "simplified")
 
+    def test_windows_chinese_families_are_region_correct(self) -> None:
+        simplified_faces = [
+            ("Microsoft YaHei", "Regular"),
+            ("Microsoft YaHei UI", "Regular"),
+        ]
+        traditional_faces = [
+            ("Microsoft JhengHei", "Regular"),
+            ("Microsoft JhengHei UI", "Regular"),
+        ]
+
+        self.assertEqual(
+            MODULE.select_cjk_face_index(simplified_faces, "simplified"), 0
+        )
+        self.assertEqual(
+            MODULE.select_cjk_face_index(traditional_faces, "traditional"), 0
+        )
+        with self.assertRaisesRegex(ValueError, "no traditional Chinese face"):
+            MODULE.select_cjk_face_index(simplified_faces, "traditional")
+        with self.assertRaisesRegex(ValueError, "no simplified Chinese face"):
+            MODULE.select_cjk_face_index(traditional_faces, "simplified")
+
     def test_single_face_unicode_font_is_a_safe_fallback(self) -> None:
         self.assertEqual(
             MODULE.select_cjk_face_index([("Arial Unicode MS", "Regular")], "traditional"),

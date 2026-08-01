@@ -203,7 +203,9 @@ jobs:
           python scripts/generate_ocr_fixtures.py `
             --output-dir $fixtureDir `
             --latin-font "C:\Windows\Fonts\arial.ttf" `
-            --cjk-font "C:\Windows\Fonts\msyh.ttc"
+            --simplified-cjk-font "C:\Windows\Fonts\msyh.ttc" `
+            --traditional-cjk-font "C:\Windows\Fonts\msjh.ttc"
+          python -m unittest scripts/test_generate_ocr_fixtures.py
           $englishFixture = Join-Path $fixtureDir "english.png"
           "CIVITAS_OCR_FIXTURE_EN=$englishFixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
