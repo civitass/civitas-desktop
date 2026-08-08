@@ -49,6 +49,11 @@ describe("Window lifecycle", function () {
     await showWindow({ Home: { page: "privacy" } });
     await browser.switchToWindow("home");
     await waitForWindowUrl("/settings", "privacy", t(12_000));
+    // The URL changes before the App Router finishes replacing the streamed
+    // settings skeleton. Wait for the hydrated surface so this assertion
+    // measures the completed route transition instead of a transient body.
+    const settingsPage = await $('[data-testid="settings-page"]');
+    await settingsPage.waitForExist({ timeout: t(30_000) });
     const settingsBody = (await browser.execute(
       () => document.body.innerText || "",
     )) as string;
