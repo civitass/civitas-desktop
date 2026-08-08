@@ -787,17 +787,14 @@ pub async fn spawn_civitas(
         } else {
             Some(store.recording.api_key.clone())
         };
-        let key =
-            civitas_engine::auth_key::resolve_api_auth_key(&data_dir, settings_key_opt.as_deref())
-                .await
-                .map_err(|error| {
-                    state.is_starting.store(false, Ordering::SeqCst);
-                    let message =
-                        format!("local API authentication could not start safely: {error}");
-                    crate::health::set_boot_error(&message);
-                    message
-                })?;
-        crate::store::seed_api_auth_key(key);
+        crate::store::resolve_and_seed_api_auth_key(&data_dir, settings_key_opt.as_deref())
+            .await
+            .map_err(|error| {
+                state.is_starting.store(false, Ordering::SeqCst);
+                let message = format!("local API authentication could not start safely: {error}");
+                crate::health::set_boot_error(&message);
+                message
+            })?;
     }
 
     notify_audio_engine_fallback(&store);

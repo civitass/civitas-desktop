@@ -919,13 +919,12 @@ async fn main() {
                         None
                     };
                     if had_legacy_local_api_key {
-                        let key = civitas_engine::auth_key::resolve_api_auth_key(
+                        crate::store::resolve_and_seed_api_auth_key(
                             &credential_data_dir,
                             Some(&legacy_local_api_key),
                         )
                         .await
                         .map_err(|error| error.to_string())?;
-                        crate::store::seed_api_auth_key(key);
                         store.recording.api_key.clear();
                     }
                     Ok::<_, String>(provider_receipt)
@@ -1242,13 +1241,13 @@ async fn main() {
                                 } else {
                                     Some(store_clone.recording.api_key.clone())
                                 };
-                                match civitas_engine::auth_key::resolve_api_auth_key(
+                                match crate::store::resolve_and_seed_api_auth_key(
                                     &data_dir_clone,
                                     settings_key_opt.as_deref(),
                                 )
                                 .await
                                 {
-                                    Ok(key) => crate::store::seed_api_auth_key(key),
+                                    Ok(_) => {}
                                     Err(error) => {
                                         let message = format!(
                                             "local API authentication could not start safely: {error}"

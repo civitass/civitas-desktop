@@ -110,6 +110,21 @@ pub fn is_keychain_available() -> bool {
 /// The operating system remains in control of authentication and may show an
 /// access prompt for an existing item.
 pub fn get_key() -> KeyResult {
+    // Linux publication E2E runs without a desktop Secret Service session.
+    // Accept the harness key only when this crate was compiled with the
+    // explicit test feature; ordinary source and protected release builds do
+    // not contain this branch.
+    #[cfg(all(feature = "e2e", not(feature = "official-build")))]
+    if let Ok(encoded) = std::env::var("CIVITAS_E2E_STORE_KEY_B64") {
+        return match decode_e2e_key(&encoded) {
+            Some(key) => KeyResult::Found(key),
+            None => {
+                warn!("E2E credential-vault key is malformed; failing closed");
+                KeyResult::AccessDenied
+            }
+        };
+    }
+
     if let Some(cached) = get_cached_key() {
         debug!("keychain: cache hit");
         return KeyResult::Found(cached);
@@ -155,6 +170,11 @@ pub fn get_key() -> KeyResult {
             KeyResult::AccessDenied
         }
     }
+}
+
+#[cfg(all(feature = "e2e", not(feature = "official-build")))]
+fn decode_e2e_key(encoded: &str) -> Option<[u8; 32]> {
+    B64.decode(encoded.trim()).ok()?.try_into().ok()
 }
 
 /// Get the encryption key, creating and storing a new one if it doesn't exist.
@@ -269,5 +289,16 @@ mod tests {
         } else {
             assert_eq!(selected, "team.civitas.app.debug.compiled-profile-test");
         }
+    }
+
+    #[cfg(all(feature = "e2e", not(feature = "official-build")))]
+    #[test]
+    fn e2e_key_requires_valid_base64_with_exactly_32_bytes() {
+        use super::decode_e2e_key;
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        assert_eq!(decode_e2e_key(&B64.encode([0x43; 32])), Some([0x43; 32]));
+        assert_eq!(decode_e2e_key(&B64.encode([0x43; 31])), None);
+        assert_eq!(decode_e2e_key("not base64"), None);
     }
 }

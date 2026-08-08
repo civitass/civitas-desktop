@@ -672,13 +672,12 @@ mod tests {
     // populating `RecordingState.server`. The privacy panel's `loadLiveApiKey`
     // runs once on mount and latches, so the input stayed empty until the user
     // closed and reopened Settings. Fix: fall back to the process-global cache
-    // (`resolved_api_auth_key`) seeded at app start whenever apiAuth is on.
+    // (`resolve_and_seed_api_auth_key`) shared with server startup.
     //
     // The integration with `RecordingState` needs a tauri::AppHandle to
     // exercise end-to-end, so these tests cover the contract of the pure
-    // fallback shape — the part that actually broke. Seeding the static and
-    // reading it back is covered by store.rs tests / the manual repro:
-    // open Settings → Privacy with recording paused; key field must populate.
+    // fallback shape — the part that actually broke. The E2E cold-spawn test
+    // covers resolution and the server/webview race at the IPC boundary.
 
     #[test]
     fn fallback_emits_seeded_key_with_auth_enabled() {
@@ -689,11 +688,11 @@ mod tests {
     }
 
     #[test]
-    fn fallback_fails_closed_when_key_is_not_seeded_yet() {
+    fn fallback_never_claims_auth_is_enabled_without_a_key() {
         let v = fallback_local_api_config(None);
         assert!(v["key"].is_null());
         assert_eq!(v["port"], 3030);
-        assert_eq!(v["auth_enabled"], true);
+        assert_eq!(v["auth_enabled"], false);
     }
 
     #[test]
@@ -739,20 +738,49 @@ pub async fn get_local_api_config(app_handle: tauri::AppHandle) -> serde_json::V
         // opened WebSockets without an auth subprotocol → endless 403 / abnormal close (1006).
         let guard = state.server.lock().await;
         if let Some(ref core) = *guard {
+            let key = core.local_api_key.clone();
+            let auth_enabled = key.is_some();
             return serde_json::json!({
-                "key": core.local_api_key,
+                "key": key,
                 "port": core.port,
-                "auth_enabled": true,
+                "auth_enabled": auth_enabled,
             });
         }
     }
     // *guard is None — server hasn't been constructed yet (early-mount race
-    // against spawn_civitas, or pause window). The webview's
-    // `loadLiveApiKey` runs once on mount and latches; without this fallback
-    // the privacy panel's API-key input stays empty until the user closes
-    // and reopens Settings, even though the resolver already minted a key
-    // that the spawning server will adopt verbatim.
-    fallback_local_api_config(crate::store::resolved_api_auth_key())
+    // against spawn_civitas, or pause window). Resolve through the same
+    // serialized boundary used by server startup. This prevents two callers
+    // from minting different first-run keys and guarantees the webview never
+    // receives an auth-required response without the matching token.
+    let cached_key = if let Some(key) = crate::store::resolved_api_auth_key() {
+        Some(key)
+    } else {
+        let store = match load_settings_or_default(&app_handle) {
+            Ok(store) => Some(store),
+            Err(error) => {
+                tracing::error!("local API settings are unavailable during startup: {error}");
+                None
+            }
+        };
+        if let Some(store) = store.filter(|settings| settings.recording.api_auth) {
+            let (data_dir, _) = crate::config::resolve_data_dir(&store.data_dir);
+            let settings_key = (!store.recording.api_key.trim().is_empty())
+                .then_some(store.recording.api_key.as_str());
+            match crate::store::resolve_and_seed_api_auth_key(&data_dir, settings_key).await {
+                Ok(key) => Some(key),
+                Err(error) => {
+                    tracing::error!(
+                        "local API authentication is unavailable during startup: {}",
+                        error
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+    fallback_local_api_config(cached_key)
 }
 
 /// Get the app-local focus/notification server port.
@@ -770,10 +798,11 @@ pub fn get_app_server_config() -> serde_json::Value {
 /// well-known default because the server hasn't bound yet — the UI will refresh
 /// once the server registers itself in `RecordingState`.
 fn fallback_local_api_config(cached_key: Option<String>) -> serde_json::Value {
+    let auth_enabled = cached_key.is_some();
     serde_json::json!({
         "key": cached_key,
         "port": 3030,
-        "auth_enabled": true,
+        "auth_enabled": auth_enabled,
     })
 }
 
@@ -786,10 +815,9 @@ pub async fn regenerate_api_auth_key(app_handle: tauri::AppHandle) -> Result<Str
     let store = load_settings_or_default(&app_handle)
         .map_err(|error| format!("cannot regenerate the API key: {error}"))?;
     let (data_dir, _) = crate::config::resolve_data_dir(&store.data_dir);
-    let key = civitas_engine::auth_key::regenerate_api_auth_key(&data_dir)
+    let key = crate::store::regenerate_and_seed_api_auth_key(&data_dir)
         .await
         .map_err(|e| e.to_string())?;
-    cache_resolved_api_auth_key(&key);
     Ok(key)
 }
 
@@ -801,15 +829,10 @@ pub async fn set_api_auth_key(app_handle: tauri::AppHandle, key: String) -> Resu
     let store = load_settings_or_default(&app_handle)
         .map_err(|error| format!("cannot change the API key: {error}"))?;
     let (data_dir, _) = crate::config::resolve_data_dir(&store.data_dir);
-    civitas_engine::auth_key::set_api_auth_key(&data_dir, &key)
+    crate::store::set_and_seed_api_auth_key(&data_dir, &key)
         .await
         .map_err(|e| e.to_string())?;
-    cache_resolved_api_auth_key(&key);
     Ok(())
-}
-
-fn cache_resolved_api_auth_key(key: &str) {
-    crate::store::seed_api_auth_key(key.to_string());
 }
 
 const MAX_BROWSER_LOG_ENTRIES: usize = 64;

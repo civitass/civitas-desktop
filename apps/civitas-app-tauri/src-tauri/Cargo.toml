@@ -208,7 +208,7 @@ pulseaudio = ["civitas-audio/pulseaudio"]
 directml = ["civitas-engine/directml"]
 vulkan = ["civitas-audio/vulkan"]
 cargo-clippy = []
-e2e = ["tauri-plugin-webdriver"]
+e2e = ["tauri-plugin-webdriver", "civitas-secrets/e2e"]
 
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

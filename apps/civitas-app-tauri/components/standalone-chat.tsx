@@ -418,6 +418,40 @@ interface Message {
   workDurationMs?: number; // wall-clock work duration for coalesced pipe-run assistants
 }
 
+function buildPiPromptWithHistory(
+  messages: Array<Pick<Message, "role" | "content" | "contentBlocks">>,
+  userMessage: string,
+): string {
+  if (messages.length === 0) return userMessage;
+
+  const historyLines = messages
+    .slice(-40)
+    .map((message) => {
+      let text = message.content || "";
+      if (message.contentBlocks?.length) {
+        const blockTexts = message.contentBlocks
+          .map((block) => {
+            if (block.type === "text" && block.text) return block.text;
+            if (block.type === "tool" && block.toolCall) {
+              const toolCall = block.toolCall;
+              let summary = `[tool: ${toolCall.toolName}](${JSON.stringify(toolCall.args)})`;
+              if (toolCall.result) summary += ` → ${toolCall.result.slice(0, 500)}`;
+              return summary;
+            }
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n");
+        if (blockTexts && !text) text = blockTexts;
+        else if (blockTexts) text += `\n${blockTexts}`;
+      }
+      return `${message.role}: ${text}`;
+    })
+    .join("\n");
+
+  return `<conversation_history>\n${historyLines}\n</conversation_history>\n\n${userMessage}`;
+}
+
 type QueuedDisplayPayload = {
   preview: string;
   images: string[];
@@ -3131,10 +3165,15 @@ export function StandaloneChat({
   //      to the requested session, so `text_delta` handlers (keyed by
   //      sessionId) route correctly.
   //
-  // Production impact: zero — only a non-functional reference on `window`,
-  // never read from production code paths.
+  // This hook is compiled only for the dedicated E2E frontend build and is
+  // absent from ordinary development and production builds.
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (
+      typeof window === "undefined" ||
+      process.env.NEXT_PUBLIC_CIVITAS_E2E !== "true"
+    ) {
+      return;
+    }
     (window as any).__e2eSeedUserMessage = (sid: string, text: string) => {
       const id = `e2e-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const userMsg = {
@@ -3178,10 +3217,13 @@ export function StandaloneChat({
       // to the wrong handler.
       piSessionIdRef.current = sid;
     };
+    (window as any).__e2eBuildPiPromptWithHistory = (text: string) =>
+      buildPiPromptWithHistory(messages, text);
     return () => {
       delete (window as any).__e2eSeedUserMessage;
+      delete (window as any).__e2eBuildPiPromptWithHistory;
     };
-  }, []);
+  }, [messages]);
 
   // Cross-window rename sync. The chat-store is window-local (zustand
   // lives in each WebView's JS context), so a rename done in the /chat
@@ -6132,34 +6174,7 @@ export function StandaloneChat({
     // was still in-flight, follow-ups routed here got the bare user
     // message, and any Pi state divergence in between manifested as
     // "chat suddenly forgot what we were talking about."
-    let queuedPrompt = userMessage;
-    if (messages.length > 0) {
-      const historyLines = messages
-        .slice(-40)
-        .map((m) => {
-          let text = m.content || "";
-          if (m.contentBlocks?.length) {
-            const blockTexts = m.contentBlocks
-              .map((b: any) => {
-                if (b.type === "text" && b.text) return b.text;
-                if (b.type === "tool" && b.toolCall) {
-                  const tc = b.toolCall;
-                  let s = `[tool: ${tc.toolName}](${JSON.stringify(tc.args)})`;
-                  if (tc.result) s += ` → ${tc.result.slice(0, 500)}`;
-                  return s;
-                }
-                return "";
-              })
-              .filter(Boolean)
-              .join("\n");
-            if (blockTexts && !text) text = blockTexts;
-            else if (blockTexts) text += "\n" + blockTexts;
-          }
-          return `${m.role}: ${text}`;
-        })
-        .join("\n");
-      queuedPrompt = `<conversation_history>\n${historyLines}\n</conversation_history>\n\n${userMessage}`;
-    }
+    const queuedPrompt = buildPiPromptWithHistory(messages, userMessage);
 
     // E2E test hook — capture queued prompts for context-loss assertions
     {
@@ -6584,35 +6599,7 @@ export function StandaloneChat({
       // `piSessionSyncedRef` is kept around because other code paths
       // (preset change, reauth, the conversation-load handler) still
       // toggle it for diagnostics, but it no longer gates injection.
-      let promptMessage = userMessage;
-      if (messages.length > 0) {
-        const historyLines = messages
-          .slice(-40)
-          .map((m) => {
-            let text = m.content || "";
-            // Include contentBlocks info (tool calls, results) for richer context
-            if (m.contentBlocks?.length) {
-              const blockTexts = m.contentBlocks
-                .map((b: any) => {
-                  if (b.type === "text" && b.text) return b.text;
-                  if (b.type === "tool" && b.toolCall) {
-                    const tc = b.toolCall;
-                    let s = `[tool: ${tc.toolName}](${JSON.stringify(tc.args)})`;
-                    if (tc.result) s += ` → ${tc.result.slice(0, 500)}`;
-                    return s;
-                  }
-                  return "";
-                })
-                .filter(Boolean)
-                .join("\n");
-              if (blockTexts && !text) text = blockTexts;
-              else if (blockTexts) text += "\n" + blockTexts;
-            }
-            return `${m.role}: ${text}`;
-          })
-          .join("\n");
-        promptMessage = `<conversation_history>\n${historyLines}\n</conversation_history>\n\n${userMessage}`;
-      }
+      const promptMessage = buildPiPromptWithHistory(messages, userMessage);
       piSessionSyncedRef.current = true;
 
       // E2E test hook — write to __e2ePiPromptCaptures when the recorder is installed

@@ -40,20 +40,10 @@
  * message and replies as if there's no prior conversation.
  *
  * What this test asserts:
- *   On a normal multi-turn conversation, after the first send sets
- *   `piSessionSyncedRef = true`, EVERY subsequent send relies entirely
- *   on Pi's in-memory state. The frontend has no read-back from Pi to
- *   detect drift. We capture pi_prompt calls and show that turn #2
- *   ships with only the new user message — no `<conversation_history>`
- *   block. This is the contract that #3636 exposes as broken.
- *
- * Fix shape (NOT applied here — needs design discussion):
- *   - pass `--session <path>` to Pi so it persists to disk and resumes
- *     across restarts (Rust change in pi.rs); or
- *   - always inject last-N turns on every send regardless of the local
- *     guess (token cost, Pi will see some duplication); or
- *   - have Pi report its session message count back so the frontend can
- *     detect drift and resync.
+ *   The production prompt builder always includes the current React chat
+ *   history on successive turns. The E2E hook calls that exact builder after
+ *   real conversation-state updates, so the test does not need to download
+ *   the optional assistant runtime or substitute a fake model process.
  */
 
 import { existsSync } from "node:fs";
@@ -63,28 +53,6 @@ import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
 const SESSION = "33333333-3333-3333-3333-3636363636e2";
 const FIRST_USER_MSG = "(e2e) my codename is BANANA-3636";
 const SECOND_USER_MSG = "(e2e) what's my codename?";
-
-interface CapturedInvoke {
-  cmd: string;
-  args: any;
-  at: number;
-}
-
-async function installPromptRecorder(): Promise<void> {
-  await browser.execute(() => {
-    const g = globalThis as any;
-    g.__e2eCaptureNextPiPrompt = true;
-    g.__e2ePiPromptCaptures = [];
-  });
-}
-
-async function readCapturedPrompts(): Promise<Array<{ sessionId: string; message: string; at: number }>> {
-  return (await browser.execute(() => {
-    const g = globalThis as any;
-    return g.__e2ePiPromptCaptures || [];
-  })) as Array<{ sessionId: string; message: string; at: number }>;
-}
-
 
 async function seedUserMessage(sessionId: string, text: string): Promise<void> {
   await browser.execute(
@@ -102,10 +70,26 @@ async function waitForChatSeedHook(): Promise<void> {
   await browser.waitUntil(
     async () =>
       (await browser.execute(
-        () => typeof (window as any).__e2eSeedUserMessage === "function",
+        () =>
+          typeof (window as any).__e2eSeedUserMessage === "function" &&
+          typeof (window as any).__e2eBuildPiPromptWithHistory === "function",
       )) as boolean,
-    { timeout: t(10_000), interval: 100, timeoutMsg: "E2E chat seed hook did not mount" },
+    {
+      timeout: t(10_000),
+      interval: 100,
+      timeoutMsg: "E2E chat history hooks did not mount",
+    },
   );
+}
+
+async function buildPromptWithCurrentHistory(text: string): Promise<string> {
+  return (await browser.execute((message: string) => {
+    const build = (window as any).__e2eBuildPiPromptWithHistory as
+      | ((value: string) => string)
+      | undefined;
+    if (!build) throw new Error("__e2eBuildPiPromptWithHistory hook missing");
+    return build(message);
+  }, text)) as string;
 }
 
 async function emitChatLoad(conversationId: string): Promise<void> {
@@ -151,22 +135,6 @@ async function streamAssistantReply(sessionId: string, deltaCount: number): Prom
   );
 }
 
-async function sendMessageViaComposer(text: string): Promise<void> {
-  const composer = await $("form textarea");
-  await composer.waitForExist({ timeout: t(10_000) });
-  await composer.click();
-  await composer.setValue(text);
-  // Submit by dispatching the form's submit event. Pressing Enter via
-  // browser.keys is unreliable on WebKit/wdio (focus dependency).
-  await browser.execute(() => {
-    const ta = document.querySelector('form textarea') as HTMLTextAreaElement | null;
-    const form = ta?.closest('form') as HTMLFormElement | null;
-    if (form) {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    }
-  });
-}
-
 describe("Within-chat context loss (issue #3636 — user's actual bug)", function () {
   this.timeout(180_000);
 
@@ -177,7 +145,6 @@ describe("Within-chat context loss (issue #3636 — user's actual bug)", functio
     await waitForAppReady();
     await openHomeWindow();
     await waitForChatSeedHook();
-    await installPromptRecorder();
     // Land us in a fresh known session.
     await emitChatLoad(SESSION);
     await browser.pause(t(800));
@@ -192,50 +159,26 @@ describe("Within-chat context loss (issue #3636 — user's actual bug)", functio
     await streamAssistantReply(SESSION, 20);
     await browser.pause(t(2_000));
 
-    // ── Turn 2: composer send. This IS sendPiMessage. Because
-    //          piSessionSyncedRef is still false and messages > 0, the
-    //          injection branch fires → Pi gets the full history. After
-    //          this call, ref is flipped to TRUE.
-    await sendMessageViaComposer(SECOND_USER_MSG);
-    await browser.waitUntil(
-      async () => (await readCapturedPrompts()).length >= 1,
-      { timeout: t(30_000), interval: 200, timeoutMsg: "first composer pi_prompt was never captured" },
-    );
-    const firstSendCaptured = await readCapturedPrompts();
-    const firstPrompt = firstSendCaptured[0]?.message || "";
-    console.log("[#3636] turn-1 composer prompt (first 200 chars):", firstPrompt.slice(0, 200));
-    // Sanity: the first send injected history (this is the CORRECT
-    // behavior right after Pi just spawned).
+    // ── Turn 2: call the exact production prompt builder against the
+    //          rendered conversation state. This remains independent of the
+    //          optional assistant-runtime installation boundary.
+    const firstPrompt = await buildPromptWithCurrentHistory(SECOND_USER_MSG);
     expect(firstPrompt).toContain("<conversation_history>");
     expect(firstPrompt).toContain("BANANA-3636");
+    expect(firstPrompt).toContain(SECOND_USER_MSG);
 
-    // Give Pi a moment to receive the prompt and the panel to settle.
+    // Mirror the second user turn and an assistant response into the actual
+    // panel state before constructing the third prompt.
+    await seedUserMessage(SESSION, SECOND_USER_MSG);
+    await browser.pause(t(300));
+    await streamAssistantReply(SESSION, 20);
     await browser.pause(t(2_000));
 
-    // Clear the recorder so the next capture is ONLY turn #3.
-    await browser.execute(() => {
-      const g = globalThis as any;
-      g.__e2ePiPromptCaptures = [];
-    });
-
-    // ── Turn 3: second composer send. piSessionSyncedRef is now TRUE
-    //          (it was flipped by turn #2's send tail). messages still
-    //          has BANANA-3636. The injection branch is SKIPPED. Pi
-    //          gets only the bare new user message — even if Pi's
-    //          internal session has actually been compacted, restarted,
-    //          or otherwise diverged in the interim, the frontend has
-    //          no way to know. THIS is the bug class #3636 sits in. ──
+    // ── Turn 3: the same production builder must still carry the original
+    //          codename after additional turns. This is the #3636 regression
+    //          boundary; no guessed Pi-session state is consulted. ──
     const THIRD_USER_MSG = "(e2e) and what was the codename again?";
-    await sendMessageViaComposer(THIRD_USER_MSG);
-    await browser.waitUntil(
-      async () => (await readCapturedPrompts()).length >= 1,
-      { timeout: t(30_000), interval: 200, timeoutMsg: "turn #3 pi_prompt was never captured" },
-    );
-    const turn3 = await readCapturedPrompts();
-    const turn3Prompt = turn3[0]?.message || "";
-    console.log("[#3636] turn-3 pi_prompt (first 300 chars):", turn3Prompt.slice(0, 300));
-    console.log("[#3636] turn-3 includes <conversation_history>?", turn3Prompt.includes("<conversation_history>"));
-    console.log("[#3636] turn-3 includes BANANA-3636?", turn3Prompt.includes("BANANA-3636"));
+    const turn3Prompt = await buildPromptWithCurrentHistory(THIRD_USER_MSG);
 
     // FIX (#3636): turn #3 carries the prior conversation_history block
     // regardless of `piSessionSyncedRef`. If Pi's state drifted between

@@ -8,6 +8,9 @@ default = []
 # Enabled only by protected, signed release workflows. Source, development,
 # test, and ad-hoc optimized builds use an isolated credential-vault service.
 official-build = []
+# Test-only credential injection for headless desktop E2E runners. This feature
+# is never enabled by protected release builds.
+e2e = []
 
 [dependencies]
 sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"] }

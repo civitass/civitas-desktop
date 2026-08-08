@@ -433,6 +433,7 @@ fn scrub_recovery_artifacts(store_path: &Path, encryption_enabled: bool) -> Resu
 /// within the same process — OnceLock would silently ignore the second
 /// seed call and keep the original key forever.
 static RESOLVED_API_AUTH_KEY: RwLock<Option<String>> = RwLock::new(None);
+static API_AUTH_KEY_RESOLUTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Seed the resolved API auth key. Overwrites any previously seeded value
 /// so that "Apply & Restart" picks up the new key on the next server start.
@@ -445,6 +446,37 @@ pub fn seed_api_auth_key(key: String) {
 /// Read the resolved API auth key if it has been seeded.
 pub fn resolved_api_auth_key() -> Option<String> {
     RESOLVED_API_AUTH_KEY.read().ok()?.clone()
+}
+
+/// Resolve, persist, and publish the process-wide local API owner key through
+/// one serialized boundary. Without this lock, the startup server and an early
+/// webview query can both observe a missing secret, mint different keys, and
+/// leave the UI authenticating with a token the server never adopted.
+pub async fn resolve_and_seed_api_auth_key(
+    data_dir: &Path,
+    settings_key: Option<&str>,
+) -> anyhow::Result<String> {
+    let _resolution_guard = API_AUTH_KEY_RESOLUTION_LOCK.lock().await;
+    let key = civitas_engine::auth_key::resolve_api_auth_key(data_dir, settings_key).await?;
+    seed_api_auth_key(key.clone());
+    Ok(key)
+}
+
+/// Rotate the local API owner key under the same process-wide serialization
+/// boundary used during startup.
+pub async fn regenerate_and_seed_api_auth_key(data_dir: &Path) -> anyhow::Result<String> {
+    let _resolution_guard = API_AUTH_KEY_RESOLUTION_LOCK.lock().await;
+    let key = civitas_engine::auth_key::regenerate_api_auth_key(data_dir).await?;
+    seed_api_auth_key(key.clone());
+    Ok(key)
+}
+
+/// Replace the local API owner key without racing a concurrent startup read.
+pub async fn set_and_seed_api_auth_key(data_dir: &Path, key: &str) -> anyhow::Result<()> {
+    let _resolution_guard = API_AUTH_KEY_RESOLUTION_LOCK.lock().await;
+    civitas_engine::auth_key::set_api_auth_key(data_dir, key).await?;
+    seed_api_auth_key(key.to_string());
+    Ok(())
 }
 
 /// Magic header for encrypted store.bin files.
@@ -587,23 +619,6 @@ fn sync_encryption_flag(store_path: &Path, enabled: bool) -> Result<(), String> 
 }
 
 fn resolve_store_key(create_if_missing: bool) -> Result<StoreKey, String> {
-    // Headless Linux CI has no Secret Service session. E2E builds still need
-    // to exercise the encrypted settings path, so accept an explicit harness
-    // key only when the compile-time E2E feature is present. Official and
-    // ordinary source builds do not compile this branch.
-    #[cfg(feature = "e2e")]
-    if let Ok(encoded) = std::env::var("CIVITAS_E2E_STORE_KEY_B64") {
-        use base64::{engine::general_purpose::STANDARD as B64, Engine};
-
-        let decoded = B64
-            .decode(encoded.trim())
-            .map_err(|_| "E2E settings key is not valid base64".to_string())?;
-        let key: [u8; 32] = decoded
-            .try_into()
-            .map_err(|_| "E2E settings key must decode to exactly 32 bytes".to_string())?;
-        return Ok(StoreKey(key));
-    }
-
     match keychain::get_key() {
         keychain::KeyResult::Found(key) => Ok(StoreKey(key)),
         keychain::KeyResult::AccessDenied => Err(
