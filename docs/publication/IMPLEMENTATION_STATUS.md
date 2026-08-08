@@ -58,7 +58,7 @@ The archives must never inherit the consumer repository’s public visibility.
 | Telemetry            | Optional web analytics default off; versioned consent migrates historic implicit opt-ins to off; SDK is not initialized before consent; no person profiles, autocapture, page views, performance, replay, surveys, feature flags, persistence, or remote dependency loading; final egress filtering is fail-closed and strips work content; native analytics and automatic crash upload paths are absent; crash records stay local | Telemetry consent tests and publication audit                                                  |
 | Tauri/webview        | Reduced window capabilities, separate onboarding/assistant capabilities, hardened CSP and loopback exposure, production-security validation                                                                                                                                                                         | Capability manifests and Tauri security audit                                                  |
 | Fixtures and media   | Removed tracked recordings, videos, model weights, named-person fixtures, obsolete screenshots, and LFS pointers; evaluation inputs must be generated synthetic data or an external, reviewed, licensed public corpus. Public-corpus audio and derived WAV files remain outside Git, and artifacts contain metrics only                                                               | Fixture contracts, licensed-corpus attribution, tracked-media and workflow-artifact audits      |
-| Release supply chain | Added a pinned license-safe macOS FFmpeg build and a Windows x86-64 NSIS lane; exact digest and byte verification for retained Bun, FFmpeg, OpenBLAS, ONNX Runtime, signing-tool, and test-driver downloads; fail-closed Developer ID/notarization and timestamped Authenticode requirements; isolated Windows install/uninstall verification; immutable commit pins for every third-party GitHub Action; explicit workflow permissions and non-persisted checkout credentials; protected draft-release gates; checksums, SBOM, and provenance attestations | Build helpers, release workflows, repository-wide workflow audit, `docs/RELEASE_VERIFICATION.md` |
+| Release supply chain | Added a pinned license-safe macOS FFmpeg build and a Windows x86-64 NSIS lane; exact digest and byte verification for retained Bun, FFmpeg, OpenBLAS, ONNX Runtime, signing-tool, and test-driver downloads; fail-closed Developer ID/notarization and timestamped Authenticode requirements; isolated Windows install/uninstall verification; immutable commit pins for every third-party GitHub Action; explicit workflow permissions and non-persisted checkout credentials; protected draft staging followed by automated publication only after all mechanical gates pass; checksums, SBOM, and provenance attestations | Build helpers, release workflows, repository-wide workflow audit, `docs/RELEASE_VERIFICATION.md` |
 | Public project files | Added license, provenance and third-party notices, privacy/security/support policies, code of conduct, contribution guide, structured privacy-safe issue forms and PR checklist, CODEOWNERS, Dependabot for Cargo/Bun/Actions, public-or-opted-in-private CodeQL scanning, and build/BYOK/privacy/network/model/threat documentation                                               | Root, `.github/`, and `docs/` publication set                                                   |
 | Design system        | Refined public-facing and high-frequency product surfaces to the original native Mac design language: restrained hierarchy, system typography, consistent native radii, pointer-down feedback, custom ease-out/ease-in-out timing, no blanket property transitions, and explicit reduced-motion/transparency/contrast behavior | `DESIGN.md`, design tokens, component tests, and recursive consumer design audit                |
 | Brand and README     | Added a restrained Apple-style README composition with the correct transparent monochrome circular Civitas mark, an optically centered serif/sans Civitas Desktop wordmark, direct macOS and Windows release paths, and reproducible real-app screenshots using an isolated privacy-safe native-app session; rejected small decorative text and generated interface mockups are absent | `README.md`, brand assets, publication-demo E2E journey, cutover privacy review                  |
@@ -152,11 +152,11 @@ history, signing, or two-person release gate.
 
 | Evidence                                      | Required result            | Candidate result                                                                                                                                                                                                                 |
 | --------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Publication boundary audit                    | Pass                       | **Pass (local candidate):** 1,778 candidate files checked                                                                                                                                                                        |
-| Consumer design audit                         | Pass                       | **Pass (local candidate):** 342 production UI files, including 11 strict and 2 supporting surfaces                                                                                                                               |
+| Publication boundary audit                    | Pass                       | **Pass (local candidate):** 1,775 candidate files checked                                                                                                                                                                        |
+| Consumer design audit                         | Pass                       | **Pass (local candidate):** 338 production UI files, including strict and supporting consumer surfaces                                                                                                                          |
 | JavaScript dependency advisory gate           | Zero blocking findings     | **Pass (prior exact audit; lockfiles unchanged):** all 4 tracked Bun lockfiles reproduced with exact Bun `1.3.10`; low-threshold audits returned zero vulnerabilities                                                            |
 | Rust dependency advisory/reachability gate    | Zero unreviewed findings   | **Pass (merged private `main`):** both Rust lockfiles passed exact `cargo-audit 0.22.2`; `serde_with` was patched to `3.21.0`; residual `rand` and `glib` alerts were dispositioned with feature/target evidence and explicit reopen conditions |
-| Frontend typecheck + full Vitest + Bun tests  | Pass                       | **Pass (local candidate):** TypeScript clean; 963 Vitest tests across 108 files and 171 Bun tests across 17 files passed under exact Bun `1.3.10`; optimized Next.js build generated 17 static pages                              |
+| Frontend typecheck + full Vitest + Bun tests  | Pass                       | **Pass (local candidate):** TypeScript clean; 964 Vitest tests across 108 files and 171 Bun tests across 17 files passed under exact Bun `1.3.10`; optimized Next.js build generated 17 static pages                              |
 | Rust format + locked workspace check/tests    | Pass                       | **Pass (local candidate):** format-clean; the complete locked root workspace and doc tests passed, including the 886/892 database suite (6 contract ignores), 324/324 workflow suite, 205/205 audio suite, and 3/3 redaction-worker integration suite |
 | Tauri locked check + bindings/security audit  | Pass                       | **Pass (local candidate):** normal and E2E app graphs compiled; generated TypeScript bindings exactly match the Rust command registry; 18-file production-security audit passed                                                   |
 | MCP build/tests and package boundary          | Pass                       | **Pass (local worktree):** 51 tests and TypeScript build passed; npm allowlist produced 15 files / 47,496 bytes and the production-only MCPB produced 2,143 files / 3,178,564 bytes with a verified checksum                         |
@@ -166,7 +166,7 @@ history, signing, or two-person release gate.
 | Live Amazon Bedrock diagnostic                | Pass                       | **Pass (local candidate):** the authenticated Civitas loopback gateway invoked configured inference profile `us.anthropic.claude-sonnet-4-6` with the fixed non-sensitive diagnostic and returned `OK`; no credential or prompt body was persisted in audit metadata |
 | Public documentation and generated API        | Pass                       | **Pass (local candidate):** 22-document local-link validation passed; generated bindings and the committed 155-path OpenAPI surface are current                                                                                   |
 | Tip-of-tree secret scan                       | Zero findings              | **Pass (local candidate):** digest-pinned TruffleHog `3.96.0` scanned the exact `origin/main..47a3247` Git range offline with zero verified or unverified findings. The amended publication commit is rescanned before push and must run again in CI                                                |
-| Exact-candidate GitHub Actions                 | All required jobs pass     | **In progress:** private-repository runs were rejected before step one by the Actions budget; public-source cutover removes the private-minute constraint, and every required workflow is being rerun on the public clean history       |
+| Exact-candidate GitHub Actions                 | All required jobs pass     | **Release invariant:** the immutable release commit must have successful CI, style, frontend, secret-scan, docs, and three-platform E2E runs. Ordinary pushes skip the costly desktop E2E matrix; a final commit containing `[run-e2e]` launches it on hosted Linux, macOS, and Windows runners. |
 | Full retained-history secret review           | Zero findings              | **Pass:** checksum-verified Gitleaks `8.30.1` scanned all 17 retained commits with zero findings; GitHub exposes only the allowlisted clean root and `main`; unsafe historic objects remain in private archived repositories only          |
 | Signed/notarized dual-architecture DMGs       | Pass                       | **Blocked: B5:** the installed matching Developer ID identity passed a disposable hardened-runtime/timestamp signing probe, but Apple reports an outstanding developer agreement; updater/notarization repository secrets and the dual-architecture workflow remain unverified |
 | Clean-machine install/upgrade/rollback matrix | Pass                       | **Blocked: release artifacts and independent devices required**                                                                                                                                                                  |
@@ -249,13 +249,15 @@ strong zero-egress claim.
 
 ### B5 — official desktop artifacts
 
-The matching Developer ID certificate is currently valid and its private key
-passed a disposable hardened-runtime/timestamp signing probe. Apple nevertheless
-blocks notarization until an outstanding developer agreement is accepted. The
-release workflow still needs a successful credential preflight, verification of
-the repository-held updater signing key, two architecture builds, clean-machine
-Gatekeeper/signature/notarization checks, upgrade/migration/rollback tests, and
-a second maintainer’s approval. Source builds are not substitutes for official
+The matching Developer ID certificate was valid when last probed and its private
+key passed a disposable hardened-runtime/timestamp signing probe. Apple
+nevertheless reported an outstanding developer agreement during that probe.
+The release workflow requires a successful live credential preflight,
+verification of the repository-held updater signing key, two architecture
+builds, Gatekeeper/signature/notarization checks, and installation evidence.
+After both platform lanes and the final checksum, updater, SBOM, and provenance
+gate pass, automation publishes the staged draft; a failed or missing gate
+leaves no advertised release. Source builds are not substitutes for official
 DMGs.
 
 The protected Windows job now builds an x86-64 NSIS installer, requires the
@@ -293,21 +295,23 @@ pinning. The committed workflows have zero uncovered or unpinned remote
 actions.
 
 The `consumer-release` environment exists without reviewer protection because
-the owner supplied no independent reviewer. The `civitas-mcp` npm name is not
-yet registered, `keys.md` contains
-no npm credential, the local npm CLI is unauthenticated, and the repository
-has no `NPM_TOKEN` secret. Its one-time, 2FA-backed bootstrap and subsequent
-migration to workflow-bound, stage-only trusted publishing remain
-owner-controlled release gates. The protected workflow leaves both the staged
-npm package and GitHub Release draft awaiting separate human approvals. There
+the owner supplied no independent reviewer. The desktop workflow therefore
+uses reproducible mechanical gates and publishes only after all of them pass;
+no independent review is implied. The `civitas-mcp` npm name is not yet
+registered, `keys.md` contains no npm credential, the local npm CLI is
+unauthenticated, and the repository has no `NPM_TOKEN` secret. Its one-time,
+2FA-backed bootstrap and subsequent migration to workflow-bound, stage-only
+trusted publishing remain owner-controlled release gates. There
 are 232 historical Actions artifacts (207 active, approximately 6.59 GiB) that
 remain confined to the archived private legacy repository and were not copied
 into the public clean root.
 
-The earlier Actions-budget rejection was historical and recent hosted jobs now
-start normally. Every required workflow must still rerun successfully against
-the final clean-root commit; success on an earlier private-history object does
-not transfer to the rewritten object ID.
+The earlier Actions-budget rejection was specific to private hosted-runner
+minutes. The sanitized repository is public and recent hosted jobs start
+normally. To control cost, ordinary pushes create no desktop E2E jobs; an exact
+main commit marked `[run-e2e]` starts the complete hosted matrix. Obsolete runs
+are canceled after a superseding failure or candidate, and release validation
+still requires a successful E2E run for the exact immutable release commit.
 
 ### B7 — browser-extension store review
 

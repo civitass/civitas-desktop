@@ -15,9 +15,11 @@ update path without depending on the retired Civitas control plane.
   `civitass/civitas-desktop` GitHub Releases page.
 - The production app accepts only manifests signed by the public Tauri updater
   key embedded in `tauri.prod.conf.json`.
-- Release automation produces a draft release only. A maintainer must review
-  tests, notarization, signatures, checksums, SBOM, provenance, and release
-  notes before publishing.
+- Release automation uses a draft as a private staging boundary while artifacts
+  are assembled. It publishes only after exact-commit tests, notarization,
+  platform signatures, checksums, SBOM, provenance, updater verification, and
+  isolated installation checks pass; any missing evidence leaves the draft
+  unpublished.
 - macOS artifacts use Developer ID signing, hardened runtime, notarization, and
   stapling. Release jobs fail if `codesign`, `spctl`, or `stapler` validation
   fails.

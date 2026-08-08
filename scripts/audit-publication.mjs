@@ -1200,7 +1200,7 @@ function auditReleaseWorkflow(files) {
     addFinding(
       "missing_release_workflow",
       workflow,
-      "The signed macOS draft-release workflow is missing.",
+      "The signed desktop release workflow is missing.",
     );
     return;
   }
@@ -1243,6 +1243,7 @@ function auditReleaseWorkflow(files) {
     "audit-publication.mjs",
     "audit-js-security.mjs",
     "audit-rust-security.mjs",
+    "bun run test",
     "cargo install cargo-audit --version 0.22.2 --locked",
     "ghcr.io/trufflesecurity/trufflehog@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577",
     "--network none",
@@ -1258,6 +1259,9 @@ function auditReleaseWorkflow(files) {
     '.platforms["windows-x86_64"]',
     "release-assets/*.nsis.zip",
     "release-assets/*.exe",
+    "Publish the fully verified release",
+    'gh release edit "$RELEASE_TAG"',
+    "--draft=false",
   ]) {
     if (!content.includes(required)) {
       addFinding(
@@ -1297,7 +1301,7 @@ function auditReleaseWorkflow(files) {
     }
   }
   const buildMacStart = content.indexOf("\n  build-macos:");
-  const buildMacEnd = content.indexOf("\n  finalize-draft:", buildMacStart);
+  const buildMacEnd = content.indexOf("\n  finalize-release:", buildMacStart);
   const buildMacContent =
     buildMacStart >= 0 && buildMacEnd > buildMacStart
       ? content.slice(buildMacStart, buildMacEnd)

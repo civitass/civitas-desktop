@@ -300,8 +300,9 @@ stored through the OS credential vault.
 
 Official release signing, notarization, and updater secrets are held in GitHub
 Actions secrets. The release workflow fails closed when a required credential
-is missing and creates a draft release only. A maintainer must independently
-inspect and publish that draft.
+is missing. It publishes the protected draft only after exact-commit CI,
+platform signatures, notarization, updater signatures, checksums, SBOM,
+provenance, and isolated installation verification all pass.
 
 ## Troubleshooting
 

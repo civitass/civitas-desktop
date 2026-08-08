@@ -227,9 +227,11 @@ managed packages without deleting work data, provider profiles, or credentials.
 5. Grant only the capture permissions you intend to use.
 6. Start with Local only, or add a provider in **Settings → AI**.
 
-Official automation builds, signs, notarizes, staples, and attaches artifacts
-to a draft release. A maintainer must verify and publish the draft; automation
-cannot silently publish it.
+Official automation builds, signs, notarizes, staples, installs, verifies, and
+attaches every artifact to a protected draft. It publishes that draft only
+after the exact-commit CI, macOS and Windows signatures, notarization, updater
+signatures, checksums, SBOM, provenance, and isolated installation gates all
+pass. A missing credential or failed gate leaves no advertised release.
 
 ## Install on Windows
 

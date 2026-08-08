@@ -161,7 +161,7 @@ jobs:
         run: |
           bun run typecheck
           bun run skills:check
-          bun test
+          bun run test
 
       - name: Validate production capabilities and publication boundary
         run: |
@@ -865,8 +865,8 @@ jobs:
           & .github/scripts/windows/verify-desktop-release.ps1 `
             -BundleDirectory "$env:CARGO_TARGET_DIR\x86_64-pc-windows-msvc\release\bundle"
 
-  finalize-draft:
-    name: Finalize checksums, provenance, and updater manifest
+  finalize-release:
+    name: Finalize and publish verified release
     needs:
       - validate
       - supply-chain
@@ -1045,12 +1045,19 @@ jobs:
             release-assets/SHA256SUMS
             release-assets/*.spdx.json
 
-      - name: Keep release protected as a draft
+      - name: Publish the fully verified release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
         run: |
+          set -euo pipefail
           draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
           test "$draft" = "true"
-          echo "Draft ${RELEASE_TAG} is complete. Publish it only after clean-machine install, update, privacy, legal, and two-person review gates pass." >> "$GITHUB_STEP_SUMMARY"
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+          published_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          test "$published_draft" = "false"
+          echo "Published ${RELEASE_TAG} after all exact-commit, signing, notarization, installation, updater-signature, checksum, SBOM, and provenance gates passed." >> "$GITHUB_STEP_SUMMARY"

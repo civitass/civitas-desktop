@@ -20,9 +20,9 @@
 // members of the explicitly permissioned viewer pool. Without dedup, every
 // chat link click would spawn a new floating window.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
+import { E2E_DATA_DIR } from "../helpers/app-launcher.js";
 import { openHomeWindow, t, waitForAppReady } from "../helpers/test-utils.js";
 import { invoke } from "../helpers/tauri.js";
 
@@ -61,15 +61,16 @@ async function waitForViewerCount(
 describe("Viewer deeplink: openCivitasViewerLink → open_viewer_window", function () {
   this.timeout(180_000);
 
-  // A real on-disk file so the viewer's `read_viewer_file` call doesn't
-  // error out — the window opens either way, but a real file avoids
-  // spurious "couldn't open file" toasts that future logging changes might
-  // accidentally upgrade to test-failing errors.
+  // A real file inside the isolated profile's reviewed export boundary. The
+  // viewer intentionally rejects arbitrary temp files, so keeping this fixture
+  // under CIVITAS_DATA_DIR both exercises the production allowlist and avoids
+  // spurious "couldn't open file" toasts.
   let tmpDir = "";
   const files: string[] = [];
 
   before(async () => {
-    tmpDir = mkdtempSync(resolvePath(tmpdir(), "civitas-e2e-viewer-"));
+    tmpDir = resolvePath(E2E_DATA_DIR, "exports", "viewer-deeplink");
+    mkdirSync(tmpDir, { recursive: true });
     files.push(resolvePath(tmpDir, "alpha.md"));
     files.push(resolvePath(tmpDir, "beta.md"));
     for (const f of files) {
