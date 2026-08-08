@@ -616,8 +616,9 @@ jobs:
           path: |
             apps/civitas-app-tauri/src-tauri/ffmpeg
             apps/civitas-app-tauri/src-tauri/tesseract
+            apps/civitas-app-tauri/src-tauri/tessdata
             apps/civitas-app-tauri/src-tauri/bun-x86_64-unknown-linux-gnu
-          key: Linux-e2e-artifacts-v2-${{ hashFiles('apps/civitas-app-tauri/scripts/pre_build.js') }}
+          key: Linux-e2e-artifacts-v2-${{ hashFiles('apps/civitas-app-tauri/scripts/pre_build.js', 'apps/civitas-app-tauri/scripts/fetch_tessdata.js') }}
           restore-keys: |
             Linux-e2e-artifacts-v2-
 
@@ -633,6 +634,10 @@ jobs:
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
           OPENBLAS_PATH: ${{ env.OPENBLAS_PATH }}
+          # tauri.linux.conf.json requires the pinned multilingual OCR baseline.
+          # Prepare it even for --no-bundle so resource validation matches an
+          # official Linux build instead of depending on stale runner state.
+          CIVITAS_BUNDLE_TESSDATA: "1"
           # Enable deterministic local test controls in this account-free build.
           NEXT_PUBLIC_CIVITAS_E2E: "true"
           # Next.js fires a detached telemetry process at the end of the build; on

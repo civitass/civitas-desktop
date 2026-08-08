@@ -20,7 +20,7 @@
  *      B. saveConversation then writes A's messages under chat B's id —
  *      corrupting B's file on disk.
  *   3. After the dust settles, read both chat files from
- *      `~/.civitas/chats/` and assert:
+ *      the isolated E2E data directory and assert:
  *         - chat A's file contains A's messages
  *         - chat B's file contains B's messages (NOT A's)
  *
@@ -36,14 +36,14 @@
  */
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { E2E_DATA_DIR } from "../helpers/app-launcher.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 
 const CHAT_A = "11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const CHAT_B = "22222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-const CHATS_DIR = join(homedir(), ".civitas", "chats");
+const CHATS_DIR = join(E2E_DATA_DIR, "chats");
 
 const A_USER_MARKER = "(e2e-A) BANANA-CONTEXT-LOSS-A-SIDE";
 const B_USER_MARKER = "(e2e-B) PINEAPPLE-B-SIDE-UNIQUE";

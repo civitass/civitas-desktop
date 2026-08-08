@@ -19,11 +19,11 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { E2E_DATA_DIR } from "../helpers/app-launcher.js";
 import { openHomeWindow, t, waitForAppReady } from "../helpers/test-utils.js";
 
-const CHATS_DIR = join(homedir(), ".civitas", "chats");
+const CHATS_DIR = join(E2E_DATA_DIR, "chats");
 const MARKER = "E2E-SIDEBAR-STUB-DEDUP-MARKER-8M2QK7";
 const CHAT_X = "66666666-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const CHAT_Y = "77777777-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

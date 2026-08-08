@@ -34,13 +34,13 @@
  */
 
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { E2E_DATA_DIR } from "../helpers/app-launcher.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
 import { showWindow, waitForWindowHandle } from "../helpers/tauri.js";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 
-const CHATS_DIR = join(homedir(), ".civitas", "chats");
+const CHATS_DIR = join(E2E_DATA_DIR, "chats");
 // Unique, unlikely to collide with any real or seeded conversation content.
 const MARKER = "E2E-PREFILL-DUP-MARKER-7Q4X9Z";
 
