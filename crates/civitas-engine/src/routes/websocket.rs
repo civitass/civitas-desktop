@@ -32,6 +32,17 @@ use crate::server::AppState;
 use super::health::health_check;
 use super::meetings::{resolve_meeting_status_from, MeetingStatusResponse};
 
+/// Stable application protocol selected for authenticated local WebSockets.
+///
+/// Browser clients require the server to select one of the protocols they
+/// offer. The credential remains in a separate `civitas-auth.*` offer that the
+/// authentication middleware validates but the server never echoes.
+pub(crate) const CIVITAS_WEBSOCKET_PROTOCOL: &str = "civitas-v1";
+
+pub(crate) fn negotiate_civitas_protocol(ws: WebSocketUpgrade) -> WebSocketUpgrade {
+    ws.protocols([CIVITAS_WEBSOCKET_PROTOCOL])
+}
+
 /// Maximum number of concurrent WebSocket connections allowed.
 /// This prevents file descriptor exhaustion from too many open connections.
 pub(crate) const MAX_WEBSOCKET_CONNECTIONS: usize = 100;
@@ -99,7 +110,9 @@ pub(crate) async fn ws_events_handler(
 ) -> Response {
     // Check connection limit before upgrading
     match try_acquire_ws_connection(&state.ws_connection_count) {
-        Some(guard) => ws.on_upgrade(|socket| handle_socket(socket, query, guard)),
+        Some(guard) => {
+            negotiate_civitas_protocol(ws).on_upgrade(|socket| handle_socket(socket, query, guard))
+        }
         None => Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(Body::from("Too many WebSocket connections"))
@@ -188,7 +201,8 @@ pub(crate) async fn ws_health_handler(
 ) -> Response {
     // Check connection limit before upgrading
     match try_acquire_ws_connection(&state.ws_connection_count) {
-        Some(guard) => ws.on_upgrade(move |socket| handle_health_socket(socket, state, guard)),
+        Some(guard) => negotiate_civitas_protocol(ws)
+            .on_upgrade(move |socket| handle_health_socket(socket, state, guard)),
         None => Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(Body::from("Too many WebSocket connections"))
@@ -233,7 +247,8 @@ pub(crate) async fn ws_metrics_handler(
     State(state): State<Arc<AppState>>,
 ) -> Response {
     match try_acquire_ws_connection(&state.ws_connection_count) {
-        Some(guard) => ws.on_upgrade(move |socket| handle_metrics_socket(socket, state, guard)),
+        Some(guard) => negotiate_civitas_protocol(ws)
+            .on_upgrade(move |socket| handle_metrics_socket(socket, state, guard)),
         None => Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(Body::from("Too many WebSocket connections"))
@@ -246,9 +261,8 @@ pub(crate) async fn ws_meeting_status_handler(
     State(state): State<Arc<AppState>>,
 ) -> Response {
     match try_acquire_ws_connection(&state.ws_connection_count) {
-        Some(guard) => {
-            ws.on_upgrade(move |socket| handle_meeting_status_socket(socket, state, guard))
-        }
+        Some(guard) => negotiate_civitas_protocol(ws)
+            .on_upgrade(move |socket| handle_meeting_status_socket(socket, state, guard)),
         None => Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(Body::from("Too many WebSocket connections"))
@@ -346,9 +360,18 @@ async fn handle_metrics_socket(
 
 #[cfg(test)]
 mod tests {
-    use super::run_until_either_completes;
+    use super::{negotiate_civitas_protocol, run_until_either_completes};
+    use axum::{
+        extract::ws::WebSocketUpgrade,
+        http::{header, HeaderValue},
+        response::Response,
+        routing::get,
+        Router,
+    };
     use std::future;
+    use tokio::net::TcpListener;
     use tokio::sync::oneshot;
+    use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
     struct DropSignal(Option<oneshot::Sender<()>>);
 
@@ -374,5 +397,34 @@ mod tests {
         dropped_rx
             .await
             .expect("the unfinished WebSocket half must be dropped, not detached");
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_selects_stable_protocol_without_echoing_credential() {
+        async fn handler(ws: WebSocketUpgrade) -> Response {
+            negotiate_civitas_protocol(ws).on_upgrade(|_| async {})
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/ws", get(handler)))
+                .await
+                .unwrap();
+        });
+
+        let mut request = format!("ws://{address}/ws").into_client_request().unwrap();
+        request.headers_mut().insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("civitas-v1, civitas-auth.c2VjcmV0"),
+        );
+        let (mut socket, response) = connect_async(request).await.unwrap();
+
+        assert_eq!(
+            response.headers().get(header::SEC_WEBSOCKET_PROTOCOL),
+            Some(&HeaderValue::from_static("civitas-v1"))
+        );
+        socket.close(None).await.unwrap();
+        server.abort();
     }
 }

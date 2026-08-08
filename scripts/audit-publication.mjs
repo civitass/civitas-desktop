@@ -1021,6 +1021,39 @@ function auditReleaseWorkflow(files) {
       }
     }
 
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!/uses:\s+actions\/upload-artifact@[0-9a-f]{40}/.test(lines[index])) {
+        continue;
+      }
+      const usesIndent = lines[index].length - lines[index].trimStart().length;
+      const stepIndent = /^\s*-\s+uses:/.test(lines[index])
+        ? usesIndent
+        : usesIndent - 2;
+      let end = index + 1;
+      while (end < lines.length) {
+        const rowIndent = lines[end].length - lines[end].trimStart().length;
+        if (
+          lines[end].trim() &&
+          rowIndent === stepIndent &&
+          /^\s*-\s+/.test(lines[end])
+        ) {
+          break;
+        }
+        end += 1;
+      }
+      const retention = lines
+        .slice(index + 1, end)
+        .map((line) => line.match(/^\s*retention-days:\s*(\d+)\s*$/)?.[1])
+        .find(Boolean);
+      if (!retention || Number(retention) > 30) {
+        addFinding(
+          "unbounded_workflow_artifact_retention",
+          workflowFile,
+          `Artifact upload at line ${index + 1} must set retention-days to 30 or fewer.`,
+        );
+      }
+    }
+
     for (const match of workflowContent.matchAll(
       /^\s*-\s+uses:\s+([^\s#]+)\s*$/gm,
     )) {

@@ -297,6 +297,7 @@ jobs:
       if: always()
       with:
         name: civitas-logs
+        retention-days: 7
         include-hidden-files: true
         path: |
           civitas_output.log
@@ -307,6 +308,7 @@ jobs:
       if: always()
       with:
         name: civitas-data
+        retention-days: 7
         include-hidden-files: true
         path: |
           ${{ runner.temp }}/civitas-ci-${{ github.run_id }}-${{ github.run_attempt }}/*

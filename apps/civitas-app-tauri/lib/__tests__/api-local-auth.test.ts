@@ -71,7 +71,7 @@ describe("local API auth origin matching", () => {
     expect(WebSocketMock).toHaveBeenNthCalledWith(
       1,
       "ws://localhost:3030/ws/health",
-      ["civitas-auth.bG9jYWwtc2VjcmV0"],
+      ["civitas-v1", "civitas-auth.bG9jYWwtc2VjcmV0"],
     );
 
     api.createAuthenticatedWebSocket("ws://evil-localhost:3030/ws/health");

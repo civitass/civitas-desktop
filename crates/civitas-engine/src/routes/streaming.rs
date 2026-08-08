@@ -25,7 +25,7 @@ use crate::{
     video_cache::{AudioEntry, DeviceFrame, FrameMetadata, TimeSeriesFrame},
 };
 
-use super::websocket::{try_acquire_ws_connection, WsConnectionGuard};
+use super::websocket::{negotiate_civitas_protocol, try_acquire_ws_connection, WsConnectionGuard};
 
 use tokio::sync::{broadcast, mpsc, Mutex};
 
@@ -230,7 +230,7 @@ pub(crate) async fn stream_frames_handler(
 ) -> Response {
     // Check connection limit before upgrading
     match try_acquire_ws_connection(&state.ws_connection_count) {
-        Some(guard) => ws
+        Some(guard) => negotiate_civitas_protocol(ws)
             .on_upgrade(move |socket| handle_stream_frames_socket(socket, state, guard))
             .into_response(),
         None => Response::builder()

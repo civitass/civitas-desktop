@@ -199,6 +199,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: civitas-macos-${{ matrix.target }}
+          retention-days: 30
           path: civitas-*.tar.gz
 
   build-windows:
@@ -438,6 +439,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: civitas-windows
+          retention-days: 30
           path: civitas-*.zip
 
   build-linux:
@@ -551,6 +553,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: civitas-linux-${{ matrix.target }}
+          retention-days: 30
           path: civitas-*.tar.gz
 
   publish-npm:

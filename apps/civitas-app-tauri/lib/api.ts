@@ -28,6 +28,7 @@ let _authEnabled = false;
 let _initialized = false;
 let _initPromise: Promise<void> | null = null;
 let _fetchPatched = false;
+const CIVITAS_WEBSOCKET_PROTOCOL = "civitas-v1";
 
 type LocalApiConfig = {
   key: string | null;
@@ -183,15 +184,19 @@ export function appendAuthToken(url: string): string {
 }
 
 /**
- * Open a local WebSocket with the API key encoded in a WebSocket subprotocol
- * header. Unlike a query parameter, this does not enter browser history,
- * access logs, crash URLs, or copied links.
+ * Open a local WebSocket with a stable negotiated application protocol and
+ * the API key encoded in a separate WebSocket subprotocol offer. Unlike a
+ * query parameter, the credential does not enter browser history, access logs,
+ * crash URLs, or copied links, and the server never echoes it in the response.
  */
 export function createAuthenticatedWebSocket(url: string): WebSocket {
   if (!_authEnabled || !_apiKey || !isLocalApiUrl(url)) {
     return new WebSocket(url);
   }
-  return new WebSocket(url, [`civitas-auth.${base64UrlEncode(_apiKey)}`]);
+  return new WebSocket(url, [
+    CIVITAS_WEBSOCKET_PROTOCOL,
+    `civitas-auth.${base64UrlEncode(_apiKey)}`,
+  ]);
 }
 
 /**

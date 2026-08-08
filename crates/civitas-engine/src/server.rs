@@ -1204,7 +1204,9 @@ impl SCServer {
 
                             // Check auth via (in priority order):
                             // 1. Authorization: Bearer <token> header (localFetch)
-                            // 2. civitas-auth.<base64url-token> WebSocket subprotocol
+                            // 2. civitas-v1 plus a civitas-auth.<base64url-token>
+                            //    WebSocket subprotocol offer. Upgrade handlers select only
+                            //    civitas-v1 so credentials are never echoed.
                             //
                             // Query-string credentials are intentionally rejected:
                             // URLs are routinely copied and recorded in logs, crash
@@ -1373,7 +1375,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             SEC_WEBSOCKET_PROTOCOL,
-            HeaderValue::from_str(&format!("chat, civitas-auth.{encoded}")).unwrap(),
+            HeaderValue::from_str(&format!("civitas-v1, civitas-auth.{encoded}")).unwrap(),
         );
 
         assert_eq!(

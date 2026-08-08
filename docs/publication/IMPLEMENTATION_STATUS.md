@@ -51,7 +51,7 @@ The archives must never inherit the consumer repository’s public visibility.
 | Model supply chain   | Runtime model sources are immutable-revision pinned and SHA-256 checked; incomplete downloads are atomic; mutable Audiopipe loaders and the unverified `mlx.metallib` build fetch were removed; `CIVITAS_NETWORK_MODE=deny` blocks reviewed remote model fetches                                                    | Verified model registry, Whisper/Silero/speaker/Smart PII downloaders, model publication audit |
 | Capture trust        | Screen, accessibility, and audio permissions are explained; clipboard and raw typed-text capture default off; visible pause/private controls and local retention controls remain available. Fresh or incomplete onboarding cannot start the capture backend, engine, or apply a persisted capture intent before the explicit engine consent step | Onboarding trust contract, startup gates, recording/privacy/storage settings, native launch QA |
 | Ask and graph        | Search, graph retrieval, source citations, grounding, and local query surfaces remain in the consumer product without an entitlement gate. Knowledge-graph grants, revocation, scope updates, and access audit writes use durable serialized transactions rather than a read-pool cursor; the consumer migration removes dormant non-agent principals and SQLite guards constrain new grants to local AI agents | Ask/graph tests, local engine routes, migration guards, and durable KG access tests             |
-| Timeline resilience  | Timeline remains a local, reconnecting view of the active data library. Its persistent renderer cache is committed only after complete writes and is scoped to both the validated data root and a per-library opaque identity, so a wipe, move, custom-directory change, or fresh profile cannot resurrect frame paths from another library. Browser-cache hydration is optional and concurrent: a stalled IndexedDB/WebView cache can neither block the authoritative loopback WebSocket nor overwrite frames that arrive first. Snapshot compaction preserves JPEG zero-copy but normalizes every other supported image format before MJPEG input, rejects corrupt bytes before ffmpeg, and deletes only sources proven encoded and committed. The publication seed is retry-idempotent across SQLite and the live hot-frame cache, and stays outside the compaction age window | Native data-identity tests, renderer cache/startup-race tests, mixed-format compaction tests, three-platform packaged publication E2E |
+| Timeline resilience  | Timeline remains a local, reconnecting view of the active data library. Its persistent renderer cache is committed only after complete writes and is scoped to both the validated data root and a per-library opaque identity, so a wipe, move, custom-directory change, or fresh profile cannot resurrect frame paths from another library. Browser-cache hydration is optional and concurrent: a stalled IndexedDB/WebView cache can neither block the authoritative loopback WebSocket nor overwrite frames that arrive first. Every browser and native event stream offers a stable `civitas-v1` protocol plus a separate encoded credential protocol; the engine authenticates the credential but selects only the stable protocol, satisfying strict WebView2 negotiation without reflecting the secret. Snapshot compaction preserves JPEG zero-copy but normalizes every other supported image format before MJPEG input, rejects corrupt bytes before ffmpeg, and deletes only sources proven encoded and committed. The publication seed is retry-idempotent across SQLite and the live hot-frame cache, and stays outside the compaction age window | Native data-identity and real loopback-handshake tests, renderer cache/startup-race tests, mixed-format compaction tests, three-platform packaged publication E2E |
 | Next Actions         | Restored as a pull-only, evidence-linked suggestion surface with deterministic ranking, calibrated abstention, duplicate suppression, expiry, dismissal, local feedback, quality counters, and explicit safety reasons. Feedback now accepts every supported deterministic candidate source, and suggestions never auto-execute | Engine route, UI, API and migration tests, synthetic evaluation                                |
 | MCP                  | Loopback-only transport, token authentication, explicit scopes, request-origin controls, bounded responses, and no LAN mode                                                                                                                                                                                         | MCP server, scope tests, publication audit                                                     |
 | Browser bridge       | Replaced cookie extraction and arbitrary remote-code evaluation with a Manifest V3 extension exposing only a bounded active-tab snapshot and one-shot approved HTTPS navigation; removed broad tab/debugger/cookie permissions; moved local WebSocket authentication out of URLs; added complete Apple-quality popup/options assets and truthful store/privacy copy | Rust bridge tests, extension tests/build, manifest audit, browser approval UI, network/privacy docs |
@@ -141,6 +141,24 @@ old releases, service-side secrets, or legal rights.
   Those attestations remain “not obtained” unless distinct qualified reviewers
   actually provide them.
 
+## 2026-08-08 Windows Timeline remediation
+
+- The packaged Windows journey exposed a WebView2-only Timeline stall even
+  though the seed command returned valid frame IDs and the same commit passed
+  on macOS and Linux. Engine logs showed that Windows never reached the
+  `/stream/frames` handler.
+- Root cause: authenticated clients offered only the credential-bearing
+  WebSocket subprotocol while the Axum upgrade handlers selected no protocol.
+  WebKit tolerated the incomplete negotiation; WebView2 closed it before the
+  route could receive a range request.
+- All five local WebSocket surfaces now negotiate the fixed `civitas-v1`
+  application protocol. Authentication remains in a second
+  `civitas-auth.<base64url>` offer that middleware validates and the response
+  never echoes. Browser and native clients use the same contract.
+- A real loopback TCP upgrade regression verifies the 101 handshake and exact
+  selected protocol. The exact-commit Windows packaged journey remains the
+  cross-platform acceptance gate.
+
 ## Validation evidence
 
 The complete local matrix was rerun on 2026-07-31 after the Timeline,
@@ -156,7 +174,7 @@ history, signing, or two-person release gate.
 | Consumer design audit                         | Pass                       | **Pass (local candidate):** 338 production UI files, including strict and supporting consumer surfaces                                                                                                                          |
 | JavaScript dependency advisory gate           | Zero blocking findings     | **Pass (prior exact audit; lockfiles unchanged):** all 4 tracked Bun lockfiles reproduced with exact Bun `1.3.10`; low-threshold audits returned zero vulnerabilities                                                            |
 | Rust dependency advisory/reachability gate    | Zero unreviewed findings   | **Pass (merged private `main`):** both Rust lockfiles passed exact `cargo-audit 0.22.2`; `serde_with` was patched to `3.21.0`; residual `rand` and `glib` alerts were dispositioned with feature/target evidence and explicit reopen conditions |
-| Frontend typecheck + full Vitest + Bun tests  | Pass                       | **Pass (local candidate):** TypeScript clean; 964 Vitest tests across 108 files and 171 Bun tests across 17 files passed under exact Bun `1.3.10`; optimized Next.js build generated 17 static pages                              |
+| Frontend typecheck + full Vitest + Bun tests  | Pass                       | **Pass (local candidate):** TypeScript clean; 966 Vitest tests across 109 files and 171 Bun tests across 17 files passed under exact Bun `1.3.10`; optimized Next.js build generated 17 static pages                              |
 | Rust format + locked workspace check/tests    | Pass                       | **Pass (local candidate):** format-clean; the complete locked root workspace and doc tests passed, including the 886/892 database suite (6 contract ignores), 324/324 workflow suite, 205/205 audio suite, and 3/3 redaction-worker integration suite |
 | Tauri locked check + bindings/security audit  | Pass                       | **Pass (local candidate):** normal and E2E app graphs compiled; generated TypeScript bindings exactly match the Rust command registry; 18-file production-security audit passed                                                   |
 | MCP build/tests and package boundary          | Pass                       | **Pass (local worktree):** 51 tests and TypeScript build passed; npm allowlist produced 15 files / 47,496 bytes and the production-only MCPB produced 2,143 files / 3,178,564 bytes with a verified checksum                         |
@@ -309,7 +327,9 @@ into the public clean root.
 The earlier Actions-budget rejection was specific to private hosted-runner
 minutes. The sanitized repository is public and recent hosted jobs start
 normally. To control cost, ordinary pushes create no desktop E2E jobs; an exact
-main commit marked `[run-e2e]` starts the complete hosted matrix. Obsolete runs
+main commit marked `[run-e2e]` starts the complete hosted matrix. Ephemeral test
+and diagnostic artifacts expire after 7 days, evaluation and benchmark evidence
+after 14 days, and release staging artifacts after 30 days. Obsolete runs
 are canceled after a superseding failure or candidate, and release validation
 still requires a successful E2E run for the exact immutable release commit.
 

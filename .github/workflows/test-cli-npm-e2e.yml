@@ -64,5 +64,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: npm-e2e-logs
+          retention-days: 7
           path: packages/cli/npm-e2e/.work/logs
           if-no-files-found: ignore

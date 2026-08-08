@@ -373,6 +373,7 @@ jobs:
         if: always()
         with:
           name: windows-e2e-test-artifacts
+          retention-days: 7
           path: |
             ./apps/civitas-app-tauri/e2e/videos
             ./apps/civitas-app-tauri/e2e/screenshots
@@ -696,6 +697,7 @@ jobs:
         if: always()
         with:
           name: linux-e2e-test-artifacts
+          retention-days: 7
           path: |
             ./apps/civitas-app-tauri/e2e/videos
             ./apps/civitas-app-tauri/e2e/screenshots
@@ -813,6 +815,7 @@ jobs:
         if: always()
         with:
           name: macos-e2e-test-artifacts
+          retention-days: 7
           path: |
             ./apps/civitas-app-tauri/e2e/videos
             ./apps/civitas-app-tauri/e2e/screenshots

@@ -59,6 +59,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: apple-ocr-benchmark-data
+          retention-days: 14
           path: ocr_output.txt
 
   tesseract_ocr_benchmark:
@@ -98,6 +99,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tesseract-ocr-benchmark-data
+          retention-days: 14
           path: ocr_output.txt
 
   windows_ocr_benchmark:
@@ -138,6 +140,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: windows-ocr-benchmark-data
+          retention-days: 14
           path: ocr_output.txt
 
   stt_benchmark:
@@ -164,6 +167,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: stt-benchmark-data
+          retention-days: 14
           path: stt_output.txt
 
   analyze_benchmarks:

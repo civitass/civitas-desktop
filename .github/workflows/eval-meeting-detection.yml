@@ -162,6 +162,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: meeting-eval-results
+          retention-days: 14
           path: /tmp/meeting-eval/
 
       - name: Post sticky PR comment

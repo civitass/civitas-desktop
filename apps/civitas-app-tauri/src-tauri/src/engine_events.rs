@@ -39,6 +39,16 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info};
 
+const CIVITAS_WEBSOCKET_PROTOCOL: &str = "civitas-v1";
+
+fn authenticated_websocket_protocol(api_key: &str) -> Result<HeaderValue, String> {
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(api_key);
+    HeaderValue::from_str(&format!(
+        "{CIVITAS_WEBSOCKET_PROTOCOL}, civitas-auth.{encoded}"
+    ))
+    .map_err(|error| error.to_string())
+}
+
 /// Start the WS subscriber. Reconnects forever with exponential backoff so
 /// event delivery survives server restarts.
 pub fn start(app: AppHandle, server_port: u16, api_key: Option<String>) {
@@ -87,11 +97,9 @@ async fn connect(app: &AppHandle, port: u16, api_key: Option<&str>) -> Result<()
         .into_client_request()
         .map_err(|e| e.to_string())?;
     if let Some(key) = api_key.filter(|key| !key.is_empty()) {
-        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key);
         req.headers_mut().insert(
             header::SEC_WEBSOCKET_PROTOCOL,
-            HeaderValue::from_str(&format!("civitas-auth.{encoded}"))
-                .map_err(|error| error.to_string())?,
+            authenticated_websocket_protocol(key)?,
         );
     }
     let (mut ws, _) = connect_async(req).await.map_err(|e| e.to_string())?;
@@ -111,6 +119,22 @@ async fn connect(app: &AppHandle, port: u16, api_key: Option<&str>) -> Result<()
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::authenticated_websocket_protocol;
+
+    #[test]
+    fn authenticated_protocol_offers_stable_protocol_before_credential() {
+        assert_eq!(
+            authenticated_websocket_protocol("local-secret")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "civitas-v1, civitas-auth.bG9jYWwtc2VjcmV0"
+        );
     }
 }
 
