@@ -232,6 +232,11 @@ export async function startApp(
       CIVITAS_E2E_SEED: E2E_SEED_FLAGS,
       CIVITAS_FOCUS_PORT: String(FOCUS_PORT),
       CIVITAS_FOCUS_TOKEN: E2E_FOCUS_TOKEN,
+      // Compile-time E2E builds use this non-secret, deterministic harness key
+      // so encrypted settings can be exercised on headless Linux runners that
+      // intentionally have no desktop Secret Service session. Production
+      // builds do not compile support for this override.
+      CIVITAS_E2E_STORE_KEY_B64: Buffer.alloc(32, 0x43).toString("base64"),
       TAURI_WEBDRIVER_PORT: String(port),
       // When the app panics under E2E (common during early platform bring-up),
       // a backtrace in CI logs is far more actionable than the default "run with

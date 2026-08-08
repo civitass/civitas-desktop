@@ -21,11 +21,10 @@
  *   - Post-fix: 1 file (home only)        → shouldHandleChatPrefillForWindow
  *                                            pins an untargeted autoSend to home
  *
- * No live Pi is required: sendPiMessage appends the user message and sets
- * isLoading=true (standalone-chat.tsx ~6600), so the 1.5s debounced
- * auto-save persists the conversation regardless of whether the agent
- * actually replies. We count files on disk directly (the read-time dedup in
- * chat-storage does not touch disk), so this asserts the WRITE-side fix.
+ * No assistant runtime download is required. In an isolated publication run,
+ * the one winning listener opens the explicit runtime-install boundary; with
+ * a runtime already installed it persists one conversation. The test accepts
+ * either single observable and rejects any cross-window duplicate.
  *
  * Run with:
  *   cd apps/civitas-app-tauri && ./e2e/run.sh        # builds + runs all
@@ -85,6 +84,29 @@ function cleanupMarkerChats(): void {
   }
 }
 
+async function runtimeSetupDialogCount(): Promise<number> {
+  let count = 0;
+  for (const label of ["home", "chat"]) {
+    await browser.switchToWindow(label);
+    const title = await $(
+      "//*[normalize-space(text())='Set up the conversational assistant']",
+    );
+    if ((await title.isExisting()) && (await title.isDisplayed())) count += 1;
+  }
+  return count;
+}
+
+async function closeRuntimeSetupDialogs(): Promise<void> {
+  for (const label of ["home", "chat"]) {
+    await browser.switchToWindow(label);
+    const dismiss = await $("button=Not now");
+    if ((await dismiss.isExisting()) && (await dismiss.isDisplayed())) {
+      await dismiss.click();
+    }
+  }
+  await browser.switchToWindow("home");
+}
+
 /** Broadcast an untargeted autoSend chat-prefill — the bug trigger. */
 async function emitUntargetedAutoSendPrefill(prompt: string): Promise<void> {
   await browser.executeAsync(
@@ -127,34 +149,40 @@ describe("Chat prefill cross-window duplication", function () {
     cleanupMarkerChats();
   });
 
-  after(() => {
+  after(async () => {
     cleanupMarkerChats();
+    await closeRuntimeSetupDialogs();
   });
 
   it("creates exactly ONE conversation for an untargeted autoSend prefill (not one per window)", async () => {
     await emitUntargetedAutoSendPrefill(MARKER);
 
-    // Wait for the streaming auto-save (~1.5s debounce) to flush at least one
-    // conversation to disk, then give the second window a fair chance to
-    // (wrongly) write its own copy before we count.
+    // The clean publication harness has no optional assistant runtime. The
+    // sole winning listener therefore opens one setup boundary; a developer
+    // run with the runtime installed instead persists one conversation.
     await browser.waitUntil(
-      async () => chatFilesContainingMarker().length >= 1,
+      async () =>
+        chatFilesContainingMarker().length +
+          (await runtimeSetupDialogCount()) >=
+        1,
       {
         timeout: t(20_000),
         interval: 500,
-        timeoutMsg: "no conversation was persisted for the prefill — the send path may have changed",
+        timeoutMsg:
+          "neither a conversation nor one assistant setup boundary handled the prefill",
       },
     );
-    await browser.pause(t(5_000));
+    await browser.pause(t(1_000));
 
     const hits = chatFilesContainingMarker();
-    if (hits.length > 1) {
+    const setupDialogs = await runtimeSetupDialogCount();
+    if (hits.length + setupDialogs > 1) {
       throw new Error(
-        `BUG REPRODUCED: one untargeted autoSend prefill created ${hits.length} conversations ` +
-          `(one per window) instead of 1 — files: ${hits.join(", ")}`,
+        `BUG REPRODUCED: one untargeted autoSend prefill produced ${hits.length} conversations ` +
+          `and ${setupDialogs} runtime dialogs instead of one handler — files: ${hits.join(", ")}`,
       );
     }
-    expect(hits.length).toBe(1);
+    expect(hits.length + setupDialogs).toBe(1);
 
     const filepath = await saveScreenshot("chat-prefill-duplicate-end");
     expect(existsSync(filepath)).toBe(true);

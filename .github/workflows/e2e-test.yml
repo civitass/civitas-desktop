@@ -156,6 +156,11 @@ jobs:
           $drive = (Split-Path $env:GITHUB_WORKSPACE -Qualifier).TrimEnd(':')
           echo "BUN_INSTALL_CACHE_DIR=${drive}:/bun" >> $env:GITHUB_ENV
           echo "BUN_INSTALL_GLOBAL_DIR=${drive}:/bun-global" >> $env:GITHUB_ENV
+          # CMake/MSBuild's file tracker still enforces legacy path limits in
+          # dependency try-compile directories. Keeping Cargo under the drive
+          # root prevents libsamplerate-sys and similar crates from exceeding
+          # that limit on both hosted (D:) and self-hosted (C:) runners.
+          echo "CARGO_TARGET_DIR=${drive}:/civitas-e2e-target" >> $env:GITHUB_ENV
 
       - name: Install frontend dependencies
         working-directory: ./apps/civitas-app-tauri

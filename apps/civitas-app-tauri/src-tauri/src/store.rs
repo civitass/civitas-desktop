@@ -587,6 +587,23 @@ fn sync_encryption_flag(store_path: &Path, enabled: bool) -> Result<(), String> 
 }
 
 fn resolve_store_key(create_if_missing: bool) -> Result<StoreKey, String> {
+    // Headless Linux CI has no Secret Service session. E2E builds still need
+    // to exercise the encrypted settings path, so accept an explicit harness
+    // key only when the compile-time E2E feature is present. Official and
+    // ordinary source builds do not compile this branch.
+    #[cfg(feature = "e2e")]
+    if let Ok(encoded) = std::env::var("CIVITAS_E2E_STORE_KEY_B64") {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        let decoded = B64
+            .decode(encoded.trim())
+            .map_err(|_| "E2E settings key is not valid base64".to_string())?;
+        let key: [u8; 32] = decoded
+            .try_into()
+            .map_err(|_| "E2E settings key must decode to exactly 32 bytes".to_string())?;
+        return Ok(StoreKey(key));
+    }
+
     match keychain::get_key() {
         keychain::KeyResult::Found(key) => Ok(StoreKey(key)),
         keychain::KeyResult::AccessDenied => Err(
@@ -1072,6 +1089,17 @@ fn build_store(app: &AppHandle) -> anyhow::Result<Arc<tauri_plugin_store::Store<
         .map_err(anyhow::Error::from)
 }
 
+/// Run the settings-store builder synchronously on the caller's thread.
+///
+/// Store construction performs only synchronous filesystem, credential-vault,
+/// and Tauri resource-table work. Wrapping it in `tokio::task::block_in_place`
+/// is both unnecessary and unsafe: Tauri's Linux WebDriver setup can execute
+/// the setup hook inside a current-thread Tokio runtime, where
+/// `block_in_place` panics before the app can expose its WebDriver endpoint.
+fn run_sync_store_build<T>(build: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    build()
+}
+
 pub fn get_store(
     app: &AppHandle,
     _profile_name: Option<String>, // Keep parameter for API compatibility but ignore it
@@ -1083,12 +1111,7 @@ pub fn get_store(
         }
     }
 
-    let in_tokio = tokio::runtime::Handle::try_current().is_ok();
-    let store = if in_tokio {
-        tokio::task::block_in_place(|| build_store(app))?
-    } else {
-        build_store(app)?
-    };
+    let store = run_sync_store_build(|| build_store(app))?;
 
     let mut guard = STORE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref cached) = *guard {
@@ -2258,6 +2281,18 @@ mod tests {
     use serde_json::json;
 
     const FALLBACK_ENGINE: &str = "whisper-large-v3-turbo-quantized";
+
+    #[test]
+    fn synchronous_store_build_is_safe_inside_a_current_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let value = run_sync_store_build(|| Ok::<_, anyhow::Error>(42)).unwrap();
+            assert_eq!(value, 42);
+        });
+    }
 
     #[test]
     fn auto_update_defaults_to_disabled() {

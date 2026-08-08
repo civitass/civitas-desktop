@@ -73,6 +73,29 @@ function cleanupMarkerChats(): void {
   }
 }
 
+async function runtimeSetupDialogCount(): Promise<number> {
+  let count = 0;
+  for (const label of ["home", "chat"]) {
+    await browser.switchToWindow(label);
+    const title = await $(
+      "//*[normalize-space(text())='Set up the conversational assistant']",
+    );
+    if ((await title.isExisting()) && (await title.isDisplayed())) count += 1;
+  }
+  return count;
+}
+
+async function closeRuntimeSetupDialogs(): Promise<void> {
+  for (const label of ["home", "chat"]) {
+    await browser.switchToWindow(label);
+    const dismiss = await $("button=Not now");
+    if ((await dismiss.isExisting()) && (await dismiss.isDisplayed())) {
+      await dismiss.click();
+    }
+  }
+  await browser.switchToWindow("home");
+}
+
 /**
  * Emit a single autoSend chat-prefill targeted at a specific window.
  * This mimics the production paths where different code paths (notification-handler,
@@ -143,8 +166,9 @@ describe("Parallel-job chat duplication (sidebar shows 2x same template run)", f
     cleanupMarkerChats();
   });
 
-  after(() => {
+  after(async () => {
     cleanupMarkerChats();
+    await closeRuntimeSetupDialogs();
   });
 
   it("coalesces two parallel-job identical autoSend prefills into ONE conversation", async () => {
@@ -168,32 +192,40 @@ describe("Parallel-job chat duplication (sidebar shows 2x same template run)", f
       "chat",
     );
 
-    // Wait for at least one save to land, then give the (buggy) second
-    // path a fair chance to also write its own duplicate before we count.
+    // An isolated publication run deliberately has no optional assistant
+    // runtime. In that state the winning window opens exactly one setup
+    // dialog and keeps the pending send in memory; with a runtime installed it
+    // persists exactly one conversation. Either observable proves that only
+    // one window claimed the prefill, without downloading a runtime in CI.
     await browser.waitUntil(
-      async () => chatFilesContainingMarker().length >= 1,
+      async () =>
+        chatFilesContainingMarker().length +
+          (await runtimeSetupDialogCount()) >=
+        1,
       {
         timeout: t(20_000),
         interval: 500,
         timeoutMsg:
-          "no conversation was persisted for the parallel prefills — the send path may have changed",
+          "neither a conversation nor one assistant setup boundary handled the parallel prefills",
       },
     );
-    await browser.pause(t(5_000));
+    await browser.pause(t(1_000));
 
     const hits = chatFilesContainingMarker();
+    const setupDialogs = await runtimeSetupDialogCount();
     const filepath = await saveScreenshot("chat-parallel-jobs-duplicate-end");
     expect(existsSync(filepath)).toBe(true);
 
-    if (hits.length > 1) {
+    if (hits.length + setupDialogs > 1) {
       throw new Error(
         `BUG REPRODUCED: two parallel autoSend prefills with identical content ` +
-          `targeting different windows ("home" + "chat") created ${hits.length} ` +
-          `conversations instead of 1 — files: ${hits.join(", ")}. Each window ` +
+          `targeting different windows ("home" + "chat") produced ${hits.length} ` +
+          `conversations and ${setupDialogs} runtime dialogs instead of one handler. ` +
+          `Files: ${hits.join(", ")}. Each window ` +
           `minted its own session id because the in-flight guards (prefillInFlightRef, ` +
           `isLoading) are per-listener, not global — cross-window duplicate chat bug.`,
       );
     }
-    expect(hits.length).toBe(1);
+    expect(hits.length + setupDialogs).toBe(1);
   });
 });
