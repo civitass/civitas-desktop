@@ -307,10 +307,11 @@ impl HotFrameCache {
     /// files we just removed (which is what made the timeline "jump
     /// backward" right after the user clicked delete-last-15-min).
     pub async fn evict_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) {
-        {
+        let earliest_remaining = {
             let mut frames = self.frames.write().await;
             frames.retain(|(ts, _), _| *ts < start || *ts > end);
-        }
+            frames.keys().next().map(|(timestamp, _)| *timestamp)
+        };
         {
             let mut audio = self.audio.write().await;
             audio.retain(|ts, _| *ts < start || *ts > end);
@@ -319,10 +320,35 @@ impl HotFrameCache {
         let mut ws = self.cache_warm_start.write().await;
         if let Some(existing) = *ws {
             if existing >= start && existing <= end {
-                let frames = self.frames.read().await;
-                *ws = frames.keys().next().map(|(t, _)| *t);
+                *ws = earliest_remaining;
             }
         }
+    }
+
+    /// Remove cached frames belonging to one capture device and return the
+    /// number removed. Database writers that replace a logical source can use
+    /// this before repopulating the cache, preventing stale in-memory frames
+    /// from surviving after the authoritative rows have changed.
+    pub async fn evict_frames_for_device(&self, device_name: &str) -> usize {
+        let (removed, earliest_remaining) = {
+            let mut frames = self.frames.write().await;
+            let previous_len = frames.len();
+            frames.retain(|_, frame| frame.device_name.as_ref() != device_name);
+            (
+                previous_len.saturating_sub(frames.len()),
+                frames.keys().next().map(|(timestamp, _)| *timestamp),
+            )
+        };
+
+        // Removing one device does not narrow the time interval that was
+        // already loaded for every other device. Only clear coverage when no
+        // frames remain; otherwise retain the established warm boundary and
+        // avoid an unnecessary database backfill.
+        if removed > 0 && earliest_remaining.is_none() {
+            *self.cache_warm_start.write().await = None;
+        }
+
+        removed
     }
 
     /// Public wrapper: find audio entries near a given timestamp.
@@ -535,5 +561,52 @@ mod tests {
 
         let yesterday = Utc::now() - chrono::Duration::days(1);
         assert!(!cache.is_today(yesterday).await);
+    }
+
+    #[tokio::test]
+    async fn evict_frames_for_device_removes_only_the_selected_source() {
+        let cache = HotFrameCache::new();
+        let now = Utc::now();
+
+        for (frame_id, device_name, seconds_ago) in [
+            (1, "publication-demo", 3),
+            (2, "monitor-0", 2),
+            (3, "publication-demo", 1),
+        ] {
+            cache
+                .push_frame(HotFrame {
+                    frame_id,
+                    timestamp: now - chrono::Duration::seconds(seconds_ago),
+                    device_name: device_name.into(),
+                    app_name: "Preview".into(),
+                    window_name: "Window".into(),
+                    ocr_text_preview: "safe fixture".into(),
+                    snapshot_path: "/tmp/test.jpg".into(),
+                    browser_url: None,
+                    capture_trigger: "test".into(),
+                    offset_index: 0,
+                    fps: 0.033,
+                    machine_id: None,
+                })
+                .await;
+        }
+
+        assert_eq!(cache.evict_frames_for_device("publication-demo").await, 2);
+
+        let remaining = cache
+            .get_frames_in_range(
+                now - chrono::Duration::minutes(1),
+                now + chrono::Duration::minutes(1),
+            )
+            .await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].frame_data[0].frame_id, 2);
+        assert_eq!(
+            cache.earliest_coverage().await,
+            Some(now - chrono::Duration::seconds(3))
+        );
+
+        assert_eq!(cache.evict_frames_for_device("monitor-0").await, 1);
+        assert_eq!(cache.earliest_coverage().await, None);
     }
 }

@@ -1123,11 +1123,11 @@ pub async fn e2e_seed_publication_timeline(
         );
     }
 
-    let db = {
+    let (db, hot_frame_cache) = {
         let server = state.server.lock().await;
         server
             .as_ref()
-            .map(|core| core.db.clone())
+            .map(|core| (core.db.clone(), core.hot_frame_cache.clone()))
             .ok_or_else(|| "Civitas local service is not ready".to_string())?
     };
     // The command may be invoked again by WebdriverIO after a spec retry. Remove
@@ -1150,6 +1150,13 @@ pub async fn e2e_seed_publication_timeline(
         .commit()
         .await
         .map_err(|error| format!("could not commit publication Timeline reset: {error}"))?;
+    // Today's Timeline is served from the hot cache rather than querying
+    // SQLite on every connection. Keep both representations consistent at the
+    // command boundary: a retry must not retain frames deleted above, and new
+    // rows must follow the same cache path as real captures.
+    hot_frame_cache
+        .evict_frames_for_device("publication-demo-display")
+        .await;
 
     let now = chrono::Utc::now();
     let mut frame_ids = Vec::with_capacity(3);
@@ -1157,10 +1164,11 @@ pub async fn e2e_seed_publication_timeline(
     // compaction boundary. This command validates Timeline presentation; the
     // compactor's mixed-format contract has its own native regression tests.
     for minutes_ago in [3_i64, 2, 1] {
+        let timestamp = now - chrono::Duration::minutes(minutes_ago);
         let frame_id = db
             .insert_snapshot_frame(
                 "publication-demo-display",
-                now - chrono::Duration::minutes(minutes_ago),
+                timestamp,
                 &snapshot_path.to_string_lossy(),
                 Some("Preview"),
                 Some("Northstar launch brief"),
@@ -1177,6 +1185,22 @@ pub async fn e2e_seed_publication_timeline(
             )
             .await
             .map_err(|error| format!("could not seed publication Timeline frame: {error}"))?;
+        hot_frame_cache
+            .push_frame(civitas_engine::hot_frame_cache::HotFrame {
+                frame_id,
+                timestamp,
+                device_name: "publication-demo-display".into(),
+                app_name: "Preview".into(),
+                window_name: "Northstar launch brief".into(),
+                ocr_text_preview: "Northstar launch brief. Review launch narrative. Confirm rollback owner. Every recommendation points back to local evidence.".into(),
+                snapshot_path: snapshot_path.to_string_lossy().into_owned().into(),
+                browser_url: None,
+                capture_trigger: "publication-demo".into(),
+                offset_index: 0,
+                fps: 0.033,
+                machine_id: None,
+            })
+            .await;
         frame_ids.push(frame_id);
     }
 
