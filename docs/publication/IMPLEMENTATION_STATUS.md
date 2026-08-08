@@ -1,23 +1,25 @@
 # Consumer publication implementation status
 
-> Updated: 2026-08-07
+> Updated: 2026-08-08
 > Working repository: `civitass/civitas-desktop`
-> Publication state: **private; not approved for public visibility**
+> Publication state: **public source; no binary release published**
 > Verified clean-history checkpoint:
 > `civitass/civitas-desktop` at
 > `ece9f6912e2bf994325f820ffe673e84e32422e9`
 > Source of truth: [PUBLICATION_PLAN.md](PUBLICATION_PLAN.md)
 
-This ledger distinguishes implemented product controls from release evidence
-and external approvals. “Implemented” means the control exists in the
-publication candidate. It does not mean the repository or a release is safe to
-publish until every blocking gate below is independently closed.
+This ledger distinguishes implemented product controls, public-source evidence,
+binary-release evidence, and external approvals. The repository owner explicitly
+authorized single-review source publication on 2026-08-08 after the clean-root
+cutover. Independent security review, two-person review, and counsel approval
+were not obtained and are not claimed. Binary releases remain fail-closed on
+signing, notarization, exact-commit CI, and installation evidence.
 
 ## Publication decision
 
 | Repository         | Decision                                           | Current safeguard                                                                         |
 | ------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `civitas-desktop`  | Sanitized consumer implementation merged to private `main` | Keep private until the clean-root, security, legal, release, and two-reviewer gates close |
+| `civitas-desktop`  | Publish the sanitized consumer source                     | Public from the clean 17-commit root; binary downloads remain separately gated            |
 | `civitas-cloud`    | Do not publish                                     | Private, archived recovery repository exists                                              |
 | `civitas-platform` | Do not publish                                     | Private, archived recovery repository exists                                              |
 
@@ -27,13 +29,11 @@ Private, read-only recovery archives were created before publication edits:
 - `civitass/Civitas-cloud-archive`
 - `civitass/Civitas-platform-archive`
 
-Live GitHub metadata was rechecked on 2026-07-29: the working repository and
-all three archives are private, every archive is read-only/archived, and each
-uses `main` as its default branch.
+Live GitHub metadata was rechecked on 2026-08-08: the consumer repository is
+public; the three recovery archives and the unsafe-history legacy repository
+remain private and archived, each with `main` as its default branch.
 
-Archive visibility, archived state, default branch, and copied refs must be
-reverified immediately before cutover. The archives must never inherit the
-consumer repository’s public visibility.
+The archives must never inherit the consumer repository’s public visibility.
 
 ## Implemented product and repository controls
 
@@ -166,22 +166,21 @@ history, signing, or two-person release gate.
 | Live Amazon Bedrock diagnostic                | Pass                       | **Pass (local candidate):** the authenticated Civitas loopback gateway invoked configured inference profile `us.anthropic.claude-sonnet-4-6` with the fixed non-sensitive diagnostic and returned `OK`; no credential or prompt body was persisted in audit metadata |
 | Public documentation and generated API        | Pass                       | **Pass (local candidate):** 22-document local-link validation passed; generated bindings and the committed 155-path OpenAPI surface are current                                                                                   |
 | Tip-of-tree secret scan                       | Zero findings              | **Pass (local candidate):** digest-pinned TruffleHog `3.96.0` scanned the exact `origin/main..47a3247` Git range offline with zero verified or unverified findings. The amended publication commit is rescanned before push and must run again in CI                                                |
-| Exact-candidate GitHub Actions                 | All required jobs pass     | **Blocked: B6 external control:** #48, #59, and post-merge jobs were rejected before their first step because an Actions budget prevents further use; each inspected job had zero steps and the budget-rejection annotation          |
-| Full history/service-side secret review       | Zero unclassified findings | **Blocked: B1:** secondary native history detectors covered 319 reachable commits/51 refs and confirmed historic detector-shaped material and absolute user paths; checksum-verified scanning, 207 active Actions artifacts, rotations, PII classification, service evidence, and two reviewers remain required |
+| Exact-candidate GitHub Actions                 | All required jobs pass     | **In progress:** private-repository runs were rejected before step one by the Actions budget; public-source cutover removes the private-minute constraint, and every required workflow is being rerun on the public clean history       |
+| Full retained-history secret review           | Zero findings              | **Pass:** checksum-verified Gitleaks `8.30.1` scanned all 17 retained commits with zero findings; GitHub exposes only the allowlisted clean root and `main`; unsafe historic objects remain in private archived repositories only          |
 | Signed/notarized dual-architecture DMGs       | Pass                       | **Blocked: B5:** the installed matching Developer ID identity passed a disposable hardened-runtime/timestamp signing probe, but Apple reports an outstanding developer agreement; updater/notarization repository secrets and the dual-architecture workflow remain unverified |
 | Clean-machine install/upgrade/rollback matrix | Pass                       | **Blocked: release artifacts and independent devices required**                                                                                                                                                                  |
-| Independent security review                   | Approved                   | **Blocked: external reviewer required**                                                                                                                                                                                          |
-| Legal/privacy/license/trademark review        | Approved                   | **Blocked: qualified reviewer required**                                                                                                                                                                                         |
-| Two-person file allowlist and go/no-go        | Approved                   | **Blocked: two independent owners required**                                                                                                                                                                                     |
+| Independent security review                   | Disclosure                 | **Not obtained and not claimed:** the owner accepted single-review source-publication risk                                                                                                                                       |
+| Legal/privacy/license/trademark review        | Disclosure                 | **Not obtained and not claimed:** technical provenance and license checks are not legal advice                                                                                                                                   |
+| Two-person file allowlist and go/no-go        | Disclosure                 | **Not obtained and not claimed:** the owner explicitly authorized publication without a second reviewer                                                                                                                          |
 
-## Publication blockers that must not be marked complete in code review
+## Publication and release disposition
 
 ### B1 — historic secrets and personal data
 
-Prior audit evidence found unclassified secret-pattern candidates and a
-historic commit described as containing a live reasoning-memory graph from a
-real laptop. Deleted tip files remain recoverable from Git history. Before any
-public visibility change:
+Prior audit evidence found secret-pattern candidates and personal paths in the
+former private history. That history was not rewritten in place or exposed.
+Instead, publication used an allowlisted clean repository. Before cutover:
 
 1. scan all reachable history, tags, GitHub Actions logs, old artifacts, and
    releases with a current scanner;
@@ -189,7 +188,8 @@ public visibility change:
 3. rotate/revoke every credential that ever reached a shared service;
 4. obtain service-side evidence of revocation;
 5. replace or remove every real-person fixture and derivative;
-6. have two reviewers approve the final publication allowlist.
+6. record that the owner accepted single-review source-publication risk because
+   no second reviewer would be provided.
 
 ### B2 — clean public root
 
@@ -224,11 +224,12 @@ The one-time transfer completed in workflow run `31234392267`; no secret value
 was printed or read back, and the workflow and temporary migration token were
 removed immediately afterward. After the remediated source reached `00979543`,
 the private clean repository took the canonical `civitass/civitas-desktop`
-name, and the unsafe-history repository was renamed and archived. The canonical
-repository remains private while exact-clean-commit workflows and artifact
-gates run. Before visibility changes, signed-out `git ls-remote` must again list
-only the approved default branch and explicitly allowlisted release tags. No
-visibility change has occurred.
+name, and the unsafe-history repository was renamed and archived. On 2026-08-08
+the canonical clean repository became public after signed-out `git ls-remote`
+again listed only `HEAD` and `refs/heads/main`, with zero tags and zero pull
+requests. GitHub secret scanning with push protection, Dependabot vulnerability
+alerts and automated fixes, private vulnerability reporting, issues, and
+discussions were enabled immediately after cutover.
 
 ### B3 — third-party and legal approval
 
@@ -267,11 +268,12 @@ signature, or SmartScreen bypass is not a release substitute.
 
 ### B6 — GitHub public-project controls
 
-Before visibility changes, configure protected default branch rules, required
-checks/reviews, signed tags or equivalent release policy, private
-vulnerability reporting, Dependabot/security scanning, least-privilege Actions,
-issue/PR templates, support ownership, and release permissions. Verify archive
-repositories remain private.
+The public repository has secret scanning with push protection, Dependabot
+alerts and automated security fixes, private vulnerability reporting,
+least-privilege Actions, issue/PR templates, support ownership, and release
+permissions. Protected-default-branch rules and exact required checks are set
+after the first successful public exact-commit workflow set establishes their
+check names. Archive repositories were reverified private.
 
 On 2026-07-28, repository administration enabled Dependabot vulnerability
 alerts and automated security fixes. The old default branch initially reported
@@ -290,10 +292,8 @@ third-party action allowlist, and repository policy requires full commit-SHA
 pinning. The committed workflows have zero uncovered or unpinned remote
 actions.
 
-The current private-repository plan does not expose branch
-protection/rulesets, code scanning, or secret scanning. The
-`consumer-release` environment now exists, but it has no reviewer protection;
-no independent reviewer has been supplied. The `civitas-mcp` npm name is not
+The `consumer-release` environment exists without reviewer protection because
+the owner supplied no independent reviewer. The `civitas-mcp` npm name is not
 yet registered, `keys.md` contains
 no npm credential, the local npm CLI is unauthenticated, and the repository
 has no `NPM_TOKEN` secret. Its one-time, 2FA-backed bootstrap and subsequent
@@ -301,7 +301,8 @@ migration to workflow-bound, stage-only trusted publishing remain
 owner-controlled release gates. The protected workflow leaves both the staged
 npm package and GitHub Release draft awaiting separate human approvals. There
 are 232 historical Actions artifacts (207 active, approximately 6.59 GiB) that
-must be reviewed and dispositioned before visibility changes.
+remain confined to the archived private legacy repository and were not copied
+into the public clean root.
 
 The earlier Actions-budget rejection was historical and recent hosted jobs now
 start normally. Every required workflow must still rerun successfully against
@@ -328,14 +329,13 @@ No workflow in this repository uploads or publishes a store listing.
 
 ## Go/no-go rule
 
-The repository remains **NO-GO** while any B1–B7 item is open. Passing local
-tests or pushing this preparation branch is not permission to:
+The sanitized consumer source is **GO and public**. The former history remains
+private and archived. Desktop binaries remain **NO-GO** until the exact public
+commit passes required CI and the artifact itself passes the platform-specific
+signing, notarization, updater, checksum, provenance, and clean-install gates.
+No release may claim independent security, legal, notarization, or clean-machine
+approval without the corresponding evidence.
 
-- expose the existing history;
-- create or force-push a sanitized public root;
-- change repository visibility;
-- publish a GitHub Release or DMG;
-- claim independent security, legal, notarization, or clean-machine approval.
-
-Follow [CUTOVER_RUNBOOK.md](CUTOVER_RUNBOOK.md) for the ordered, two-person
-publication procedure.
+Follow [CUTOVER_RUNBOOK.md](CUTOVER_RUNBOOK.md) for binary release and rollback
+operations; its multi-person procedure remains the recommended policy even
+though the owner explicitly accepted single-review source publication.
