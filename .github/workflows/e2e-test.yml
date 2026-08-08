@@ -10,11 +10,13 @@ env:
   CARGO_PROFILE_DEV_CODEGEN_UNITS: "16"
 
 on:
-  # E2E is intentionally OFF the per-merge path. A full Windows/macOS/Linux E2E
-  # run on every push to main burned hosted-runner minutes on each merge (the
-  # Windows leg alone is ~1h15m on a 2x-billed windows-2022 runner). It now runs
-  # nightly + on demand: `gh workflow run "E2E Tests"` to gate a risky PR.
-  # (CI trimmed to the core 6 checks — see .github/workflows/README.md.)
+  # Push events are cheap control-plane triggers only. Every job below remains
+  # skipped unless the exact main commit carries `[run-e2e]`; this lets a
+  # release candidate obtain exact-SHA evidence without spending hosted-runner
+  # minutes on ordinary merges or depending on a maintainer's local CLI auth.
+  push:
+    branches:
+      - main
   schedule:
     - cron: "0 7 * * *" # 07:00 UTC nightly
   workflow_dispatch:
@@ -39,12 +41,15 @@ concurrency:
 jobs:
   windows-e2e-test:
     name: Windows E2E Tests
+    if: >-
+      github.event_name != 'push' ||
+      contains(github.event.head_commit.message, '[run-e2e]')
     # windows-desktop-test = the self-hosted Windows VM (interactive session, so
     # WGC capture + WebView2 work). This is now the DEFAULT for both scheduled
     # (nightly) and bare workflow_dispatch runs — the self-hosted path is proven
     # green (run 28692981010: 46/46 spec files, core-recording, user-journey).
     # Pass windows_runner=windows-2022 to fall back to the GitHub-hosted runner.
-    runs-on: ${{ inputs.windows_runner == 'windows-2022' && 'windows-2022' || fromJSON('["self-hosted","windows-desktop-test"]') }}
+    runs-on: ${{ (github.event_name == 'push' || inputs.windows_runner == 'windows-2022') && 'windows-2022' || fromJSON('["self-hosted","windows-desktop-test"]') }}
     timeout-minutes: 90
     env:
       CC_x86_64_pc_windows_msvc: cl.exe
@@ -377,6 +382,9 @@ jobs:
 
   linux-e2e-test:
     name: Linux E2E Tests
+    if: >-
+      github.event_name != 'push' ||
+      contains(github.event.head_commit.message, '[run-e2e]')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -697,6 +705,9 @@ jobs:
 
   macos-e2e-test:
     name: macOS E2E Tests
+    if: >-
+      github.event_name != 'push' ||
+      contains(github.event.head_commit.message, '[run-e2e]')
     runs-on: macos-latest
     timeout-minutes: 90
     steps:

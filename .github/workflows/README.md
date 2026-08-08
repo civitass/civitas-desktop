@@ -33,10 +33,13 @@ after GitHub Code Security is enabled for the repository.
 
 ## Moved off the per-PR path
 
-These are NOT per-PR blockers. They run on **push-to-`main`** (post-merge
-coverage), **nightly** (`schedule`), and **on demand** (`workflow_dispatch`):
+These are NOT per-PR blockers:
 
-- `e2e-test.yml` — 3-OS E2E matrix (Linux / Windows / macOS)
+- `e2e-test.yml` — 3-OS E2E matrix (Linux / Windows / macOS), nightly and on
+  demand. A `main` commit whose message contains `[run-e2e]` also runs the
+  exact-commit matrix on GitHub-hosted runners. Ordinary pushes create no E2E
+  runner jobs, which preserves the release evidence path without spending
+  hosted minutes on every merge.
 - `windows-integration-test.yml` — Windows CLI integration
 - `style.yml` → `optimize` (dependency/perf audit) + `knip` (frontend dead code) — gated by `if: github.event_name != 'pull_request'`
 
@@ -46,6 +49,9 @@ To run one against a risky PR before merge:
 gh workflow run "E2E Tests" --ref <your-branch>
 gh workflow run "Windows CLI Integration Test" --ref <your-branch>
 ```
+
+To collect exact-commit E2E evidence without local GitHub CLI authorization,
+use `[run-e2e]` only in the final commit message after all local gates pass.
 
 ## Conditional (already path-gated — unchanged)
 
