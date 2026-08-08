@@ -136,6 +136,22 @@ jobs:
       shell: pwsh
       run: .github/scripts/windows/patch-antirez-asr-share-header.ps1
 
+    - name: Shorten target dir to avoid MAX_PATH
+      shell: pwsh
+      run: |
+        $shortDir = "C:\t"
+        if (Test-Path $shortDir) {
+          Remove-Item $shortDir -Recurse -Force
+        }
+        if (Test-Path target) {
+          Remove-Item target -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $shortDir -Force | Out-Null
+        cmd /c mklink /J target $shortDir
+        if (-not (Test-Path target)) {
+          throw "Failed to create the short Cargo target junction"
+        }
+
     - name: Build CLI
       env:
         RUSTFLAGS: "-C link-arg=/LTCG"

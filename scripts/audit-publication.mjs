@@ -1482,6 +1482,8 @@ function auditReleaseWorkflow(files) {
         [
           "fa33e25f9a46c61e4e0cd83362c51c3d2a45c6fe4091aad7507e240e40f1a520",
           "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da",
+          "Shorten target dir to avoid MAX_PATH",
+          'cmd /c mklink /J target $shortDir',
         ],
       ],
       [

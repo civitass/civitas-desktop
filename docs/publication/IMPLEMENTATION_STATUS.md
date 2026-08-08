@@ -112,6 +112,16 @@ old releases, service-side secrets, or legal rights.
   encrypted GitHub Actions secrets into the fresh candidate. Only their names
   and update timestamps were inspected. The one-time workflow and migration
   token were removed immediately after its successful run.
+- The first clean-staging push passed the complete-history Secret Scan. Its
+  quality run then detected newly published advisories in the desktop,
+  optional assistant runtime, and MCP lockfiles; all affected transitive
+  versions were raised to their patched compatible lines, and the exact Bun
+  `1.3.10` four-lockfile audit now reports zero vulnerabilities. No advisory
+  exception or baseline was added.
+- The same staging run exposed a Windows MSVC `MAX_PATH` failure in the nightly
+  integration workflow. The job now creates and verifies a short `C:\t` Cargo
+  target junction before compilation, matching the already-hardened release
+  lane, and the publication audit prevents that guard from being removed.
 - The Windows release lane is implemented but cannot run successfully until
   the repository has all four SSL.com `ESIGNER_*` secret values. The current
   repository secret-name inventory and local operator credential inventory do
