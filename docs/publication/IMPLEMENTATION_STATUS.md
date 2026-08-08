@@ -176,9 +176,13 @@ The required cutover is therefore an allowlisted snapshot pushed as the sole
 root of a **new empty repository**, while the current repository is renamed and
 retained privately as signing/legacy infrastructure. The private empty
 `civitass/civitas-desktop-publication-staging` repository was created on
-2026-08-07; it contains no source ref yet. The newly rotated Tauri updater
-private key and password are installed there as encrypted secret values, and
-their temporary local files have been removed. Before visibility changes,
+2026-08-07. Its clean `main` root was pushed as `49fd29a` after all 12 retained
+commits passed full-history Gitleaks with zero findings and the final tree was
+verified byte-for-byte against tested private commit `d2a8aa7`. Remote
+inventory lists exactly one branch head and zero tags. The newly rotated Tauri
+updater private key and password are installed there as encrypted secret
+values, and their temporary local files have been removed. The repository
+remains private while exact-clean-commit workflows run. Before visibility changes,
 signed-out `git ls-remote` must list only the approved default branch and
 explicitly allowlisted release tags. GitHub-Support-assisted purge/recreate is
 acceptable only with equivalent evidence. No visibility change has occurred.
