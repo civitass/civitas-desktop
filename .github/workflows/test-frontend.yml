@@ -4,6 +4,7 @@
 name: Frontend Tests
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'apps/civitas-app-tauri/**/*.ts'

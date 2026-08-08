@@ -24,6 +24,9 @@ per-PR blocker.
 
 (`ci.yml`, `test-frontend.yml`, and `docs.yml` are already `paths`-filtered, so
 a PR that doesn't touch their area is correctly a no-op for that check.)
+Those three workflows also support `workflow_dispatch`, allowing a release
+candidate to collect the complete required check set against one exact commit
+without introducing unrelated source changes merely to satisfy path filters.
 CodeQL runs automatically once the repository is public. While it remains
 private, set the repository variable `CIVITAS_CODEQL_PRIVATE_ENABLED=true` only
 after GitHub Code Security is enabled for the repository.
