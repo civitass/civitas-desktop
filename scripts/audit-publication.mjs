@@ -1526,8 +1526,9 @@ function auditReleaseWorkflow(files) {
       [
         "apps/civitas-app-tauri/scripts/pre_build.js",
         [
-          "8030dc469fbde247b84cfc21a5c421f3965ffe779bc35de08d78966e0c4a272c",
-          "ffmpegBytes: 55372118",
+          "github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build-shared.7z",
+          "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d",
+          "ffmpegBytes: 59459100",
           "1cb217bb639951bc7ea15f08a9296c462f75597871e82d3350e2abe932f65ee6",
           "ffmpegArm64Bytes: 22582217",
           "expectedBytes: 22289708",

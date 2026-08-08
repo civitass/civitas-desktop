@@ -28,12 +28,12 @@ console.log("cwd", cwd);
 const config = {
   ffmpegRealname: "ffmpeg",
   windows: {
-    ffmpegName: "ffmpeg-8.0.1-full_build-shared",
+    ffmpegName: "ffmpeg-8.1.2-full_build-shared",
     ffmpegUrl:
-      "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.0.1-full_build-shared.7z",
+      "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build-shared.7z",
     ffmpegSha256:
-      "8030dc469fbde247b84cfc21a5c421f3965ffe779bc35de08d78966e0c4a272c",
-    ffmpegBytes: 55372118,
+      "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d",
+    ffmpegBytes: 59459100,
     ffmpegArm64Name: "ffmpeg-master-latest-essentials-shared-win-arm64.7z",
     ffmpegArm64Url:
       "https://github.com/tordona/ffmpeg-win-arm64/releases/download/latest-autobuild-2026.07.27.0/ffmpeg-master-latest-essentials-shared-win-arm64.7z",
