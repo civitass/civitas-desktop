@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   ensureApiReady: vi.fn(),
   createAuthenticatedWebSocket: vi.fn(),
+  loadCachedFrames: vi.fn(),
+  saveFramesToCache: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -22,8 +24,8 @@ vi.mock("../actions/has-frames-date", () => ({
 }));
 
 vi.mock("./use-timeline-cache", () => ({
-  loadCachedFrames: vi.fn().mockResolvedValue(null),
-  saveFramesToCache: vi.fn(),
+  loadCachedFrames: mocks.loadCachedFrames,
+  saveFramesToCache: mocks.saveFramesToCache,
 }));
 
 import { useTimelineStore } from "./use-timeline-store";
@@ -32,6 +34,8 @@ describe("Timeline connection terminal states", () => {
   beforeEach(() => {
     mocks.ensureApiReady.mockReset();
     mocks.createAuthenticatedWebSocket.mockReset();
+    mocks.loadCachedFrames.mockReset().mockResolvedValue(null);
+    mocks.saveFramesToCache.mockReset();
     useTimelineStore.setState({
       frames: [],
       frameTimestamps: new Set(),
@@ -39,6 +43,7 @@ describe("Timeline connection terminal states", () => {
       error: null,
       message: "connecting...",
       isConnected: false,
+      currentDate: new Date(),
     });
   });
 
@@ -103,5 +108,41 @@ describe("Timeline connection terminal states", () => {
     expect(useTimelineStore.getState().frames).toEqual([cachedFrame]);
     expect(useTimelineStore.getState().error).toBeNull();
     expect(useTimelineStore.getState().isLoading).toBe(false);
+  });
+
+  it("does not let late browser-cache hydration replace authoritative frames", async () => {
+    let resolveCache: ((value: unknown) => void) | undefined;
+    mocks.loadCachedFrames.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCache = resolve;
+      }),
+    );
+
+    const hydration = useTimelineStore.getState().loadFromCache();
+    const liveFrame = {
+      timestamp: new Date().toISOString(),
+      devices: [],
+    };
+    useTimelineStore.setState({
+      frames: [liveFrame],
+      frameTimestamps: new Set([liveFrame.timestamp]),
+      isLoading: false,
+      isConnected: true,
+    });
+
+    resolveCache?.({
+      frames: [
+        {
+          timestamp: new Date(Date.now() - 60_000).toISOString(),
+          devices: [],
+        },
+      ],
+      date: new Date().toISOString(),
+      timestamp: Date.now(),
+    });
+    await hydration;
+
+    expect(useTimelineStore.getState().frames).toEqual([liveFrame]);
+    expect(useTimelineStore.getState().isConnected).toBe(true);
   });
 });

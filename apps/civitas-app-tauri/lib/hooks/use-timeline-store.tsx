@@ -169,16 +169,28 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
         const isToday = cachedDate.toDateString() === today.toDateString();
         const timestamps = new Set(cached.frames.map((f) => f.timestamp));
 
-        // Only use cached frames if they're from today
-        // Otherwise start fresh with today's date
-        set({
-          frames: isToday ? cached.frames : [],
-          frameTimestamps: isToday ? timestamps : new Set<string>(),
-          currentDate: today, // Always use today, not cached date
-          isLoading: !isToday, // Show loading if cache is stale
-          hasCachedData: isToday,
-          message: null,
-          error: null,
+        set((state) => {
+          // Cache hydration races the authoritative local WebSocket by design.
+          // Never replace live frames, and never move a user back to today if
+          // they navigated to another date while IndexedDB was resolving.
+          if (
+            state.frames.length > 0 ||
+            state.currentDate.toDateString() !== today.toDateString()
+          ) {
+            return {};
+          }
+
+          // Only use cached frames if they're from today. Otherwise keep the
+          // loader active while the already-started WebSocket fetches today.
+          return {
+            frames: isToday ? cached.frames : [],
+            frameTimestamps: isToday ? timestamps : new Set<string>(),
+            currentDate: today,
+            isLoading: !isToday,
+            hasCachedData: isToday,
+            message: null,
+            error: null,
+          };
         });
       }
     } catch (error) {

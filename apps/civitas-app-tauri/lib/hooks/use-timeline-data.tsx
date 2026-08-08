@@ -30,16 +30,13 @@ export function useTimelineData(
     if (hasInitialized.current) return;
     hasInitialized.current = true;
 
-    const initialize = async () => {
-      // 1. First, load cached frames for instant display
-      await loadFromCache();
-
-      // 2. Then establish WebSocket connection for live updates
-      // The connectWebSocket function handles closing existing connections
-      connectWebSocket();
-    };
-
-    initialize();
+    // Browser storage is an optional paint optimization, not a prerequisite
+    // for local data. IndexedDB can be slow, blocked, or left in recovery by
+    // an interrupted WebView process (observed on WebView2). Start hydration
+    // without awaiting it so the authoritative local WebSocket always opens.
+    // loadFromCache refuses to replace frames that arrive first.
+    void loadFromCache();
+    connectWebSocket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only connect once when component mounts
 
