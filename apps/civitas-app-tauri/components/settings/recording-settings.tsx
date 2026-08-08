@@ -3611,27 +3611,25 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Civi
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {!settings.disableMeetingDetector && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs gap-1.5"
-                    onClick={() => setMeetingAppsPickerOpen(true)}
-                    title="Choose apps that should never auto-start a meeting"
-                    data-testid="settings-ignore-meeting-apps-button"
-                  >
-                    <UserX className="h-3.5 w-3.5" />
-                    ignore apps
-                    {(settings.ignoredMeetingApps?.length ?? 0) > 0 && (
-                      <span
-                        className="rounded bg-muted px-1.5 py-0.5 text-2xs tabular-nums"
-                        data-testid="settings-ignore-meeting-apps-count"
-                      >
-                        {settings.ignoredMeetingApps!.length}
-                      </span>
-                    )}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setMeetingAppsPickerOpen(true)}
+                  title="Choose apps that should never auto-start a meeting"
+                  data-testid="settings-ignore-meeting-apps-button"
+                >
+                  <UserX className="h-3.5 w-3.5" />
+                  ignore apps
+                  {(settings.ignoredMeetingApps?.length ?? 0) > 0 && (
+                    <span
+                      className="rounded bg-muted px-1.5 py-0.5 text-2xs tabular-nums"
+                      data-testid="settings-ignore-meeting-apps-count"
+                    >
+                      {settings.ignoredMeetingApps!.length}
+                    </span>
+                  )}
+                </Button>
                 <Switch
                   id="disableMeetingDetector"
                   checked={!settings.disableMeetingDetector}
