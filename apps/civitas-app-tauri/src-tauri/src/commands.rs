@@ -1130,9 +1130,33 @@ pub async fn e2e_seed_publication_timeline(
             .map(|core| core.db.clone())
             .ok_or_else(|| "Civitas local service is not ready".to_string())?
     };
+    // The command may be invoked again by WebdriverIO after a spec retry. Remove
+    // only this fixed E2E namespace first so retries remain deterministic and do
+    // not accumulate duplicate Timeline rows. An immediate transaction keeps the
+    // cleanup serialized with the application's other SQLite writers.
+    let mut cleanup = db
+        .begin_immediate_with_retry()
+        .await
+        .map_err(|error| format!("could not begin publication Timeline reset: {error}"))?;
+    sqlx::query(
+        "DELETE FROM frames WHERE device_name = ?1 AND capture_trigger = ?2",
+    )
+    .bind("publication-demo-display")
+    .bind("publication-demo")
+    .execute(&mut **cleanup.conn())
+    .await
+    .map_err(|error| format!("could not reset publication Timeline frames: {error}"))?;
+    cleanup
+        .commit()
+        .await
+        .map_err(|error| format!("could not commit publication Timeline reset: {error}"))?;
+
     let now = chrono::Utc::now();
     let mut frame_ids = Vec::with_capacity(3);
-    for minutes_ago in [52_i64, 24, 3] {
+    // Keep deterministic publication frames younger than the ten-minute
+    // compaction boundary. This command validates Timeline presentation; the
+    // compactor's mixed-format contract has its own native regression tests.
+    for minutes_ago in [3_i64, 2, 1] {
         let frame_id = db
             .insert_snapshot_frame(
                 "publication-demo-display",
