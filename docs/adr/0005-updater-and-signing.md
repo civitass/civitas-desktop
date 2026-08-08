@@ -6,8 +6,8 @@ Accepted
 
 ## Context
 
-The consumer app needs a downloadable macOS DMG and a safe update path without
-depending on the retired Civitas control plane.
+The consumer app needs downloadable macOS DMGs, a Windows installer, and a safe
+update path without depending on the retired Civitas control plane.
 
 ## Decision
 
@@ -21,13 +21,17 @@ depending on the retired Civitas control plane.
 - macOS artifacts use Developer ID signing, hardened runtime, notarization, and
   stapling. Release jobs fail if `codesign`, `spctl`, or `stapler` validation
   fails.
+- Windows artifacts use timestamped Authenticode and a signed NSIS installer.
+  The release fails when SSL.com credentials are incomplete, a signature or
+  timestamp is invalid, the payload boundary scan fails, or the isolated
+  install/uninstall check fails.
 - All third-party workflow actions are pinned to immutable commits and release
   permissions are least-privilege.
 - Source builds have the updater disabled. Beta and stable use separate,
   explicit GitHub Release manifest locations.
-- The private signing key and Apple credentials exist only in the protected
-  release environment. They are never printed, archived, or made available to
-  pull-request jobs.
+- The updater private key, Apple credentials, and Windows signing credentials
+  exist only in the protected release environment. They are never printed,
+  archived, or made available to pull-request jobs.
 
 ## Consequences
 

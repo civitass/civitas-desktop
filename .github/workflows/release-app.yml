@@ -717,12 +717,161 @@ jobs:
             security delete-keychain "$CIVITAS_RELEASE_KEYCHAIN"
           fi
 
+  build-windows:
+    name: Build Windows (x86-64)
+    needs:
+      - validate
+      - draft-release
+    runs-on: windows-2022
+    environment: consumer-release
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      CARGO_TARGET_DIR: C:\t
+      CC_x86_64_pc_windows_msvc: cl.exe
+      CXX_x86_64_pc_windows_msvc: cl.exe
+      CFLAGS_x86_64_pc_windows_msvc: /arch:AVX2
+      CXXFLAGS_x86_64_pc_windows_msvc: /arch:AVX2
+      CIVITAS_REQUIRE_WINDOWS_SIGNING: "1"
+      ORT_STRATEGY: system
+      ORT_LIB_LOCATION: ${{ github.workspace }}\apps\civitas-app-tauri\src-tauri\onnxruntime-win-x64-1.22.0
+      OPENBLAS_PATH: ${{ github.workspace }}\apps\civitas-app-tauri\src-tauri\openblas
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+      GGML_NATIVE: "OFF"
+      GGML_AVX512: "OFF"
+      GGML_AVX512_VBMI: "OFF"
+      GGML_AVX512_VNNI: "OFF"
+      GGML_AVX512_BF16: "OFF"
+      CMAKE_ARGS: -DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF -DCMAKE_C_FLAGS=/arch:AVX2 -DCMAKE_CXX_FLAGS=/arch:AVX2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up pinned Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          toolchain: "1.93.1"
+          target: x86_64-pc-windows-msvc
+          rustflags: ""
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+
+      - name: Require complete Windows release signing credentials
+        shell: pwsh
+        env:
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+          ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+        run: |
+          $missing = @()
+          foreach ($name in @('ESIGNER_USERNAME', 'ESIGNER_PASSWORD', 'ESIGNER_TOTP_SECRET', 'ESIGNER_CREDENTIAL_ID')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              $missing += $name
+            }
+          }
+          if ($missing.Count -gt 0) {
+            throw "Official Windows releases require timestamped Authenticode signing. Missing secret names: $($missing -join ', ')"
+          }
+
+      - name: Install locked frontend dependencies
+        working-directory: apps/civitas-app-tauri
+        run: bun install --frozen-lockfile
+
+      - name: Download verified ONNX Runtime
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'onnxruntime-win-x64-1.22.0.zip'
+          & .github/scripts/windows/download-verified.ps1 `
+            -Uri 'https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip' `
+            -Destination $archive `
+            -Sha256 '174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da' `
+            -ExpectedBytes 72368545
+          & 7z.exe x $archive '-oapps/civitas-app-tauri/src-tauri/' -y
+          if (-not (Test-Path "$env:ORT_LIB_LOCATION\lib\onnxruntime.dll")) {
+            throw 'Verified ONNX Runtime archive did not contain onnxruntime.dll'
+          }
+
+      - name: Prepare reviewed Windows native dependencies
+        shell: pwsh
+        working-directory: apps/civitas-app-tauri
+        run: |
+          bun scripts/setup_openblas.js
+          Set-Location ../..
+          & .github/scripts/windows/patch-antirez-asr-share-header.ps1
+
+      - name: Install verified SSL.com CodeSignTool
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'CodeSignTool'
+          $archive = Join-Path $env:RUNNER_TEMP 'CodeSignTool-v1.3.2-windows.zip'
+          & .github/scripts/windows/download-verified.ps1 `
+            -Uri 'https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.2/CodeSignTool-v1.3.2-windows.zip' `
+            -Destination $archive `
+            -Sha256 '4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b' `
+            -ExpectedBytes 214673784
+          Expand-Archive -Path $archive -DestinationPath $destination -Force
+          if (-not (Get-ChildItem $destination -Recurse -Filter 'CodeSignTool.bat' | Select-Object -First 1)) {
+            throw 'Verified CodeSignTool archive did not contain CodeSignTool.bat'
+          }
+          "CODESIGNTOOL_PATH=$destination" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prepare production bundle inputs
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE.md apps/civitas-app-tauri/src-tauri/assets/CIVITAS-LICENSE.md -Force
+          Copy-Item NOTICE.md apps/civitas-app-tauri/src-tauri/assets/CIVITAS-NOTICE.md -Force
+          Copy-Item THIRD_PARTY_NOTICES.md apps/civitas-app-tauri/src-tauri/assets/THIRD-PARTY-NOTICES.md -Force
+          Copy-Item apps/civitas-app-tauri/src-tauri/tauri.prod.conf.json apps/civitas-app-tauri/src-tauri/tauri.conf.json -Force
+          Set-Location apps/civitas-app-tauri
+          bun scripts/pre_build.js
+
+      # tauri-apps/tauri-action v1
+      - name: Build, Authenticode-sign, and upload Windows installer to draft
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+          ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+        with:
+          projectPath: apps/civitas-app-tauri
+          tagName: ${{ needs.validate.outputs.release_tag }}
+          releaseDraft: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: civitas-desktop-${{ needs.validate.outputs.version }}-windows-x86_64-[bundle]
+          releaseAssetNamePattern: Civitas-Desktop_[version]_x64-setup.[ext]
+          retryAttempts: 2
+          args: >-
+            --target x86_64-pc-windows-msvc
+            --features official-build,directml,redact-onnx-directml
+
+      - name: Verify Windows signatures, payload boundary, install, and uninstall
+        shell: pwsh
+        run: |
+          & .github/scripts/windows/verify-desktop-release.ps1 `
+            -BundleDirectory "$env:CARGO_TARGET_DIR\x86_64-pc-windows-msvc\release\bundle"
+
   finalize-draft:
     name: Finalize checksums, provenance, and updater manifest
     needs:
       - validate
       - supply-chain
       - build-macos
+      - build-windows
     runs-on: ubuntu-24.04
     environment: consumer-release
     timeout-minutes: 20
@@ -768,8 +917,13 @@ jobs:
             exit 1
           fi
           signature_count="$(find release-assets -maxdepth 1 -type f -name '*.sig' | wc -l | tr -d ' ')"
-          if [ "$signature_count" -lt 2 ]; then
-            echo "::error::expected updater signatures for both macOS architectures, found ${signature_count}"
+          if [ "$signature_count" -lt 3 ]; then
+            echo "::error::expected updater signatures for both macOS architectures and Windows, found ${signature_count}"
+            exit 1
+          fi
+          windows_installer_count="$(find release-assets -maxdepth 1 -type f -name '*x64-setup.exe' | wc -l | tr -d ' ')"
+          if [ "$windows_installer_count" -ne 1 ]; then
+            echo "::error::expected one signed Windows x86-64 installer, found ${windows_installer_count}"
             exit 1
           fi
           test -f release-assets/latest.json
@@ -822,6 +976,32 @@ jobs:
               --quiet
           done
 
+          windows_updater_count="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' | wc -l | tr -d ' ')"
+          if [ "$windows_updater_count" -ne 1 ]; then
+            echo "::error::expected one Windows updater archive, found ${windows_updater_count}"
+            exit 1
+          fi
+          windows_updater="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' -print -quit)"
+          windows_signature="${windows_updater}.sig"
+          test -f "$windows_signature"
+          rsign verify "$windows_updater" \
+            --public-key-path "$updater_public_key" \
+            --sig-file "$windows_signature" \
+            --quiet
+          windows_name="$(basename "$windows_updater")"
+          windows_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${windows_name}"
+          windows_manifest_signature="$(cat "$windows_signature")"
+          jq \
+            --arg url "$windows_url" \
+            --arg signature "$windows_manifest_signature" \
+            '.platforms["windows-x86_64"] = {url: $url, signature: $signature}' \
+            release-assets/latest.json > release-assets/latest.json.tmp
+          mv release-assets/latest.json.tmp release-assets/latest.json
+          jq -e '
+            .platforms["windows-x86_64"].url and
+            .platforms["windows-x86_64"].signature
+          ' release-assets/latest.json >/dev/null
+
           cp publication-metadata/* release-assets/
           checksum_file="$RUNNER_TEMP/SHA256SUMS"
           (
@@ -848,6 +1028,7 @@ jobs:
             release-assets/CIVITAS-LICENSE.md \
             release-assets/CIVITAS-NOTICE.md \
             release-assets/THIRD-PARTY-NOTICES.md \
+            release-assets/latest.json \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
@@ -857,6 +1038,8 @@ jobs:
         with:
           subject-path: |
             release-assets/*.dmg
+            release-assets/*.exe
+            release-assets/*.nsis.zip
             release-assets/*.tar.gz
             release-assets/latest.json
             release-assets/SHA256SUMS

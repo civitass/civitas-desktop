@@ -1,6 +1,6 @@
 # Consumer publication implementation status
 
-> Updated: 2026-07-31
+> Updated: 2026-08-07
 > Working repository: `civitass/civitas-desktop`
 > Publication state: **private; not approved for public visibility**
 > Private `main`: publication PR #48 and dependency-security PR #59 merged
@@ -56,10 +56,10 @@ consumer repository’s public visibility.
 | Telemetry            | Optional web analytics default off; versioned consent migrates historic implicit opt-ins to off; SDK is not initialized before consent; no person profiles, autocapture, page views, performance, replay, surveys, feature flags, persistence, or remote dependency loading; final egress filtering is fail-closed and strips work content; native analytics and automatic crash upload paths are absent; crash records stay local | Telemetry consent tests and publication audit                                                  |
 | Tauri/webview        | Reduced window capabilities, separate onboarding/assistant capabilities, hardened CSP and loopback exposure, production-security validation                                                                                                                                                                         | Capability manifests and Tauri security audit                                                  |
 | Fixtures and media   | Removed tracked recordings, videos, model weights, named-person fixtures, obsolete screenshots, and LFS pointers; evaluation inputs must be generated synthetic data or an external, reviewed, licensed public corpus. Public-corpus audio and derived WAV files remain outside Git, and artifacts contain metrics only                                                               | Fixture contracts, licensed-corpus attribution, tracked-media and workflow-artifact audits      |
-| Release supply chain | Added a pinned license-safe macOS FFmpeg build; exact digest and byte verification for retained Bun, FFmpeg, OpenBLAS, ONNX Runtime, signing-tool, and test-driver downloads; no build-time tool bootstrap; immutable commit pins for every third-party GitHub Action; explicit workflow permissions and non-persisted checkout credentials; protected draft-release gates; checksums, SBOM, and provenance attestations | Build helpers, release workflows, repository-wide workflow audit, `docs/RELEASE_VERIFICATION.md` |
+| Release supply chain | Added a pinned license-safe macOS FFmpeg build and a Windows x86-64 NSIS lane; exact digest and byte verification for retained Bun, FFmpeg, OpenBLAS, ONNX Runtime, signing-tool, and test-driver downloads; fail-closed Developer ID/notarization and timestamped Authenticode requirements; isolated Windows install/uninstall verification; immutable commit pins for every third-party GitHub Action; explicit workflow permissions and non-persisted checkout credentials; protected draft-release gates; checksums, SBOM, and provenance attestations | Build helpers, release workflows, repository-wide workflow audit, `docs/RELEASE_VERIFICATION.md` |
 | Public project files | Added license, provenance and third-party notices, privacy/security/support policies, code of conduct, contribution guide, structured privacy-safe issue forms and PR checklist, CODEOWNERS, Dependabot for Cargo/Bun/Actions, public-or-opted-in-private CodeQL scanning, and build/BYOK/privacy/network/model/threat documentation                                               | Root, `.github/`, and `docs/` publication set                                                   |
 | Design system        | Refined public-facing and high-frequency product surfaces to the original native Mac design language: restrained hierarchy, system typography, consistent native radii, pointer-down feedback, custom ease-out/ease-in-out timing, no blanket property transitions, and explicit reduced-motion/transparency/contrast behavior | `DESIGN.md`, design tokens, component tests, and recursive consumer design audit                |
-| Brand and README     | Added a restrained Apple-style README composition with the correct circular Civitas mark, transparent custom Civitas Desktop wordmark at the approved larger scale, and a deterministic real-app screenshot lane that uses only an isolated synthetic profile; rejected small decorative text and reconstructed product mockups are absent | `README.md`, brand assets, publication-demo E2E journey, cutover privacy review                  |
+| Brand and README     | Added a restrained Apple-style README composition with the correct transparent monochrome circular Civitas mark, an optically centered serif/sans Civitas Desktop wordmark, direct macOS and Windows release paths, and reproducible real-app screenshots using an isolated privacy-safe native-app session; rejected small decorative text and generated interface mockups are absent | `README.md`, brand assets, publication-demo E2E journey, cutover privacy review                  |
 
 ## Automated release invariants
 
@@ -93,6 +93,26 @@ surfaces.
 
 This is a tip-of-tree control. It does not scan deleted history, GitHub logs,
 old releases, service-side secrets, or legal rights.
+
+## 2026-08-07 publication delta
+
+- A checksum-verified Gitleaks `8.30.1` scan of every tracked candidate file
+  reports zero findings without path exclusions, baselines, or allow comments.
+  Secret-detector regression fixtures construct their fake values at runtime.
+- The Windows release lane is implemented but cannot run successfully until
+  the repository has all four SSL.com `ESIGNER_*` secret values. The current
+  repository secret-name inventory and local operator credential inventory do
+  not contain them. An unsigned installer is intentionally not accepted as an
+  official artifact.
+- The macOS and Windows download URLs intentionally target GitHub Releases.
+  They must not be described as available until a verified non-draft release
+  actually contains both dual-architecture DMGs and the signed Windows
+  installer.
+- A single technical reviewer can execute and record every automated and local
+  verification in this repository, but that evidence is not truthfully an
+  independent second-person, external security, or qualified legal review.
+  Those attestations remain “not obtained” unless distinct qualified reviewers
+  actually provide them.
 
 ## Validation evidence
 
@@ -147,19 +167,21 @@ public visibility change:
 ### B2 — clean public root
 
 The existing private Git repository and its historic remote refs are not
-approved for publication. A live remote inventory found 51 reachable refs,
-including feature/session/audit branches and pull-request history. Replacing
-only `main` or deleting visible branches would not prove that pull refs,
-artifacts, cached objects, releases, or PR attachments are gone.
+approved for publication. The 2026-08-07 live remote inventory found 54 branch
+heads, 86 hidden pull-request refs, and no tags. Replacing only `main` or
+deleting visible branches would not prove that pull refs, artifacts, cached
+objects, releases, or PR attachments are gone.
 
-The required cutover is therefore a two-person allowlisted snapshot pushed as
-the sole root of a **new empty repository**, while the current repository is
-renamed and retained privately as an archive. Before visibility changes,
+The required cutover is therefore an allowlisted snapshot pushed as the sole
+root of a **new empty repository**, while the current repository is renamed and
+retained privately as signing/legacy infrastructure. The private empty
+`civitass/civitas-desktop-publication-staging` repository was created on
+2026-08-07; it contains no source ref yet. The newly rotated Tauri updater
+private key and password are installed there as encrypted secret values, and
+their temporary local files have been removed. Before visibility changes,
 signed-out `git ls-remote` must list only the approved default branch and
 explicitly allowlisted release tags. GitHub-Support-assisted purge/recreate is
-acceptable only with equivalent evidence. No automation in this branch
-renames, deletes, force-pushes, creates, or changes visibility for a repository;
-each remains a consequential owner-approved action.
+acceptable only with equivalent evidence. No visibility change has occurred.
 
 ### B3 — third-party and legal approval
 
@@ -177,7 +199,7 @@ vault failure, prompt-injection boundaries, provider egress, update
 verification, and network-deny behavior. Packet capture is required for any
 strong zero-egress claim.
 
-### B5 — official macOS artifacts
+### B5 — official desktop artifacts
 
 The matching Developer ID certificate is currently valid and its private key
 passed a disposable hardened-runtime/timestamp signing probe. Apple nevertheless
@@ -187,6 +209,14 @@ the repository-held updater signing key, two architecture builds, clean-machine
 Gatekeeper/signature/notarization checks, upgrade/migration/rollback tests, and
 a second maintainer’s approval. Source builds are not substitutes for official
 DMGs.
+
+The protected Windows job now builds an x86-64 NSIS installer, requires the
+release signing mode to remain fail-closed, verifies timestamped Authenticode
+on the built and installed application, scans the bundle boundary, and performs
+an isolated install/uninstall cycle. It remains blocked because the required
+SSL.com `ESIGNER_USERNAME`, `ESIGNER_PASSWORD`, `ESIGNER_TOTP_SECRET`, and
+`ESIGNER_CREDENTIAL_ID` secrets are not configured. A source build, ad-hoc
+signature, or SmartScreen bypass is not a release substitute.
 
 ### B6 — GitHub public-project controls
 
@@ -214,9 +244,10 @@ pinning. The committed workflows have zero uncovered or unpinned remote
 actions.
 
 The current private-repository plan does not expose branch
-protection/rulesets, code scanning, or secret scanning. A protected
-`consumer-release` environment and named independent reviewer are also still
-required. The `civitas-mcp` npm name is not yet registered, `keys.md` contains
+protection/rulesets, code scanning, or secret scanning. The
+`consumer-release` environment now exists, but it has no reviewer protection;
+no independent reviewer has been supplied. The `civitas-mcp` npm name is not
+yet registered, `keys.md` contains
 no npm credential, the local npm CLI is unauthenticated, and the repository
 has no `NPM_TOKEN` secret. Its one-time, 2FA-backed bootstrap and subsequent
 migration to workflow-bound, stage-only trusted publishing remain
@@ -225,14 +256,10 @@ npm package and GitHub Release draft awaiting separate human approvals. There
 are 232 historical Actions artifacts (207 active, approximately 6.59 GiB) that
 must be reviewed and dispositioned before visibility changes.
 
-PRs #48 and #59, plus the resulting `main` pushes, have no usable server-side
-validation yet. On 2026-07-29, GitHub rejected every inspected hosted-runner
-job before step one with the check-run
-annotation `The job was not started because an Actions budget is preventing
-further use.` No runner was assigned and no workflow log exists. An
-organization owner must restore or raise the Actions budget, then rerun all
-required checks against the exact release commit. Local passes cannot
-substitute for that rerun.
+The earlier Actions-budget rejection was historical and recent hosted jobs now
+start normally. Every required workflow must still rerun successfully against
+the final clean-root commit; success on an earlier private-history object does
+not transfer to the rewritten object ID.
 
 ### B7 — browser-extension store review
 

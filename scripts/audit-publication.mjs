@@ -1249,6 +1249,15 @@ function auditReleaseWorkflow(files) {
     "--no-verification",
     "--results=unverified",
     "--fail-on-scan-errors",
+    "build-windows:",
+    "runs-on: windows-2022",
+    "CIVITAS_REQUIRE_WINDOWS_SIGNING: \"1\"",
+    "Require complete Windows release signing credentials",
+    "verify-desktop-release.ps1",
+    "expected one signed Windows x86-64 installer",
+    '.platforms["windows-x86_64"]',
+    "release-assets/*.nsis.zip",
+    "release-assets/*.exe",
   ]) {
     if (!content.includes(required)) {
       addFinding(
@@ -1256,6 +1265,35 @@ function auditReleaseWorkflow(files) {
         workflow,
         `Required release control is missing: ${required}`,
       );
+    }
+  }
+  const windowsVerifier =
+    ".github/scripts/windows/verify-desktop-release.ps1";
+  if (!files.includes(windowsVerifier)) {
+    addFinding(
+      "windows_release_verifier_missing",
+      windowsVerifier,
+      "The signed Windows release verifier is missing.",
+    );
+  } else {
+    const verifierContent = fs.readFileSync(
+      path.join(repoRoot, windowsVerifier),
+      "utf8",
+    );
+    for (const required of [
+      "Get-AuthenticodeSignature",
+      "TimeStamperCertificate",
+      "High-confidence credential material found",
+      "Silent clean install failed",
+      "Silent clean uninstall failed",
+    ]) {
+      if (!verifierContent.includes(required)) {
+        addFinding(
+          "windows_release_verifier_incomplete",
+          windowsVerifier,
+          `Required Windows release verification is missing: ${required}`,
+        );
+      }
     }
   }
   const buildMacStart = content.indexOf("\n  build-macos:");

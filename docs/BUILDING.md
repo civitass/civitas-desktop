@@ -50,7 +50,11 @@ workload, Windows SDK, Rustup, LLVM, CMake, Git, Bun, 7-Zip, and FFmpeg. Set
 
 The supported release target is `x86_64-pc-windows-msvc`. Windows signing and
 installer verification are release-owner operations and are not required for a
-local source build.
+local source build. The official workflow requires timestamped Authenticode on
+the application, NSIS installer, and every installed executable payload,
+verifies their publisher and timestamp, scans the decompressed installation
+boundary, and performs an isolated install and uninstall. An unsigned local
+build must not be redistributed as an official Civitas package.
 
 Git for Windows supplies Bash to optional assistant tools. The application does
 not download or run PortableGit or another system installer. Without Git Bash,

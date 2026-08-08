@@ -12,9 +12,26 @@ param(
     [string]$FilePath
 )
 
-# Skip if credentials aren't set (local dev builds)
-if (-not $env:ESIGNER_USERNAME -or -not $env:ESIGNER_PASSWORD) {
-    Write-Host "Skipping code signing (no credentials): $FilePath"
+# Skip only for ordinary local development. Official builds require the full
+# credential set here as well as in the workflow preflight, so a direct Tauri
+# invocation cannot accidentally produce an unsigned "official" package.
+$requiredCredentialNames = @(
+    'ESIGNER_USERNAME',
+    'ESIGNER_PASSWORD',
+    'ESIGNER_TOTP_SECRET',
+    'ESIGNER_CREDENTIAL_ID'
+)
+$missingCredentialNames = @(
+    $requiredCredentialNames | Where-Object {
+        [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
+    }
+)
+if ($missingCredentialNames.Count -gt 0) {
+    if ($env:CIVITAS_REQUIRE_WINDOWS_SIGNING -eq '1') {
+        Write-Host "ERROR: official Windows release signing is required; missing: $($missingCredentialNames -join ', ')"
+        exit 1
+    }
+    Write-Host "Skipping code signing (incomplete local credentials): $FilePath"
     exit 0
 }
 

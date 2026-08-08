@@ -274,12 +274,12 @@ Export a settings/evidence summary without secret values.
 **Stop condition:** required checks can be bypassed, release permission is
 ambiguous, or security reporting is unavailable.
 
-## Gate 7 — signed macOS release candidate
+## Gate 7 — signed desktop release candidate
 
-Use repository/environment secrets for Apple Developer ID, notarization, and
-Tauri updater signing. Do not use local untracked credentials in ordinary
-build logs. Trigger the pinned release workflow from the reviewed immutable
-tag; automation must create a **draft** release only.
+Use repository/environment secrets for Apple Developer ID, notarization,
+Windows Authenticode, and Tauri updater signing. Do not use local untracked
+credentials in ordinary build logs. Trigger the pinned release workflow from
+the reviewed immutable tag; automation must create a **draft** release only.
 
 For Apple Silicon and Intel artifacts:
 
@@ -295,17 +295,31 @@ For Apple Silicon and Intel artifacts:
 9. ensure release notes disclose network/privacy/schema/model changes and known
    limits.
 
+For the Windows x86-64 artifact:
+
+1. require all SSL.com signing inputs before the build begins;
+2. verify the application and NSIS installer have valid timestamped
+   Authenticode signatures from the same expected publisher;
+3. scan both bundle and installed payload for credential-shaped files,
+   high-confidence secret bytes, and consent-gated model weights;
+4. perform an isolated silent install, verify the installed publisher, then
+   perform and verify a clean uninstall;
+5. verify the `.nsis.zip` updater signature and the canonical
+   `windows-x86_64` manifest entry;
+6. verify checksum, SBOM, release provenance, architecture, and release notes.
+
 Follow every command and failure rule in
 [`docs/RELEASE_VERIFICATION.md`](../RELEASE_VERIFICATION.md).
 
-**Stop condition:** an artifact is ad-hoc signed, unnotarized, unstapled,
-mislabelled, unverifiable, unexpectedly networked, or different from the
-attested bytes.
+**Stop condition:** an artifact is ad-hoc/self-signed, unnotarized, unstapled,
+missing a timestamp, mislabelled, unverifiable, unexpectedly networked, or
+different from the attested bytes.
 
 ## Gate 8 — clean-machine product matrix
 
-Use fresh supported macOS installations for both architectures and only
-synthetic content. Record OS build and artifact hash. Test:
+Use fresh supported macOS installations for both architectures and a supported
+Windows x86-64 installation, with privacy-safe synthetic content only. Record
+OS build and artifact hash. Test:
 
 - download, checksum/provenance verification, mount, install, first launch;
 - denial and later granting of each permission;

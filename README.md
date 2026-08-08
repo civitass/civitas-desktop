@@ -1,30 +1,30 @@
 <p align="center">
-  <img src="docs/assets/civitas-desktop-wordmark.svg" width="820" alt="Civitas Desktop">
+  <img src="docs/assets/civitas-desktop-wordmark.svg" width="720" alt="Civitas Desktop">
 </p>
 
 <p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat-square&color=1d1d1f"></a>
-  <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat-square"></a>
-  <a href="https://github.com/civitass/civitas-desktop/actions/workflows/release-app.yml"><img alt="Release verification" src="https://img.shields.io/github/actions/workflow/status/civitass/civitas-desktop/release-app.yml?style=flat-square&label=release%20gates"></a>
-  <img alt="Local first" src="https://img.shields.io/badge/data-local--first-675d58?style=flat-square">
-  <img alt="No account required" src="https://img.shields.io/badge/account-not%20required-675d58?style=flat-square">
+  <strong>Rewind your day. Know what to do next.</strong><br><br>
+  A local-first work memory that turns the moments you choose into a private<br>
+  Timeline, an evidence-linked graph, and useful next actions.
 </p>
 
 <p align="center">
-  <strong>Rewind your day. Know what to do next.</strong><br>
-  Civitas turns the moments you choose into a private Timeline, then predicts
-  useful next actions from evidence—without sending your entire history to a
-  hosted Civitas service.
-</p>
-
-<p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>Download for macOS</strong></a>
-  &nbsp;·&nbsp;
+  <a href="https://github.com/civitass/civitas-desktop/releases/latest"><strong>Download for macOS</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/civitass/civitas-desktop/releases/latest"><strong>Download for Windows</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/BUILDING.md">Build from source</a>
-  &nbsp;·&nbsp;
+  &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/BYOK.md">Connect your AI</a>
-  &nbsp;·&nbsp;
+  &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/PRIVACY_AND_DATA_BOUNDARY.md">Privacy boundary</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat&color=1d1d1f"></a>
+  <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat"></a>
+  <a href="https://github.com/civitass/civitas-desktop/actions/workflows/release-app.yml"><img alt="Release verification" src="https://img.shields.io/github/actions/workflow/status/civitass/civitas-desktop/release-app.yml?style=flat&label=verified%20build"></a>
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-675d58?style=flat">
 </p>
 
 ---
@@ -38,7 +38,7 @@ what Civitas used instead of trusting a fluent guess.
 
 It is built for one person recovering context across apps—not for employee
 monitoring, fleet administration, or a company control plane. Capture, search,
-the timeline, the graph, feedback, and profile metadata stay on your Mac by
+the timeline, the graph, feedback, and profile metadata stay on your computer by
 default. AI is either loopback-local or a provider you explicitly connect.
 
 ## Rewind the moment. See the next move.
@@ -50,7 +50,7 @@ evidence age, risk, and controls visible; nothing executes by itself.
 
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/demo/timeline.png" width="1200" alt="The actual Civitas Desktop Timeline showing a synthetic Northstar launch brief and local time scrubber">
+    <img src="docs/assets/demo/timeline.png" width="1200" alt="The actual Civitas Desktop Timeline showing a privacy-safe native launch-review session and local time scrubber">
   </a>
 </p>
 
@@ -58,15 +58,16 @@ evidence age, risk, and controls visible; nothing executes by itself.
 
 <p align="center">
   <a href="docs/assets/demo/next-actions.png">
-    <img src="docs/assets/demo/next-actions.png" width="1200" alt="The actual Civitas Desktop Next Actions view showing a ranked synthetic commitment with its evidence and safety state">
+    <img src="docs/assets/demo/next-actions.png" width="1200" alt="The actual Civitas Desktop Next Actions view showing ranked privacy-safe launch commitments with evidence and safety state">
   </a>
 </p>
 
 <p align="center"><em>Next Actions — the most useful continuation, grounded in evidence and kept as a draft.</em></p>
 
-> These are captures of the real desktop application using an isolated,
-> synthetic local profile. They contain no founder, contributor, or customer
-> data. The same privacy-safe capture is exercised by the publication E2E suite.
+> These are reproducible captures of the real desktop application. They use an
+> isolated local profile and a privacy-safe native-app session created only for
+> the demo—never founder, contributor, or customer data. The publication E2E
+> suite recreates and verifies the same screens.
 
 ## Three everyday wins
 
@@ -78,7 +79,7 @@ evidence age, risk, and controls visible; nothing executes by itself.
 
 ## Start in three steps
 
-1. Download the verified macOS DMG from
+1. Download the verified macOS DMG or Windows installer from
    [GitHub Releases](https://github.com/civitass/civitas-desktop/releases), or
    [build from source](docs/BUILDING.md).
 2. Choose exactly what Civitas may capture. Screen and microphone permissions
@@ -224,6 +225,21 @@ managed packages without deleting work data, provider profiles, or credentials.
 Official automation builds, signs, notarizes, staples, and attaches artifacts
 to a draft release. A maintainer must verify and publish the draft; automation
 cannot silently publish it.
+
+## Install on Windows
+
+1. Open [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
+2. Download `Civitas-Desktop_<version>_x64-setup.exe` and `SHA256SUMS`.
+3. Verify the checksum, GitHub provenance, and Authenticode publisher using
+   [Release verification](docs/RELEASE_VERIFICATION.md).
+4. Run the installer. Windows 10 22H2 or later and Windows 11 are supported on
+   x86-64 computers.
+5. Grant only the capture permissions you intend to use, then choose Local AI
+   or add your own provider in **Settings → AI**.
+
+The official Windows artifact is release-blocked unless both the application
+and installer have a valid timestamped Authenticode signature. Civitas does
+not publish an unsigned package as an official release.
 
 ## Build from source
 

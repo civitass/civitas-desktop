@@ -47,7 +47,7 @@
       "endpoints": [
         "https://github.com/civitass/civitas-desktop/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzNzQ0MkQ5NzE5NkQwREEKUldUYTBKWngyVUowOHh4UTF0VUZMUkJ6TXV6UXVHamNPNnRaT1Q2WUwzWlM1cEtOaGFUZFZkRU4K"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFQkI3QzZDQzE1NkEyRkQKUldUOW9sYkJiSHk3WGk2cjhVTVBpMVRYU01jZ0I2c3k1RlphTVVuenlwTHdzaDZvVjN6TEZXR3AK"
     },
     "deep-link": {
       "desktop": {

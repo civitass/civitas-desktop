@@ -1,9 +1,11 @@
 # Release verification
 
 Official Civitas Desktop artifacts are built by the pinned GitHub Actions
-workflow from an immutable commit. Automation creates a **draft** GitHub
-Release; it cannot publish the release. A maintainer publishes only after the
-checks in this document pass.
+workflow from an immutable commit. The workflow is fail-closed: it cannot
+complete the draft unless both macOS DMGs are Developer ID signed, notarized,
+and stapled and the Windows application and installer have valid timestamped
+Authenticode signatures. Automation creates a **draft** GitHub Release; it
+cannot publish the release.
 
 ## Expected release files
 
@@ -11,7 +13,10 @@ For each version, the draft should contain:
 
 - macOS DMGs for Apple Silicon and Intel, or the architecture matrix stated in
   the release notes;
-- Tauri updater archives, signatures, and `latest.json`;
+- one signed Windows x86-64 NSIS installer named
+  `Civitas-Desktop_<version>_x64-setup.exe`;
+- Tauri updater archives and signatures for both macOS architectures and
+  Windows x86-64, plus one canonical `latest.json`;
 - `SHA256SUMS`;
 - SPDX JSON SBOM named for the version;
 - Civitas license, notice, and third-party notices;
@@ -36,11 +41,16 @@ may mirror the exact bytes, but GitHub Releases is the primary public source.
 6. Verify checksums, provenance, code signature, notarization ticket,
    Gatekeeper assessment, architecture, updater signature, and bundled
    contents.
-7. Install on clean supported macOS versions and complete the smoke matrix.
+7. Install on clean supported macOS and Windows versions and complete the smoke
+   matrix. The automated Windows job also performs an isolated silent install,
+   verifies every installed executable and library against the reviewed,
+   timestamped publisher certificate, and exercises the uninstaller.
 8. Test upgrade from the prior supported version with a backed-up synthetic
    data directory.
 9. Confirm rollback/recovery instructions for any data migration.
-10. Have a second maintainer record approval before publishing.
+10. Record every review that actually occurred. Never substitute an automated
+    scan or one person's review for a claimed second-maintainer, external
+    security, or legal approval.
 
 ## User checksum verification
 
@@ -93,12 +103,37 @@ Install only the architecture advertised by the release. The workflow builds
 Apple Silicon (`aarch64-apple-darwin`) and Intel
 (`x86_64-apple-darwin`) artifacts separately.
 
+## Windows checksum and Authenticode
+
+Download the installer and `SHA256SUMS` from the same release, then run in
+PowerShell:
+
+```powershell
+$installer = Get-Item .\Civitas-Desktop_*_x64-setup.exe
+Get-FileHash $installer -Algorithm SHA256
+Get-Content .\SHA256SUMS | Select-String $installer.Name
+
+$signature = Get-AuthenticodeSignature $installer
+$signature | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+    throw 'Do not install: the Civitas installer signature is not valid and timestamped.'
+}
+```
+
+The checksum must match exactly. The signature must report `Valid`, include the
+expected Civitas publisher from the release notes, and include a timestamping
+certificate. Stop if Windows reports `NotSigned`, `HashMismatch`, `UnknownError`,
+or an unexpected publisher. Official Civitas releases never ask users to bypass
+SmartScreen for an unsigned binary.
+
 ## GitHub provenance
 
 Use GitHub's artifact attestation verification against the repository:
 
 ```bash
 gh attestation verify Civitas-Desktop_*.dmg \
+  --repo civitass/civitas-desktop
+gh attestation verify Civitas-Desktop_*_x64-setup.exe \
   --repo civitass/civitas-desktop
 ```
 
@@ -110,6 +145,9 @@ matches.
 
 The production configuration pins the Tauri updater public key and the GitHub
 Releases manifest endpoint. Test:
+
+- `latest.json` contains signed `darwin-aarch64`, `darwin-x86_64`, and
+  `windows-x86_64` entries that point only to the immutable release tag;
 
 - valid signed update from the stable channel;
 - tampered bundle rejection;

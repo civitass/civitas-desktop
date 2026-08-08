@@ -195,7 +195,7 @@ describe("Publication demo surfaces", function () {
     expect(existsSync(filepath)).toBe(true);
   });
 
-  it("captures the real Timeline with synthetic privacy-safe history", async () => {
+  it("captures the real Timeline with a privacy-safe native-app session", async () => {
     const seeded = await seedPublicationTimeline();
     expect(seeded.frameIds).toHaveLength(3);
     expect(seeded.frameIds.every((id) => Number.isInteger(id) && id > 0)).toBe(
@@ -214,7 +214,7 @@ describe("Publication demo surfaces", function () {
       {
         timeout: t(30_000),
         interval: 250,
-        timeoutMsg: "Timeline did not render all synthetic publication frames",
+        timeoutMsg: "Timeline did not render all privacy-safe publication frames",
       },
     );
     const currentImage = await $('img[alt="Current frame"]');

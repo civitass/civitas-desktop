@@ -205,7 +205,11 @@ license file.
   and a VirusTotal or equivalent transparency link where policy permits.
 - [ ] Publish both Apple Silicon and Intel artifacts, or a tested universal
   artifact, with architecture labels that cannot be confused.
-- [ ] Install and upgrade tests pass on clean supported macOS versions.
+- [ ] Produce a timestamped Authenticode-signed Windows x86-64 installer;
+  unsigned or self-signed packages and SmartScreen bypass instructions are not
+  release fallbacks.
+- [ ] Install, uninstall, and upgrade tests pass on clean supported macOS and
+  Windows versions.
 - [ ] The updater verifies signatures and cannot silently change channels or
   endpoints.
 - [ ] GitHub Releases is a first-class download source; R2 may mirror it but is
@@ -930,7 +934,7 @@ Publish:
 - retention/deletion guide;
 - release security and verification guide.
 
-## 11. macOS DMG and updater
+## 11. Desktop distribution and updater
 
 ### 11.1 Build
 
@@ -952,12 +956,31 @@ and hardened runtime for notarized software distributed outside the Mac App
 Store. The release workflow must fail closed if signing/notarization inputs are
 absent.
 
-### 11.2 Release contents
+### 11.2 Windows installer
+
+- build on pinned `windows-2022` using the reviewed x86-64 MSVC target;
+- verify every downloaded native dependency by exact digest and byte count;
+- require timestamped Authenticode signatures on the application and NSIS
+  installer using the expected publisher;
+- fail before building when any release-signing credential is absent;
+- scan the bundle for credential-shaped files, high-confidence secret bytes,
+  and model weights that belong behind explicit download consent;
+- perform an isolated clean install, verify the installed signature, and run
+  the uninstaller;
+- publish the installer, checksum, SBOM, and GitHub provenance from the same
+  immutable tag.
+
+Official releases must never instruct a user to override SmartScreen for an
+unsigned binary. A source build may be documented separately but is not the
+official Windows download.
+
+### 11.3 Release contents
 
 Each GitHub Release:
 
 - release notes with privacy/network changes highlighted;
 - DMG artifact(s);
+- Windows x86-64 installer;
 - checksum file;
 - SBOM;
 - third-party notices;
@@ -967,7 +990,7 @@ Each GitHub Release:
 - minimum OS/architecture;
 - known issues and rollback instructions.
 
-### 11.3 Updates
+### 11.4 Updates
 
 - opt-in or explicit onboarding choice;
 - stable/beta channels;
@@ -989,7 +1012,7 @@ The public README should answer, in this order:
 2. What stays local?
 3. What leaves the device in each AI mode?
 4. Show a 30–60 second visual demo.
-5. Download the verified DMG.
+5. Download the verified macOS DMG or Windows installer.
 6. Three concrete use cases.
 7. How the knowledge graph and evidence work.
 8. How to configure local AI or BYOK.
