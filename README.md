@@ -9,9 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases/latest"><strong>Download for macOS</strong></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/civitass/civitas-desktop/releases/latest"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>macOS + Windows releases</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/BUILDING.md">Build from source</a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
@@ -19,6 +17,12 @@
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/PRIVACY_AND_DATA_BOUNDARY.md">Privacy boundary</a>
 </p>
+
+> [!NOTE]
+> Civitas publishes macOS and Windows binaries together only after both pass
+> signing and installation verification. If the Releases page has no current
+> version, use the source build below; there is no unofficial download or
+> unsigned Windows substitute.
 
 <p align="center">
   <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat&color=1d1d1f"></a>
@@ -79,9 +83,10 @@ evidence age, risk, and controls visible; nothing executes by itself.
 
 ## Start in three steps
 
-1. Download the verified macOS DMG or Windows installer from
-   [GitHub Releases](https://github.com/civitass/civitas-desktop/releases), or
-   [build from source](docs/BUILDING.md).
+1. If a signed version is present, download the verified macOS DMG or Windows
+   installer from
+   [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
+   Otherwise, [build from source](docs/BUILDING.md).
 2. Choose exactly what Civitas may capture. Screen and microphone permissions
    remain separate, and capture can be paused immediately from the tray.
 3. Search locally first. If you want AI answers, add a local model or one of

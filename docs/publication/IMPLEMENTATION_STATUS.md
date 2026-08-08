@@ -3,7 +3,9 @@
 > Updated: 2026-08-07
 > Working repository: `civitass/civitas-desktop`
 > Publication state: **private; not approved for public visibility**
-> Private `main`: publication PR #48 and dependency-security PR #59 merged
+> Verified clean-history checkpoint:
+> `civitass/civitas-desktop-publication-staging` at
+> `ece9f6912e2bf994325f820ffe673e84e32422e9`
 > Source of truth: [PUBLICATION_PLAN.md](PUBLICATION_PLAN.md)
 
 This ledger distinguishes implemented product controls from release evidence
@@ -97,8 +99,19 @@ old releases, service-side secrets, or legal rights.
 ## 2026-08-07 publication delta
 
 - A checksum-verified Gitleaks `8.30.1` scan of every tracked candidate file
-  reports zero findings without path exclusions, baselines, or allow comments.
-  Secret-detector regression fixtures construct their fake values at runtime.
+  and all 14 retained commits reports zero findings without path exclusions,
+  baselines, or allow comments. Secret-detector regression fixtures construct
+  their fake values at runtime.
+- The rewritten candidate was pushed to a fresh empty private repository.
+  Remote inventory resolves only `HEAD` and `refs/heads/main` to
+  `ece9f6912`; there are no tags or pull requests. The earlier staging attempt,
+  whose Dependabot pull-request refs made it unsuitable for cutover, is private,
+  renamed, and archived as
+  `civitas-desktop-publication-staging-contaminated-20260807`.
+- Apple signing/notarization and Tauri updater secrets were transferred as
+  encrypted GitHub Actions secrets into the fresh candidate. Only their names
+  and update timestamps were inspected. The one-time workflow and migration
+  token were removed immediately after its successful run.
 - The Windows release lane is implemented but cannot run successfully until
   the repository has all four SSL.com `ESIGNER_*` secret values. The current
   repository secret-name inventory and local operator credential inventory do
@@ -173,19 +186,30 @@ deleting visible branches would not prove that pull refs, artifacts, cached
 objects, releases, or PR attachments are gone.
 
 The required cutover is therefore an allowlisted snapshot pushed as the sole
-root of a **new empty repository**, while the current repository is renamed and
-retained privately as signing/legacy infrastructure. The private empty
+history of a **new empty repository**, while the current repository is retained
+privately as signing/legacy infrastructure. The fresh private
 `civitass/civitas-desktop-publication-staging` repository was created on
-2026-08-07. Its clean `main` root was pushed as `49fd29a` after all 12 retained
-commits passed full-history Gitleaks with zero findings and the final tree was
-verified byte-for-byte against tested private commit `d2a8aa7`. Remote
-inventory lists exactly one branch head and zero tags. The newly rotated Tauri
-updater private key and password are installed there as encrypted secret
-values, and their temporary local files have been removed. The repository
-remains private while exact-clean-commit workflows run. Before visibility changes,
-signed-out `git ls-remote` must list only the approved default branch and
-explicitly allowlisted release tags. GitHub-Support-assisted purge/recreate is
-acceptable only with equivalent evidence. No visibility change has occurred.
+2026-08-07. Its initial verified clean-history checkpoint is
+`ece9f6912e2bf994325f820ffe673e84e32422e9`. All 14 retained commits passed
+checksum-verified Gitleaks `8.30.1` with zero findings and `git fsck --strict`.
+Live remote inventory then listed only `HEAD` and `refs/heads/main` at that
+object, with zero tags and zero pull requests.
+
+An earlier staging attempt generated Dependabot pull-request refs before its
+single-ref policy landed. It was therefore rejected for publication, renamed
+`civitas-desktop-publication-staging-contaminated-20260807`, kept private, and
+archived. It is not a cutover source. The fresh candidate has Dependabot version
+pull requests disabled until after public cutover, while vulnerability alerts
+remain a publication control.
+
+Apple signing/notarization plus the rotated Tauri updater private key and
+password are installed in the fresh repository as encrypted Actions secrets.
+The one-time transfer completed in workflow run `31234392267`; no secret value
+was printed or read back, and the workflow and temporary migration token were
+removed immediately afterward. The repository remains private while
+exact-clean-commit workflows and artifact gates run. Before visibility changes,
+signed-out `git ls-remote` must again list only the approved default branch and
+explicitly allowlisted release tags. No visibility change has occurred.
 
 ### B3 — third-party and legal approval
 
