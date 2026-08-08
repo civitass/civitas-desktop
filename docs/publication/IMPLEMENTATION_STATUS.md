@@ -4,7 +4,7 @@
 > Working repository: `civitass/civitas-desktop`
 > Publication state: **private; not approved for public visibility**
 > Verified clean-history checkpoint:
-> `civitass/civitas-desktop-publication-staging` at
+> `civitass/civitas-desktop` at
 > `ece9f6912e2bf994325f820ffe673e84e32422e9`
 > Source of truth: [PUBLICATION_PLAN.md](PUBLICATION_PLAN.md)
 
@@ -108,6 +108,10 @@ old releases, service-side secrets, or legal rights.
   whose Dependabot pull-request refs made it unsuitable for cutover, is private,
   renamed, and archived as
   `civitas-desktop-publication-staging-contaminated-20260807`.
+- After the remediated candidate reached `00979543`, the unsafe-history
+  repository was renamed `civitas-desktop-private-legacy-20260807` and archived
+  privately. The verified clean repository then took the canonical
+  `civitass/civitas-desktop` name without changing its private visibility.
 - Apple signing/notarization and Tauri updater secrets were transferred as
   encrypted GitHub Actions secrets into the fresh candidate. Only their names
   and update timestamps were inspected. The one-time workflow and migration
@@ -189,16 +193,18 @@ public visibility change:
 
 ### B2 — clean public root
 
-The existing private Git repository and its historic remote refs are not
-approved for publication. The 2026-08-07 live remote inventory found 54 branch
-heads, 86 hidden pull-request refs, and no tags. Replacing only `main` or
-deleting visible branches would not prove that pull refs, artifacts, cached
-objects, releases, or PR attachments are gone.
+The former private Git repository and its historic remote refs are not approved
+for publication. The 2026-08-07 live remote inventory initially found 54 branch
+heads, 86 hidden pull-request refs, and no tags. All 53 non-`main` branch heads
+were removed, but deleting visible branches cannot prove that pull refs,
+artifacts, cached objects, releases, or PR attachments are gone. That repository
+is now private and archived as
+`civitas-desktop-private-legacy-20260807`; it must never be made public.
 
-The required cutover is therefore an allowlisted snapshot pushed as the sole
-history of a **new empty repository**, while the current repository is retained
-privately as signing/legacy infrastructure. The fresh private
-`civitass/civitas-desktop-publication-staging` repository was created on
+The required cutover therefore used an allowlisted snapshot pushed as the sole
+history of a **new empty repository**, while the former repository was retained
+privately as legacy evidence. The fresh private publication repository was
+created as `civitass/civitas-desktop-publication-staging` on
 2026-08-07. Its initial verified clean-history checkpoint is
 `ece9f6912e2bf994325f820ffe673e84e32422e9`. All 14 retained commits passed
 checksum-verified Gitleaks `8.30.1` with zero findings and `git fsck --strict`.
@@ -216,10 +222,13 @@ Apple signing/notarization plus the rotated Tauri updater private key and
 password are installed in the fresh repository as encrypted Actions secrets.
 The one-time transfer completed in workflow run `31234392267`; no secret value
 was printed or read back, and the workflow and temporary migration token were
-removed immediately afterward. The repository remains private while
-exact-clean-commit workflows and artifact gates run. Before visibility changes,
-signed-out `git ls-remote` must again list only the approved default branch and
-explicitly allowlisted release tags. No visibility change has occurred.
+removed immediately afterward. After the remediated source reached `00979543`,
+the private clean repository took the canonical `civitass/civitas-desktop`
+name, and the unsafe-history repository was renamed and archived. The canonical
+repository remains private while exact-clean-commit workflows and artifact
+gates run. Before visibility changes, signed-out `git ls-remote` must again list
+only the approved default branch and explicitly allowlisted release tags. No
+visibility change has occurred.
 
 ### B3 — third-party and legal approval
 
