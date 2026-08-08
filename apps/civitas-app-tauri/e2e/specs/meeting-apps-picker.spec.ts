@@ -45,29 +45,6 @@ const WEBEX_TOGGLE_TESTID = 'meeting-apps-picker-toggle-webex';
 const OPEN_BUTTON_TESTID = 'settings-ignore-meeting-apps-button';
 const COUNT_BADGE_TESTID = 'settings-ignore-meeting-apps-count';
 const DIALOG_TESTID = 'meeting-apps-picker-dialog';
-let audioWasEnabled = false;
-
-async function audioCaptureIsEnabled(): Promise<boolean> {
-  return (await browser.execute(
-    () => document.querySelector('#disableAudio')?.getAttribute('aria-checked') === 'true',
-  )) as boolean;
-}
-
-async function setAudioCaptureEnabled(enabled: boolean): Promise<void> {
-  const toggle = await $('#disableAudio');
-  await toggle.waitForExist({ timeout: t(8_000) });
-  await toggle.scrollIntoView();
-  await toggle.waitForEnabled({ timeout: t(8_000) });
-  if ((await audioCaptureIsEnabled()) !== enabled) await toggle.click();
-  await browser.waitUntil(
-    async () => (await audioCaptureIsEnabled()) === enabled,
-    {
-      timeout: t(5_000),
-      interval: 200,
-      timeoutMsg: `audio capture did not become ${enabled ? 'enabled' : 'disabled'}`,
-    },
-  );
-}
 
 async function openRecordingSettings(): Promise<void> {
   const navSettings = await $('[data-testid="nav-settings"]');
@@ -79,12 +56,6 @@ async function openRecordingSettings(): Promise<void> {
   await navRecording.click();
   // Recording section can be long; give it a beat to scroll/layout.
   await browser.pause(t(800));
-
-  // The default publication harness intentionally starts with capture paused.
-  // Meeting detection is only meaningful while an audio source is active, so
-  // exercise the public toggle first instead of assuming a developer profile.
-  audioWasEnabled = await audioCaptureIsEnabled();
-  await setAudioCaptureEnabled(true);
 }
 
 async function openPicker() {
@@ -116,12 +87,6 @@ describe('Meeting-apps ignore picker', () => {
     await waitForAppReady();
     await openHomeWindow();
     await openRecordingSettings();
-  });
-
-  after(async () => {
-    if (!audioWasEnabled) {
-      await setAudioCaptureEnabled(false);
-    }
   });
 
   // Make the spec self-contained even if a previous run left Webex ignored

@@ -3590,60 +3590,62 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Civi
           </Card>
         )}
 
-        {/* Automatic meeting detection */}
-        {audioCaptureActive && (
-          <Card className="border-border bg-card">
-            <CardContent className="px-3 py-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <Users className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div>
-                    <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Automatic meeting detection
-                      <HelpTooltip text="Detects meeting apps (Zoom, Teams, Meet, Discord calls, etc.) to start/stop meetings and live notes. Turn off if it triggers spuriously and split meetings manually. CLI equivalent: --disable-meeting-detector." />
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Auto-start meetings when a call app is detected
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {!settings.disableMeetingDetector && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs gap-1.5"
-                      onClick={() => setMeetingAppsPickerOpen(true)}
-                      title="Choose apps that should never auto-start a meeting"
-                      data-testid="settings-ignore-meeting-apps-button"
-                    >
-                      <UserX className="h-3.5 w-3.5" />
-                      ignore apps
-                      {(settings.ignoredMeetingApps?.length ?? 0) > 0 && (
-                        <span
-                          className="rounded bg-muted px-1.5 py-0.5 text-2xs tabular-nums"
-                          data-testid="settings-ignore-meeting-apps-count"
-                        >
-                          {settings.ignoredMeetingApps!.length}
-                        </span>
-                      )}
-                    </Button>
-                  )}
-                  <Switch
-                    id="disableMeetingDetector"
-                    checked={!settings.disableMeetingDetector}
-                    onCheckedChange={(checked) =>
-                      handleSettingsChange(
-                        { disableMeetingDetector: !checked },
-                        true,
-                      )
-                    }
-                  />
+        {/* Meeting preferences stay configurable while capture is paused so
+            privacy-first profiles do not have to start recording merely to
+            adjust future automatic-detection behavior. */}
+        <Card className="border-border bg-card">
+          <CardContent className="px-3 py-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <Users className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                    Automatic meeting detection
+                    <HelpTooltip text="Detects meeting apps (Zoom, Teams, Meet, Discord calls, etc.) to start/stop meetings and live notes. Turn off if it triggers spuriously and split meetings manually. CLI equivalent: --disable-meeting-detector." />
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {audioCaptureActive
+                      ? "Auto-start meetings when a call app is detected"
+                      : "Applies when audio capture is resumed"}
+                  </p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+              <div className="flex items-center gap-2 shrink-0">
+                {!settings.disableMeetingDetector && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setMeetingAppsPickerOpen(true)}
+                    title="Choose apps that should never auto-start a meeting"
+                    data-testid="settings-ignore-meeting-apps-button"
+                  >
+                    <UserX className="h-3.5 w-3.5" />
+                    ignore apps
+                    {(settings.ignoredMeetingApps?.length ?? 0) > 0 && (
+                      <span
+                        className="rounded bg-muted px-1.5 py-0.5 text-2xs tabular-nums"
+                        data-testid="settings-ignore-meeting-apps-count"
+                      >
+                        {settings.ignoredMeetingApps!.length}
+                      </span>
+                    )}
+                  </Button>
+                )}
+                <Switch
+                  id="disableMeetingDetector"
+                  checked={!settings.disableMeetingDetector}
+                  onCheckedChange={(checked) =>
+                    handleSettingsChange(
+                      { disableMeetingDetector: !checked },
+                      true,
+                    )
+                  }
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <MeetingAppsPicker
           open={meetingAppsPickerOpen}
