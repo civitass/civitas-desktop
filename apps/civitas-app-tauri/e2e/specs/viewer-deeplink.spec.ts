@@ -58,6 +58,18 @@ async function waitForViewerCount(
   );
 }
 
+async function closeViewerWindows(): Promise<void> {
+  for (const handle of await viewerHandles()) {
+    await browser.switchToWindow(handle);
+    await browser.closeWindow();
+  }
+
+  const handles = await browser.getWindowHandles();
+  if (handles.includes("home")) {
+    await browser.switchToWindow("home");
+  }
+}
+
 describe("Viewer deeplink: openCivitasViewerLink → open_viewer_window", function () {
   this.timeout(180_000);
 
@@ -89,6 +101,13 @@ describe("Viewer deeplink: openCivitasViewerLink → open_viewer_window", functi
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  afterEach(async () => {
+    // Each case must be retry-safe. A failed assertion used to leave its
+    // native viewer alive, so the retry and every later count inherited
+    // state from the failed attempt and obscured the original failure.
+    await closeViewerWindows();
+  });
+
   it("opens an explicitly permissioned viewer-pool window when IPC is invoked", async () => {
     const before = (await viewerHandles()).length;
     await openViewer(files[0]);
@@ -114,14 +133,14 @@ describe("Viewer deeplink: openCivitasViewerLink → open_viewer_window", functi
   });
 
   it("reuses the same window when the same path is opened twice (per-path dedup)", async () => {
-    // The first `it` already opened files[0]; opening again must not
-    // increment the handle count. This locks in the native path registry.
     const baseline = (await viewerHandles()).length;
     await openViewer(files[0]);
+    await waitForViewerCount(baseline + 1, t(12_000));
     // Give Tauri a beat to re-show + focus; the handle list itself should
     // never grow.
+    await openViewer(files[0]);
     await browser.pause(t(500));
-    expect((await viewerHandles()).length).toBe(baseline);
+    expect((await viewerHandles()).length).toBe(baseline + 1);
   });
 
   it("opens a distinct window for a different path", async () => {

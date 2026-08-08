@@ -135,11 +135,38 @@ pub(crate) fn resolve_civitas_file(
             continue;
         };
         if relative_path_allowed(relative, access) {
-            return Ok(canonical_file);
+            // `std::fs::canonicalize` adds Win32's verbatim `\\?\` prefix on
+            // Windows. Keep that canonical spelling for the containment check
+            // above, then remove it at the IPC/UI boundary. WebView2 exposes
+            // the URL to JavaScript and treats the prefixed and ordinary drive
+            // spellings as different strings, which previously broke viewer
+            // deduplication and leaked an implementation-only path to users.
+            return Ok(user_facing_canonical_path(&canonical_file));
         }
     }
 
     Err("file access is limited to Civitas captures, exports, and reviewed pipe output".to_string())
+}
+
+fn user_facing_canonical_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+
+    if let Some(network_path) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{network_path}"));
+    }
+
+    if let Some(drive_path) = text.strip_prefix(r"\\?\") {
+        let bytes = drive_path.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/')
+        {
+            return PathBuf::from(drive_path);
+        }
+    }
+
+    path.to_path_buf()
 }
 
 fn viewer_windows() -> &'static Mutex<HashMap<PathBuf, &'static str>> {
@@ -444,6 +471,30 @@ mod tests {
     fn viewer_title_uses_filename() {
         assert_eq!(viewer_title("/a/b/foo.md"), "foo.md");
         assert_eq!(viewer_title("bare"), "bare");
+    }
+
+    #[test]
+    fn user_facing_path_removes_windows_drive_verbatim_prefix() {
+        assert_eq!(
+            user_facing_canonical_path(Path::new(r"\\?\D:\Civitas\exports\note.md")),
+            PathBuf::from(r"D:\Civitas\exports\note.md")
+        );
+    }
+
+    #[test]
+    fn user_facing_path_converts_windows_unc_verbatim_prefix() {
+        assert_eq!(
+            user_facing_canonical_path(Path::new(r"\\?\UNC\server\share\note.md")),
+            PathBuf::from(r"\\server\share\note.md")
+        );
+    }
+
+    #[test]
+    fn user_facing_path_preserves_ordinary_and_device_paths() {
+        let ordinary = Path::new("/Users/example/Civitas/exports/note.md");
+        assert_eq!(user_facing_canonical_path(ordinary), ordinary);
+        let device = Path::new(r"\\?\Volume{1234}\note.md");
+        assert_eq!(user_facing_canonical_path(device), device);
     }
 
     #[test]

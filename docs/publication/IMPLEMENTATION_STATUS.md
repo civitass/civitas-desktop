@@ -159,6 +159,21 @@ old releases, service-side secrets, or legal rights.
   selected protocol. The exact-commit Windows packaged journey remains the
   cross-platform acceptance gate.
 
+## 2026-08-08 Windows viewer remediation
+
+- The exact-commit Windows packaged journey subsequently passed Timeline,
+  Next Actions, and AI settings, then exposed a separate viewer deep-link
+  mismatch: Rust canonicalization returned `\\?\D:\…` while the WebView and
+  initiating client used `D:\…`.
+- Civitas still performs containment and symlink-escape checks with the
+  canonical path. Only after the file passes the purpose-specific allowlist is
+  the Win32 verbatim prefix converted to its ordinary drive or UNC spelling for
+  viewer URLs, IPC responses, OS reveal actions, and per-file window identity.
+- Drive, UNC, ordinary-path, and device-path regression cases lock the boundary.
+  The viewer journey now closes its own windows after every case, making test
+  retries independent instead of allowing a failed attempt to corrupt later
+  window-count assertions. The Windows packaged matrix remains authoritative.
+
 ## Validation evidence
 
 The complete local matrix was rerun on 2026-07-31 after the Timeline,
@@ -170,7 +185,7 @@ history, signing, or two-person release gate.
 
 | Evidence                                      | Required result            | Candidate result                                                                                                                                                                                                                 |
 | --------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Publication boundary audit                    | Pass                       | **Pass (local candidate):** 1,775 candidate files checked                                                                                                                                                                        |
+| Publication boundary audit                    | Pass                       | **Pass (local candidate):** 1,776 candidate files checked                                                                                                                                                                        |
 | Consumer design audit                         | Pass                       | **Pass (local candidate):** 338 production UI files, including strict and supporting consumer surfaces                                                                                                                          |
 | JavaScript dependency advisory gate           | Zero blocking findings     | **Pass (prior exact audit; lockfiles unchanged):** all 4 tracked Bun lockfiles reproduced with exact Bun `1.3.10`; low-threshold audits returned zero vulnerabilities                                                            |
 | Rust dependency advisory/reachability gate    | Zero unreviewed findings   | **Pass (merged private `main`):** both Rust lockfiles passed exact `cargo-audit 0.22.2`; `serde_with` was patched to `3.21.0`; residual `rand` and `glib` alerts were dispositioned with feature/target evidence and explicit reopen conditions |
