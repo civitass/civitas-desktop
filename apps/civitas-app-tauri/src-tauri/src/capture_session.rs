@@ -41,7 +41,7 @@ use crate::server_core::ServerCore;
 /// callers don't need to reach into `ServerCore` to stop capture.
 pub struct CaptureSession {
     shutdown_tx: broadcast::Sender<()>,
-    capture_trigger_tx: Option<civitas_engine::event_driven_capture::TriggerSender>,
+    manual_capture_tx: Option<civitas_engine::event_driven_capture::ManualCaptureSender>,
     vision_task: Option<tokio::task::JoinHandle<()>>,
     ui_recorder_handle: Option<civitas_engine::UiRecorderHandle>,
     audio_manager: Arc<civitas_audio::audio_manager::AudioManager>,
@@ -101,6 +101,9 @@ impl CaptureSession {
         // --- Capture trigger sender (set by VisionManager, consumed by UI recorder) ---
         let mut capture_trigger_tx: Option<civitas_engine::event_driven_capture::TriggerSender> =
             None;
+        let mut manual_capture_tx: Option<
+            civitas_engine::event_driven_capture::ManualCaptureSender,
+        > = None;
         // --- Frame-linker sender (set by VisionManager, consumed by UI recorder + capture loops) ---
         let mut linker_tx: Option<civitas_engine::frame_linker_actor::LinkerSender> = None;
         let mut vision_task = None;
@@ -152,6 +155,7 @@ impl CaptureSession {
             );
 
             capture_trigger_tx = Some(vision_manager.trigger_sender());
+            manual_capture_tx = Some(vision_manager.manual_capture_sender());
             linker_tx = Some(vision_manager.linker_sender());
 
             let shutdown_rx = shutdown_tx.subscribe();
@@ -324,7 +328,7 @@ impl CaptureSession {
 
         Ok(Self {
             shutdown_tx,
-            capture_trigger_tx,
+            manual_capture_tx,
             vision_task,
             ui_recorder_handle,
             audio_manager: server.audio_manager.clone(),
@@ -340,13 +344,11 @@ impl CaptureSession {
     /// and Timeline fanout exactly as it does for an ordinary user event.
     pub fn request_manual_capture(&self) -> Result<usize, String> {
         let sender = self
-            .capture_trigger_tx
+            .manual_capture_tx
             .as_ref()
             .ok_or_else(|| "Civitas vision capture is not running".to_string())?;
         sender
-            .send(civitas_engine::event_driven_capture::CaptureTriggerMsg::new(
-                civitas_engine::event_driven_capture::CaptureTrigger::Manual,
-            ))
+            .send(())
             .map_err(|_| "Civitas vision capture has no active monitor subscribers".to_string())
     }
 

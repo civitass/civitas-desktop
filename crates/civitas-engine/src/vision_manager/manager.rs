@@ -16,7 +16,9 @@ use tokio::sync::{watch, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
-use crate::event_driven_capture::{CaptureTriggerMsg, TriggerSender};
+use crate::event_driven_capture::{
+    manual_capture_channel, CaptureTriggerMsg, ManualCaptureSender, TriggerSender,
+};
 use crate::focus_aware_controller::FocusAwareController;
 use crate::frame_linker_actor::{linker_channel, spawn_frame_linker, LinkerSender};
 use crate::high_fps_controller::HighFpsController;
@@ -85,6 +87,9 @@ pub struct VisionManager {
     /// Broadcast sender for capture triggers — shared with UI recorder.
     /// Each monitor subscribes via `trigger_tx.subscribe()`.
     trigger_tx: TriggerSender,
+    /// Explicit manual captures bypass focus throttling but not privacy/power
+    /// pause gates. Kept separate so ordinary UI-event semantics stay intact.
+    manual_capture_tx: ManualCaptureSender,
     /// Sender for the frame-linker actor — shared with UI recorder and
     /// each event-driven capture loop. The recorder forwards
     /// `EventPersisted` after batch flush; the capture loop forwards
@@ -125,6 +130,7 @@ impl VisionManager {
         let (trigger_tx, _rx) = tokio::sync::broadcast::channel::<CaptureTriggerMsg>(
             crate::event_driven_capture::TRIGGER_CHANNEL_BUFFER,
         );
+        let (manual_capture_tx, _manual_rx) = manual_capture_channel();
 
         // Frame-linker actor: pairs UI events with the frames they
         // caused us to capture. Single shared instance across all
@@ -156,6 +162,7 @@ impl VisionManager {
             recording_tasks: Arc::new(DashMap::new()),
             hd_recording_tasks: Arc::new(DashMap::new()),
             trigger_tx,
+            manual_capture_tx,
             linker_tx,
             linker_stop,
             hot_frame_cache: None,
@@ -191,6 +198,12 @@ impl VisionManager {
     /// Pass this to `start_ui_recording()` so UI events trigger captures.
     pub fn trigger_sender(&self) -> TriggerSender {
         self.trigger_tx.clone()
+    }
+
+    /// Get a sender for explicit capture requests that must wake focus-throttled
+    /// monitors while retaining all privacy and power pause gates.
+    pub fn manual_capture_sender(&self) -> ManualCaptureSender {
+        self.manual_capture_tx.clone()
     }
 
     /// Get a clone of the frame-linker sender. Pass this to
@@ -490,6 +503,7 @@ impl VisionManager {
 
         // Subscribe to the shared broadcast channel so UI events reach this monitor
         let trigger_rx = self.trigger_tx.subscribe();
+        let manual_capture_rx = self.manual_capture_tx.subscribe();
 
         // Stop signal
         let stop_signal = Arc::new(AtomicBool::new(false));
@@ -549,6 +563,7 @@ impl VisionManager {
                 tree_walker_config,
                 capture_config,
                 trigger_rx,
+                manual_capture_rx,
                 stop_signal,
                 vision_metrics,
                 hot_frame_cache,

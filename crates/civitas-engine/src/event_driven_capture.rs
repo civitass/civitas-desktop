@@ -395,6 +395,15 @@ impl EventDrivenCapture {
 pub type TriggerSender = broadcast::Sender<CaptureTriggerMsg>;
 pub type TriggerReceiver = broadcast::Receiver<CaptureTriggerMsg>;
 
+/// Dedicated wake channel for explicit user/manual capture requests.
+///
+/// Ordinary UI-event triggers are intentionally evaluated only while a monitor
+/// is Active. A manual request has different semantics: it must wake a Warm or
+/// Cold monitor before focus throttling, while still respecting the unified
+/// lock-screen, power, DRM, and schedule privacy gate below.
+pub type ManualCaptureSender = broadcast::Sender<()>;
+pub type ManualCaptureReceiver = broadcast::Receiver<()>;
+
 /// Broadcast buffer for capture triggers. Sized to absorb a typing
 /// burst (Arc/Claude routinely emit 100+ Text/Click events in <200ms)
 /// while one monitor is mid-screenshot (250-800ms blocking). At 32B per
@@ -407,6 +416,30 @@ pub const TRIGGER_CHANNEL_BUFFER: usize = 4096;
 pub fn trigger_channel() -> (TriggerSender, TriggerReceiver) {
     let (tx, rx) = broadcast::channel(TRIGGER_CHANNEL_BUFFER);
     (tx, rx)
+}
+
+/// Create the narrow manual-capture wake channel.
+pub fn manual_capture_channel() -> (ManualCaptureSender, ManualCaptureReceiver) {
+    broadcast::channel(16)
+}
+
+/// Coalesce every pending manual wake into one capture for this monitor.
+fn take_manual_capture_request(receiver: &mut ManualCaptureReceiver) -> bool {
+    let mut requested = false;
+    loop {
+        match receiver.try_recv() {
+            Ok(()) => requested = true,
+            Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                // A lagged manual channel still proves that at least one request
+                // arrived. Coalescing is correct: one current frame satisfies all
+                // pending manual requests.
+                requested = true;
+            }
+            Err(broadcast::error::TryRecvError::Empty)
+            | Err(broadcast::error::TryRecvError::Closed) => break,
+        }
+    }
+    requested
 }
 
 /// Edge-triggered bookkeeping for the high-FPS override.
@@ -568,6 +601,7 @@ pub async fn event_driven_capture_loop(
     tree_walker_config: TreeWalkerConfig,
     config: EventDrivenCaptureConfig,
     mut trigger_rx: TriggerReceiver,
+    mut manual_capture_rx: ManualCaptureReceiver,
     stop_signal: Arc<AtomicBool>,
     vision_metrics: Arc<civitas_screen::PipelineMetrics>,
     hot_frame_cache: Option<Arc<HotFrameCache>>,
@@ -784,6 +818,13 @@ pub async fn event_driven_capture_loop(
             break;
         }
 
+        // Manual capture is a wake request, not an ordinary focus-derived UI
+        // event. Consume it before focus-aware throttling so a request can wake
+        // a monitor whose focus tracker is Warm/Cold (including virtual or
+        // hosted desktops where foreground WinEvents are unavailable). The
+        // privacy/power pause gate below remains authoritative.
+        let manual_focus_override = take_manual_capture_request(&mut manual_capture_rx);
+
         // Focus-aware gating — always on. Skips or pauses capture on
         // non-focused monitors. If focus resolution fails on this platform
         // (Linux Wayland, permission denied, etc.) the controller's
@@ -796,7 +837,7 @@ pub async fn event_driven_capture_loop(
         // detection. This lets the Warm path capture only when pixels
         // actually changed without duplicating the whole capture machinery.
         let mut warm_trigger_override: Option<CaptureTrigger> = None;
-        {
+        if !manual_focus_override {
             use crate::focus_aware_controller::CaptureState;
             let capture_state = focus_controller.state_for_monitor(&monitor);
 
@@ -1054,7 +1095,9 @@ pub async fn event_driven_capture_loop(
         // their frame_id link.
         let mut correlation_ids: Vec<crate::frame_linker::CorrelationId> = Vec::new();
         let mut trigger: Option<CaptureTrigger>;
-        if let Some(warm) = warm_trigger_override.take() {
+        if manual_focus_override {
+            trigger = Some(CaptureTrigger::Manual);
+        } else if let Some(warm) = warm_trigger_override.take() {
             trigger = Some(warm);
         } else if trigger_channel_closed {
             trigger = state.poll_activity(&activity_feed);
@@ -2602,6 +2645,16 @@ mod tests {
         .unwrap();
         let got = rx.recv().await.unwrap();
         assert_eq!(got.trigger, CaptureTrigger::Click { x: 10, y: 20 });
+    }
+
+    #[test]
+    fn manual_capture_channel_coalesces_pending_wakes() {
+        let (tx, mut rx) = manual_capture_channel();
+        tx.send(()).unwrap();
+        tx.send(()).unwrap();
+
+        assert!(take_manual_capture_request(&mut rx));
+        assert!(!take_manual_capture_request(&mut rx));
     }
 
     #[tokio::test]
