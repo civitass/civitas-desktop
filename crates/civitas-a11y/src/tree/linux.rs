@@ -1136,6 +1136,9 @@ impl TreeWalkerPlatform for LinuxTreeWalker {
         // file, or read error — never panics. AT-SPI's Document
         // interface is too uneven across toolkits to rely on.
         let document_path = super::electron_docs::resolve_electron_doc_path(&app_lower);
+        // AT-SPI source depths include structural nodes omitted from the
+        // text-bearing projection. Compact only those gaps before persistence.
+        super::compact_filtered_node_depths(&mut state.nodes);
         Ok(TreeWalkResult::Found(TreeSnapshot {
             app_name,
             window_name: window_title,

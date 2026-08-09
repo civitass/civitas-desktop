@@ -305,6 +305,11 @@ impl TreeWalkerPlatform for WindowsTreeWalker {
             &app_lower,
             &mut hit_ignored_extension,
         );
+        // UIA depths describe the full platform tree, while `nodes` contains
+        // only retained text-bearing elements. Compact skipped structural
+        // levels before persistence so every retained child has a retained
+        // parent and one malformed subtree cannot discard the whole frame.
+        super::compact_filtered_node_depths(&mut nodes);
 
         if hit_ignored_extension {
             debug!(
@@ -833,6 +838,7 @@ mod tests {
             "",
             &mut false,
         );
+        super::compact_filtered_node_depths(&mut nodes);
 
         // Text node's name should be captured
         assert!(
@@ -851,6 +857,11 @@ mod tests {
             !buf.contains("icon.png"),
             "Image should be skipped, got: {}",
             buf
+        );
+        assert_eq!(
+            nodes.iter().map(|node| node.depth).collect::<Vec<_>>(),
+            vec![0, 0],
+            "filtered structural parents must not leave orphan depth gaps"
         );
     }
 

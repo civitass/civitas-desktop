@@ -194,6 +194,35 @@ impl AccessibilityTreeNode {
     }
 }
 
+/// Compact platform-tree depths after non-text and privacy-filtered nodes have
+/// been omitted.
+///
+/// Platform accessibility APIs expose the depth of every structural node, but
+/// Civitas persists only useful text-bearing nodes. A retained descendant can
+/// therefore arrive at depth 3 even though its non-text depth-2 parent was
+/// intentionally filtered out. The persisted flat preorder must describe the
+/// retained tree, not the unfiltered platform tree: every non-root node needs a
+/// retained parent at the preceding depth.
+///
+/// The source-depth stack preserves ancestry and sibling boundaries while
+/// removing only gaps. Already-contiguous trees are unchanged.
+pub(super) fn compact_filtered_node_depths(nodes: &mut [AccessibilityTreeNode]) {
+    let mut source_depth_stack: Vec<u8> = Vec::new();
+
+    for node in nodes {
+        let source_depth = node.depth;
+        while source_depth_stack
+            .last()
+            .is_some_and(|ancestor_depth| *ancestor_depth >= source_depth)
+        {
+            source_depth_stack.pop();
+        }
+
+        node.depth = source_depth_stack.len().min(u8::MAX as usize) as u8;
+        source_depth_stack.push(source_depth);
+    }
+}
+
 /// Pure-geometry on-screen check shared by the macOS / Linux / Windows
 /// walkers. Returns `true` iff the element rect intersects the focused
 /// window's rect — the visibility test for issue #2436.
@@ -689,6 +718,44 @@ mod tests {
         assert_eq!(config.max_nodes, 5000);
         assert_eq!(config.walk_timeout, Duration::from_millis(250));
         assert_eq!(config.max_text_length, 50_000);
+    }
+
+    #[test]
+    fn compact_filtered_depths_preserves_preorder_and_removes_parent_gaps() {
+        let mut nodes = [
+            AccessibilityTreeNode::new("Text".into(), "first root".into(), 2, None),
+            AccessibilityTreeNode::new("Text".into(), "nested through a gap".into(), 5, None),
+            AccessibilityTreeNode::new("Button".into(), "nested sibling".into(), 5, None),
+            AccessibilityTreeNode::new("Text".into(), "shallower sibling".into(), 3, None),
+            AccessibilityTreeNode::new("Text".into(), "second root".into(), 2, None),
+            AccessibilityTreeNode::new("Text".into(), "second child".into(), 3, None),
+        ];
+
+        compact_filtered_node_depths(&mut nodes);
+
+        assert_eq!(
+            nodes.iter().map(|node| node.depth).collect::<Vec<_>>(),
+            vec![0, 1, 1, 1, 0, 1]
+        );
+        assert_eq!(nodes[1].text, "nested through a gap");
+        assert_eq!(nodes[4].text, "second root");
+    }
+
+    #[test]
+    fn compact_filtered_depths_leaves_contiguous_tree_unchanged() {
+        let mut nodes = [
+            AccessibilityTreeNode::new("Window".into(), "root".into(), 0, None),
+            AccessibilityTreeNode::new("Group".into(), "section".into(), 1, None),
+            AccessibilityTreeNode::new("Text".into(), "child".into(), 2, None),
+            AccessibilityTreeNode::new("Button".into(), "sibling".into(), 2, None),
+        ];
+
+        compact_filtered_node_depths(&mut nodes);
+
+        assert_eq!(
+            nodes.iter().map(|node| node.depth).collect::<Vec<_>>(),
+            vec![0, 1, 2, 2]
+        );
     }
 
     #[test]

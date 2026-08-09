@@ -548,6 +548,11 @@ impl MacosTreeWalker {
             "tree walk completed"
         );
 
+        // The AX source depth includes structural nodes that text extraction
+        // intentionally omits. Persist a contiguous hierarchy of retained
+        // nodes so filtered parents cannot create orphan descendants.
+        super::compact_filtered_node_depths(&mut state.nodes);
+
         Ok(TreeWalkResult::Found(TreeSnapshot {
             app_name,
             window_name,
