@@ -27,6 +27,7 @@ import { existsSync } from "node:fs";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
 import { E2E_SEED_FLAGS } from "../helpers/app-launcher.js";
+import { invokeOrThrow } from "../helpers/tauri.js";
 import {
   authHeaders,
   fetchJson,
@@ -59,6 +60,10 @@ type MarkerProbe = {
   health: HealthBody;
   markerSinceIso: string;
   rows: unknown[];
+};
+
+type E2eCaptureRequestResult = {
+  monitorSubscribers: number;
 };
 
 function hasRequiredMarkerCapture(probe: MarkerProbe): boolean {
@@ -760,13 +765,26 @@ describe("Windows core recording pipeline", function () {
     const beforeFrames = framesDbWritten(beforeHealth);
     cleanupMarkerWindow = spawnWindowsMarkerWindow(marker);
 
+    // Wait until the persistent WinForms surface has painted, then wake the
+    // real native capture loop explicitly. Hosted Windows runners can suppress
+    // foreground WinEvents from detached interactive processes; relying on
+    // that OS event made the acceptance test hang before OCR even ran. This
+    // command supplies only a Manual trigger: the app must still capture the
+    // external window's pixels and pass them through production OCR, storage,
+    // search, and Timeline code.
+    await browser.pause(t(2_500));
+    const captureRequest = await invokeOrThrow<E2eCaptureRequestResult>(
+      "e2e_request_native_capture",
+    );
+    expect(captureRequest.monitorSubscribers).toBeGreaterThan(0);
+
     // A healthy startup frame is not proof that the newly opened pixel marker
-    // was captured. Require a DB write after the marker window appears before
+    // was captured. Require a DB write after the explicit trigger before
     // querying OCR, otherwise this test can wait against stale startup data.
     const health = await waitForFrameWriteAfter(
       cfg,
       beforeFrames,
-      "pixel-only marker foreground transition",
+      "pixel-only marker native capture request",
       t(75_000),
     );
     await browser.pause(t(1_000));

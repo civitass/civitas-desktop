@@ -1087,6 +1087,47 @@ pub struct E2ePublicationTimelineSeedResult {
     pub frame_ids: Vec<i64>,
 }
 
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(feature = "e2e"), allow(dead_code))]
+pub struct E2eCaptureRequestResult {
+    pub monitor_subscribers: u32,
+}
+
+fn e2e_capture_request_allowed(e2e_feature: bool, official_build: bool) -> bool {
+    e2e_feature && !official_build
+}
+
+/// E2E helper: wake the real native capture pipeline after a visual fixture is
+/// on screen.
+///
+/// Hosted Windows runners do not reliably deliver foreground WinEvents from a
+/// detached interactive process. This command removes that runner-specific
+/// source of nondeterminism without accepting fixture pixels or synthetic OCR:
+/// VisionManager still captures the desktop and runs the complete production
+/// OCR -> database -> search -> Timeline path. Official builds reject it even
+/// if they are accidentally compiled with the E2E feature.
+#[tauri::command]
+#[specta::specta]
+#[cfg_attr(not(feature = "e2e"), allow(dead_code))]
+pub async fn e2e_request_native_capture(
+    state: State<'_, RecordingState>,
+) -> Result<E2eCaptureRequestResult, String> {
+    if !e2e_capture_request_allowed(cfg!(feature = "e2e"), cfg!(feature = "official-build")) {
+        return Err("e2e_request_native_capture is only available in non-official E2E builds"
+            .to_string());
+    }
+
+    let capture = state.capture.lock().await;
+    let session = capture
+        .as_ref()
+        .ok_or_else(|| "Civitas capture session is not running".to_string())?;
+    let monitor_subscribers = session.request_manual_capture()?;
+    Ok(E2eCaptureRequestResult {
+        monitor_subscribers: u32::try_from(monitor_subscribers).unwrap_or(u32::MAX),
+    })
+}
+
 fn e2e_publication_timeline_fixture_path(data_root: &std::path::Path) -> std::path::PathBuf {
     data_root
         .join("data")
@@ -1205,6 +1246,19 @@ pub async fn e2e_seed_publication_timeline(
     }
 
     Ok(E2ePublicationTimelineSeedResult { frame_ids })
+}
+
+#[cfg(test)]
+mod e2e_capture_request_tests {
+    use super::e2e_capture_request_allowed;
+
+    #[test]
+    fn native_capture_request_requires_e2e_and_rejects_official_builds() {
+        assert!(!e2e_capture_request_allowed(false, false));
+        assert!(!e2e_capture_request_allowed(false, true));
+        assert!(!e2e_capture_request_allowed(true, true));
+        assert!(e2e_capture_request_allowed(true, false));
+    }
 }
 
 #[derive(serde::Serialize, specta::Type)]

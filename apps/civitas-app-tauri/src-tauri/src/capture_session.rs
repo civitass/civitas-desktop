@@ -41,6 +41,7 @@ use crate::server_core::ServerCore;
 /// callers don't need to reach into `ServerCore` to stop capture.
 pub struct CaptureSession {
     shutdown_tx: broadcast::Sender<()>,
+    capture_trigger_tx: Option<civitas_engine::event_driven_capture::TriggerSender>,
     vision_task: Option<tokio::task::JoinHandle<()>>,
     ui_recorder_handle: Option<civitas_engine::UiRecorderHandle>,
     audio_manager: Arc<civitas_audio::audio_manager::AudioManager>,
@@ -259,7 +260,7 @@ impl CaptureSession {
             match start_ui_recording(
                 db_clone,
                 ui_config,
-                capture_trigger_tx,
+                capture_trigger_tx.clone(),
                 linker_tx,
                 config.ignored_windows.clone(),
                 cfg!(debug_assertions), // debug: dragflow unavailable, fall back to native dialog; release: dragflow handles it
@@ -323,11 +324,30 @@ impl CaptureSession {
 
         Ok(Self {
             shutdown_tx,
+            capture_trigger_tx,
             vision_task,
             ui_recorder_handle,
             audio_manager: server.audio_manager.clone(),
             audio_disabled: config.disable_audio,
         })
+    }
+
+    /// Request one capture through the live event-driven vision pipeline.
+    ///
+    /// This is intentionally a narrow trigger boundary: callers do not supply
+    /// pixels, OCR text, paths, or database rows. The running VisionManager
+    /// still performs the native screen capture, OCR, persistence, indexing,
+    /// and Timeline fanout exactly as it does for an ordinary user event.
+    pub fn request_manual_capture(&self) -> Result<usize, String> {
+        let sender = self
+            .capture_trigger_tx
+            .as_ref()
+            .ok_or_else(|| "Civitas vision capture is not running".to_string())?;
+        sender
+            .send(civitas_engine::event_driven_capture::CaptureTriggerMsg::new(
+                civitas_engine::event_driven_capture::CaptureTrigger::Manual,
+            ))
+            .map_err(|_| "Civitas vision capture has no active monitor subscribers".to_string())
     }
 
     /// Stop all capture pipelines. The server stays alive.
