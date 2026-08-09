@@ -611,14 +611,55 @@ fn sort_windows_ocr_lines_in_reading_order(lines: &mut [WindowsOcrLine]) {
 #[cfg(any(target_os = "windows", test))]
 fn serialize_windows_ocr_lines(lines: &[WindowsOcrLine]) -> Result<String> {
     let mut records = Vec::new();
+
+    if !lines.is_empty() {
+        // The database persists level 1–5 OCR as a strict hierarchy. Windows
+        // exposes lines and words rather than Tesseract-style page/block/
+        // paragraph records, so synthesize the stable structural ancestors
+        // before emitting positioned lines and words. Keeping this adaptation
+        // at the native OCR boundary preserves the database's corruption guard
+        // for genuinely malformed hierarchical input.
+        for (level, block_num, par_num) in [(1, 0, 0), (2, 1, 0), (3, 1, 1)] {
+            records.push(serde_json::json!({
+                "level": level.to_string(),
+                "page_num": "1",
+                "block_num": block_num.to_string(),
+                "par_num": par_num.to_string(),
+                "line_num": "0",
+                "word_num": "0",
+                "text": "",
+                "left": "",
+                "top": "",
+                "width": "",
+                "height": "",
+                "conf": ""
+            }));
+        }
+    }
+
     for (line_index, line) in lines.iter().enumerate() {
+        let line_num = (line_index + 1).to_string();
+        records.push(serde_json::json!({
+            "level": "4",
+            "page_num": "1",
+            "block_num": "1",
+            "par_num": "1",
+            "line_num": line_num.as_str(),
+            "word_num": "0",
+            "text": "",
+            "left": line.rect.left.to_string(),
+            "top": line.rect.top.to_string(),
+            "width": line.rect.width.to_string(),
+            "height": line.rect.height.to_string(),
+            "conf": ""
+        }));
         for (word_index, word) in line.words.iter().enumerate() {
             records.push(serde_json::json!({
                 "level": "5",
                 "page_num": "1",
                 "block_num": "1",
                 "par_num": "1",
-                "line_num": (line_index + 1).to_string(),
+                "line_num": line_num.as_str(),
                 "word_num": (word_index + 1).to_string(),
                 "text": word.text.as_str(),
                 "left": word.rect.left.to_string(),
@@ -1319,11 +1360,23 @@ mod tests {
         let json = serialize_windows_ocr_lines(&[line]).expect("serialize OCR records");
         let records: Vec<serde_json::Value> =
             serde_json::from_str(&json).expect("valid OCR record JSON");
-        assert_eq!(records.len(), 3);
-        assert_eq!(records[0]["text"], "个人");
-        assert_eq!(records[0]["left"], "0.1");
-        assert_eq!(records[0]["conf"], "");
-        assert_eq!(records[2]["word_num"], "3");
+        assert_eq!(records.len(), 7);
+        assert_eq!(records[0]["level"], "1");
+        assert_eq!(records[1]["level"], "2");
+        assert_eq!(records[2]["level"], "3");
+        assert_eq!(records[3]["level"], "4");
+        assert_eq!(records[3]["line_num"], "1");
+        assert_eq!(records[4]["level"], "5");
+        assert_eq!(records[4]["text"], "个人");
+        assert_eq!(records[4]["left"], "0.1");
+        assert_eq!(records[4]["conf"], "");
+        assert_eq!(records[6]["word_num"], "3");
+        assert!(records.iter().enumerate().all(|(index, record)| {
+            record["level"] != "5"
+                || records[..index].iter().any(|parent| {
+                    parent["level"] == "4" && parent["line_num"] == record["line_num"]
+                })
+        }));
     }
 
     #[test]
