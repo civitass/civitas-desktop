@@ -98,6 +98,43 @@ async function settlePublicationFrame(options?: {
   await browser.pause(t(750));
 }
 
+async function preparePublicationSidebar(): Promise<void> {
+  const recents = await $("button*=Recents");
+  if (await recents.isDisplayed().catch(() => false)) {
+    if ((await recents.getAttribute("aria-expanded")) === "true") {
+      await recents.click();
+    }
+    await browser.waitUntil(
+      async () => (await recents.getAttribute("aria-expanded")) === "false",
+      {
+        timeout: t(5_000),
+        interval: 100,
+        timeoutMsg: "Recents did not collapse before publication capture",
+      },
+    );
+  }
+
+  const bell = await $('[data-testid="notification-bell-trigger"]');
+  if (await bell.isDisplayed().catch(() => false)) {
+    await bell.click();
+    const clearAll = await $('[data-testid="notification-bell-clear-all"]');
+    if (await clearAll.isDisplayed().catch(() => false)) {
+      await clearAll.click();
+      await browser.waitUntil(
+        async () =>
+          !(await clearAll.isExisting().catch(() => false)),
+        {
+          timeout: t(10_000),
+          interval: 200,
+          timeoutMsg:
+            "Synthetic notification history did not clear before publication capture",
+        },
+      );
+    }
+    await browser.keys(["Escape"]);
+  }
+}
+
 async function openNextActions(): Promise<void> {
   const nav = await $('[data-testid="nav-next-actions"]');
   await nav.waitForExist({ timeout: t(10_000) });
@@ -144,6 +181,7 @@ describe("Publication demo surfaces", function () {
     await waitForAppReady();
     await openHomeWindow();
     await browser.setWindowSize(1600, 1100);
+    await preparePublicationSidebar();
   });
 
   it("captures the real Next Actions interface with synthetic local-only data", async () => {

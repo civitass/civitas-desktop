@@ -463,6 +463,20 @@ describe("Windows user journey", function () {
     try {
       if (!microphoneWasEnabled) {
         await $("#captureMicrophone").click();
+        await browser.waitUntil(
+          async () => {
+            if (await switchIsChecked("#captureMicrophone")) return true;
+            return await $("button=Use locally")
+              .isDisplayed()
+              .catch(() => false);
+          },
+          {
+            timeout: t(15_000),
+            interval: 200,
+            timeoutMsg:
+              "Microphone consent did not update or request the local model disclosure",
+          },
+        );
         const localModelConsent = await $("button=Use locally");
         if (await localModelConsent.isDisplayed().catch(() => false)) {
           await localModelConsent.click();

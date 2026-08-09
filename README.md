@@ -32,7 +32,7 @@
   </a>
 </p>
 
-<p align="center"><sub><strong>The real Civitas Timeline.</strong> The work shown inside it is a deterministic, privacy-safe demo session.</sub></p>
+<p align="center"><strong>The real Civitas Timeline.</strong> The work shown inside it is a deterministic, privacy-safe demo session.</p>
 
 > [!NOTE]
 > Signed macOS and Windows binaries are published together only after both pass
@@ -57,7 +57,7 @@ default. AI is either loopback-local or a provider you explicitly connect.
   </a>
 </p>
 
-<p align="center"><sub><strong>Next Actions.</strong> Evidence-backed continuations stay reviewable drafts; nothing executes by itself.</sub></p>
+<p align="center"><strong>Next Actions.</strong> Evidence-backed continuations stay reviewable drafts; nothing executes by itself.</p>
 
 Both images are reproducible captures of the real desktop application. The
 publication E2E suite creates an isolated local profile and deterministic
