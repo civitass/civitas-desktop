@@ -164,6 +164,8 @@ function assertNotReachable(directory, label, packageKey) {
 function auditInvocation() {
   const configuredBinary = process.env.CARGO_AUDIT_BIN?.trim();
   const args = configuredBinary ? [] : ["audit"];
+  const configuredDatabase = process.env.CIVITAS_RUSTSEC_DB?.trim();
+  if (configuredDatabase) args.push("--db", configuredDatabase);
   if (process.env.CIVITAS_RUSTSEC_NO_FETCH === "1") args.push("--no-fetch");
   for (const advisory of ignoredAdvisories) {
     args.push("--ignore", advisory);
