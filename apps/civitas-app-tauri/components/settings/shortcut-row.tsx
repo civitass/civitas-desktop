@@ -270,14 +270,20 @@ const ShortcutRow = ({
   };
 
   return (
-    <div className="flex items-center justify-between">
+    <div
+      className="flex items-center justify-between"
+      data-testid={`shortcut-row-${shortcut}`}
+    >
       <div className="space-y-1">
         <h4 className="text-sm font-medium text-foreground">{title}</h4>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       <div className="flex items-center gap-4">
         <button
+          type="button"
+          data-testid={`shortcut-recorder-${shortcut}`}
           data-shortcut-recording={isRecording ? "true" : undefined}
+          aria-label={`Edit ${title} shortcut`}
           onClick={() => {
             if (getShortcutState() === ShortcutState.DISABLED) return;
             setIsRecording(true);
@@ -324,6 +330,7 @@ const ShortcutRow = ({
         </button>
 
         <Switch
+          aria-label={`Enable ${title} shortcut`}
           checked={getShortcutState() === ShortcutState.ENABLED}
           disabled={getShortcutState() === ShortcutState.UNASSIGNED}
           onCheckedChange={async (checked) => {

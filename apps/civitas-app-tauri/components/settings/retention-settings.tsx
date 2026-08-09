@@ -377,7 +377,10 @@ export function RetentionSettings() {
 
   return (
     <>
-      <div className="space-y-4 border-t border-border pt-4">
+      <div
+        className="space-y-4 border-t border-border pt-4"
+        data-testid="retention-settings"
+      >
         <section className="space-y-2 rounded-[var(--radius)] border border-border p-3">
           <div className="flex items-center gap-2">
             <Clock
@@ -423,6 +426,7 @@ export function RetentionSettings() {
           </header>
 
           <PolicyRow
+            testId="retention-policy-source"
             icon={<Film className="h-3.5 w-3.5" aria-hidden="true" />}
             title="Source media"
             description="Video, raw audio, and snapshots. Searchable OCR and transcripts remain."
@@ -439,6 +443,7 @@ export function RetentionSettings() {
             }
           />
           <PolicyRow
+            testId="retention-policy-derived"
             icon={<Database className="h-3.5 w-3.5" aria-hidden="true" />}
             title="Derived intelligence"
             description="Generated graph knowledge, memories, patterns, review history, and suggestions."
@@ -457,6 +462,7 @@ export function RetentionSettings() {
             }
           />
           <PolicyRow
+            testId="retention-policy-post-derivation"
             icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
             title="Delete source after derivation"
             description="Only completed transcribed or silent audio. Pending/failed audio and all screen media remain."
@@ -560,7 +566,9 @@ export function RetentionSettings() {
             </div>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel data-testid="retention-policy-cancel">
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               data-testid="retention-policy-confirm"
               onClick={() => void confirmEnable()}
@@ -604,6 +612,7 @@ function DaysSelect({
 }
 
 function PolicyRow({
+  testId,
   icon,
   title,
   description,
@@ -612,6 +621,7 @@ function PolicyRow({
   select,
   last = false,
 }: {
+  testId: string;
   icon: React.ReactNode;
   title: string;
   description: string;
@@ -622,6 +632,7 @@ function PolicyRow({
 }) {
   return (
     <div
+      data-testid={testId}
       className={`flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between ${
         last ? "" : "border-b border-border"
       }`}
@@ -638,6 +649,7 @@ function PolicyRow({
       <div className="flex shrink-0 items-center justify-end gap-2 pl-6 sm:pl-0">
         {select}
         <Switch
+          data-testid={`${testId}-switch`}
           checked={checked}
           onCheckedChange={onCheckedChange}
           aria-label={`Enable ${title.toLowerCase()} cleanup`}

@@ -238,6 +238,29 @@ async function waitForBodyText(
   });
 }
 
+async function waitForElementText(
+  selector: string,
+  predicate: (text: string) => boolean,
+  timeoutMsg: string,
+): Promise<void> {
+  const element = await $(selector);
+  await element.waitForDisplayed({ timeout: t(20_000) });
+  await browser.waitUntil(
+    async () =>
+      predicate(
+        (await element.getText().catch(() => ""))
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase(),
+      ),
+    {
+      timeout: t(20_000),
+      interval: 500,
+      timeoutMsg,
+    },
+  );
+}
+
 async function switchIsChecked(selector: string): Promise<boolean> {
   return (await browser.execute(
     (switchSelector: string) =>
@@ -282,17 +305,6 @@ async function stopMeetingIfVisible(): Promise<void> {
     await button.click();
     return;
   }
-}
-
-async function shortcutRecorderForTitle(title: string) {
-  const row = await $(
-    `//h4[normalize-space(.)="${title}"]/ancestor::div[contains(@class, "justify-between")][1]`,
-  );
-  await row.waitForDisplayed({ timeout: t(15_000) });
-
-  const recorder = await row.$('.//button[not(@role="switch")]');
-  await recorder.waitForDisplayed({ timeout: t(10_000) });
-  return recorder;
 }
 
 async function waitForSearchInputFocus(timeoutMs = t(15_000)): Promise<void> {
@@ -578,15 +590,19 @@ describe("Windows user journey", function () {
       '[data-testid="section-settings-shortcuts"]',
     );
 
-    await waitForBodyText(
-      (bodyText) =>
-        bodyText.includes("keyboard shortcuts and hotkeys") &&
-        bodyText.includes("open search") &&
-        bodyText.includes("open search when overlay is visible"),
+    await waitForElementText(
+      '[data-testid="section-settings-shortcuts"]',
+      (sectionText) =>
+        sectionText.includes("keyboard shortcuts and hotkeys") &&
+        sectionText.includes("open search") &&
+        sectionText.includes("open search when the overlay is visible"),
       "Shortcuts settings did not show the open-search hotkey row",
     );
 
-    const recorder = await shortcutRecorderForTitle("Open search");
+    const recorder = await $(
+      '[data-testid="shortcut-recorder-searchShortcut"]',
+    );
+    await recorder.waitForDisplayed({ timeout: t(15_000) });
     const initialShortcutLabel = (await recorder.getText())
       .replace(/\s+/g, " ")
       .trim();
@@ -616,7 +632,10 @@ describe("Windows user journey", function () {
       },
     );
 
-    const restoredRecorder = await shortcutRecorderForTitle("Open search");
+    const restoredRecorder = await $(
+      '[data-testid="shortcut-recorder-searchShortcut"]',
+    );
+    await restoredRecorder.waitForDisplayed({ timeout: t(15_000) });
     const restoredShortcutLabel = (await restoredRecorder.getText())
       .replace(/\s+/g, " ")
       .trim();
@@ -804,40 +823,50 @@ describe("Windows user journey", function () {
       '[data-testid="section-settings-storage"]',
     );
 
-    await waitForBodyText(
-      (bodyText) =>
-        bodyText.includes("erase recent activity") &&
-        bodyText.includes("storage policy") &&
-        bodyText.includes("drop video + audio"),
+    const retentionSettings = await $('[data-testid="retention-settings"]');
+    await retentionSettings.waitForExist({ timeout: t(20_000) });
+    await retentionSettings.scrollIntoView();
+
+    await waitForElementText(
+      '[data-testid="retention-settings"]',
+      (sectionText) =>
+        sectionText.includes("erase recent activity") &&
+        sectionText.includes("storage lifecycle") &&
+        sectionText.includes("source media") &&
+        sectionText.includes("derived intelligence") &&
+        sectionText.includes("delete source after derivation"),
       "Storage settings did not show the local retention controls",
     );
 
-    const mediaRetentionMode = await $('[data-testid="retention-mode-media"]');
-    await mediaRetentionMode.waitForExist({ timeout: t(20_000) });
-    await mediaRetentionMode.scrollIntoView();
-    await mediaRetentionMode.click();
+    const sourceRetention = await $(
+      '[data-testid="retention-policy-source-switch"]',
+    );
+    await sourceRetention.waitForDisplayed({ timeout: t(20_000) });
+    expect(await sourceRetention.getAttribute("aria-checked")).toBe("false");
+    await sourceRetention.click();
 
     const confirmation = await $(
-      '[data-testid="retention-mode-confirm-dialog"]',
+      '[data-testid="retention-policy-confirm-dialog"]',
     );
     await confirmation.waitForDisplayed({ timeout: t(20_000) });
 
-    await waitForBodyText(
-      (bodyText) =>
-        bodyText.includes("enable media eviction?") &&
-        bodyText.includes("civitas will delete video and audio files") &&
-        bodyText.includes("transcripts, ocr text") &&
-        bodyText.includes("enable eviction"),
+    await waitForElementText(
+      '[data-testid="retention-policy-confirm-dialog"]',
+      (dialogText) =>
+        dialogText.includes("enable automatic deletion?") &&
+        dialogText.includes("remove local video, audio, and snapshot files") &&
+        dialogText.includes("ocr and transcripts remain searchable") &&
+        dialogText.includes("enable"),
       "Retention confirmation dialog did not explain the media eviction safety tradeoff",
     );
 
-    const cancel = await $('[data-testid="retention-mode-cancel"]');
+    const cancel = await $('[data-testid="retention-policy-cancel"]');
     await cancel.waitForDisplayed({ timeout: t(10_000) });
     await cancel.click();
 
     await browser.waitUntil(
       async () =>
-        !(await $('[data-testid="retention-mode-confirm-dialog"]')
+        !(await $('[data-testid="retention-policy-confirm-dialog"]')
           .isExisting()
           .catch(() => false)),
       {
@@ -846,6 +875,7 @@ describe("Windows user journey", function () {
         timeoutMsg: "Retention confirmation dialog stayed open after cancel",
       },
     );
+    expect(await sourceRetention.getAttribute("aria-checked")).toBe("false");
 
     const retentionScreenshot = await saveScreenshot(
       "windows-user-journey-storage-retention",
