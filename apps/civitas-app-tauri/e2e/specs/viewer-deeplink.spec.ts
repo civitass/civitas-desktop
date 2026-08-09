@@ -68,6 +68,7 @@ async function closeViewerWindows(): Promise<void> {
   if (handles.includes("home")) {
     await browser.switchToWindow("home");
   }
+  await waitForViewerCount(0, t(10_000));
 }
 
 describe("Viewer deeplink: openCivitasViewerLink → open_viewer_window", function () {

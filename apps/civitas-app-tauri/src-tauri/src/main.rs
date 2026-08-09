@@ -590,6 +590,15 @@ async fn main() {
                 });
             }
             tauri::WindowEvent::CloseRequested { api, .. } => {
+                // Viewer windows are disposable documents, not persistent app
+                // surfaces. Let Tauri destroy them so their bounded pool slot
+                // and per-path registry entry are released. Hiding them here
+                // made the close button appear to work while leaking all eight
+                // viewer slots over time and leaving stale WebDriver handles.
+                if crate::viewer::is_viewer_window_label(window.label()) {
+                    return;
+                }
+
                 let _ = window.set_always_on_top(false);
                 let _ = window.set_visible_on_all_workspaces(false);
 

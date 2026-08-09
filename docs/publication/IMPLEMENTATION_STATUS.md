@@ -172,7 +172,12 @@ old releases, service-side secrets, or legal rights.
 - Drive, UNC, ordinary-path, and device-path regression cases lock the boundary.
   The viewer journey now closes its own windows after every case, making test
   retries independent instead of allowing a failed attempt to corrupt later
-  window-count assertions. The Windows packaged matrix remains authoritative.
+  window-count assertions. Viewer windows are explicitly destroyed on close
+  across all desktop platforms and remove their per-path registry entry, while
+  persistent Home and auxiliary app surfaces retain their existing
+  hide/minimize behavior. This prevents closed documents from exhausting the
+  fixed eight-window capability pool. The packaged matrix remains
+  authoritative.
 
 ## Validation evidence
 

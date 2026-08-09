@@ -173,6 +173,10 @@ fn viewer_windows() -> &'static Mutex<HashMap<PathBuf, &'static str>> {
     VIEWER_WINDOWS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+pub(crate) fn is_viewer_window_label(label: &str) -> bool {
+    VIEWER_WINDOW_LABELS.contains(&label)
+}
+
 fn first_available_viewer_label<'a, I>(used_labels: I) -> Option<&'static str>
 where
     I: Iterator<Item = &'a &'static str> + Clone,
@@ -230,6 +234,20 @@ pub async fn open_viewer_window(app: AppHandle, path: String) -> Result<(), Stri
         .map(crate::window::finalize_webview_window)
         .map(|w| {
             registered.insert(path.clone(), label);
+            let registered_path = path.clone();
+            w.on_window_event(move |event| {
+                if !matches!(event, tauri::WindowEvent::Destroyed) {
+                    return;
+                }
+                match viewer_windows().lock() {
+                    Ok(mut windows) => {
+                        windows.remove(&registered_path);
+                    }
+                    Err(error) => {
+                        error!("failed to release destroyed viewer window: {error}");
+                    }
+                }
+            });
             info!("opened viewer window for {}", path_text);
             w
         })
@@ -452,6 +470,10 @@ mod tests {
                     .chars()
                     .all(|character| character.is_ascii_alphanumeric() || character == '-')
         }));
+        assert!(is_viewer_window_label("viewer-01"));
+        assert!(is_viewer_window_label("viewer-08"));
+        assert!(!is_viewer_window_label("viewer-09"));
+        assert!(!is_viewer_window_label("home"));
     }
 
     #[test]
