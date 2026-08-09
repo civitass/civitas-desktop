@@ -141,18 +141,41 @@ function spawnWindowsMarkerWindow(marker: string): () => void {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'Civitas E2E Capture Marker'
+$form.Text = 'Civitas Vision Probe'
 $form.StartPosition = 'CenterScreen'
 $form.Width = 1000
 $form.Height = 380
 $form.TopMost = $true
-$label = New-Object System.Windows.Forms.Label
-$label.Dock = 'Fill'
-$label.Font = New-Object System.Drawing.Font('Arial', 34, [System.Drawing.FontStyle]::Bold)
-$label.TextAlign = 'MiddleCenter'
-$label.Text = ${psString(marker)}
-$form.Controls.Add($label)
+$form.BackColor = [System.Drawing.Color]::White
+
+# Render the marker into pixels and expose only an Image control to UIA. A
+# normal Label makes the marker available through accessibility, causing the
+# accessibility-first capture path to correctly skip OCR and leaving this OCR
+# acceptance test unable to prove the native vision adapter.
+$bitmap = New-Object System.Drawing.Bitmap(960, 300)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.Clear([System.Drawing.Color]::White)
+$graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+$font = New-Object System.Drawing.Font('Arial', 34, [System.Drawing.FontStyle]::Bold)
+$brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::Black)
+$format = New-Object System.Drawing.StringFormat
+$format.Alignment = [System.Drawing.StringAlignment]::Center
+$format.LineAlignment = [System.Drawing.StringAlignment]::Center
+$rect = New-Object System.Drawing.RectangleF(0, 0, 960, 300)
+$graphics.DrawString(${psString(marker)}, $font, $brush, $rect, $format)
+$graphics.Dispose()
+$font.Dispose()
+$brush.Dispose()
+$format.Dispose()
+
+$picture = New-Object System.Windows.Forms.PictureBox
+$picture.Dock = 'Fill'
+$picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
+$picture.Image = $bitmap
+$form.Controls.Add($picture)
 [void]$form.ShowDialog()
+$picture.Dispose()
+$bitmap.Dispose()
 `;
 
   return spawnDetachedPowerShell(script);
@@ -719,7 +742,7 @@ describe("Windows core recording pipeline", function () {
     cleanupMarkerWindow = null;
   });
 
-  it("captures foreground content and indexes it as OCR", async function () {
+  it("captures a pixel-only foreground marker and indexes it as OCR", async function () {
     if (!canRun || !cfg) this.skip();
 
     const probe = await probeMarkerIndexing();
