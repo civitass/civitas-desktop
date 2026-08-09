@@ -355,7 +355,7 @@ jobs:
         working-directory: ./apps/civitas-app-tauri
         env:
           RECORD_VIDEO: "true"
-          CIVITAS_E2E_SEED: "onboarding,no-audio"
+          CIVITAS_E2E_SEED: "onboarding,no-audio,capture-vision"
           CIVITAS_E2E_REQUIRE_REAL_CAPTURE: "true"
         run: |
           bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts

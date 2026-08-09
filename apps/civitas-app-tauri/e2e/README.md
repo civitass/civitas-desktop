@@ -77,17 +77,18 @@ bun run test:e2e
 $env:RECORD_VIDEO="1"; bun run test:e2e
 
 # 5. Run the Windows core recording spec (recording-enabled app + API checks,
-#    with OCR/Timeline assertions when the runner exposes usable frames; no-audio
-#    keeps hosted runners out of Whisper startup while vision capture stays on)
-$env:CIVITAS_E2E_SEED="onboarding,no-audio"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
+#    with OCR/Timeline assertions when the runner exposes usable frames;
+#    capture-vision opts the isolated test profile in, while no-audio keeps
+#    hosted runners out of Whisper startup)
+$env:CIVITAS_E2E_SEED="onboarding,no-audio,capture-vision"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
 
 # 6. Run the Windows event-trigger capture checks (keystroke/clipboard/window-focus
 #    triggers on; raw key and clipboard rows stay disabled and focus rows get linked)
-$env:CIVITAS_E2E_SEED="onboarding,no-audio,event-trigger-capture"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
+$env:CIVITAS_E2E_SEED="onboarding,no-audio,capture-vision,event-trigger-capture"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
 
 # 7. Run the same trigger lane with raw key DB rows opted in; verifies key rows
 #    get linked frame_id too.
-$env:CIVITAS_E2E_SEED="onboarding,no-audio,event-trigger-capture,keyboard-db-capture"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
+$env:CIVITAS_E2E_SEED="onboarding,no-audio,capture-vision,event-trigger-capture,keyboard-db-capture"; bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts
 ```
 
 ### Run a single spec
@@ -218,7 +219,7 @@ Saves to `e2e/videos/`.
 |---|---|
 | `home-window.spec.ts` | Opens Home window; clicks through Home, Pipes, Timeline, Help, Settings nav items |
 | `timeline.spec.ts` | Navigates to Timeline; seeds a capture event; verifies at least one frame renders |
-| `windows-core-recording.spec.ts` | Windows opt-in. Enables real vision recording and requires API auth, health/load, audio/device, vision, and search endpoints to stay responsive. In CI it uses `CIVITAS_E2E_SEED=onboarding,no-audio` so hosted runners exercise OCR without booting Whisper. When the runner exposes usable desktop frames, it also shows a foreground marker window and verifies OCR indexing/query search plus Timeline frame metadata, visible scrubber clicks, and arrow-key frame stepping; hosted runners without frames self-skip those capture-dependent assertions. |
+| `windows-core-recording.spec.ts` | Windows opt-in. Enables real vision recording and requires API auth, health/load, audio/device, vision, and search endpoints to stay responsive. In CI it uses `CIVITAS_E2E_SEED=onboarding,no-audio,capture-vision` so the isolated test profile explicitly authorizes capture and exercises OCR without booting Whisper. When the runner exposes usable desktop frames, it also shows a foreground marker window and verifies OCR indexing/query search plus Timeline frame metadata, visible scrubber clicks, and arrow-key frame stepping; hosted runners without frames self-skip those capture-dependent assertions. |
 | `windows-system-integration.spec.ts` | Windows-only. Verifies isolated data dir, native DLL/WebView2 runtime, display/DPI topology, localhost-only API binding, process health, Defender visibility, audio service/device health, concurrent local API load, focus churn, rapid Home-window routing, Home close/reopen backend survival, and absence of Windows crash-report events during the suite |
 | `windows-user-journey.spec.ts` | Windows-only. Drives Home search button -> floating Search input -> Timeline -> Home, opens Recording settings to reveal Windows audio troubleshooting controls, starts/stops a manual Meeting note through the visible UI, opens the Shortcuts editor and cancels an open-search hotkey capture, toggles the Display shortcut-reminder overlay, clicks its visible Search, Chat, Timeline, and Hide controls, opens notification history from the bell, manages notification preferences, dismisses a notification from the visible bell UI, previews the Storage retention safety confirmation without applying destructive cleanup, and verifies the Privacy API-auth restart warning without restarting |
 | `hd-recording-pipeline.spec.ts` | macOS opt-in. Starts an HD timer session via `/capture/hd/start`; asserts the controller goes active, a non-empty `hd_*.mp4` chunk is written, and OCR keeps indexing during HD (high-fps + indexing decouple, #3699/#3707) |

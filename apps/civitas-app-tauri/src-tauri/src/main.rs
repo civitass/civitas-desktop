@@ -212,6 +212,26 @@ fn parse_e2e_seed_flags(raw: Option<&str>, enabled: bool) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn apply_e2e_recording_seed(
+    recording: &mut civitas_config::RecordingSettings,
+    flags: &[String],
+) {
+    let recording_disabled = flags.iter().any(|flag| flag == "no-recording");
+
+    if recording_disabled {
+        recording.disable_audio = true;
+        recording.disable_vision = true;
+        return;
+    }
+
+    if flags.iter().any(|flag| flag == "no-audio") {
+        recording.disable_audio = true;
+    }
+    if flags.iter().any(|flag| flag == "capture-vision") {
+        recording.disable_vision = false;
+    }
+}
+
 use tokio::time::{sleep, Duration};
 
 #[tauri::command]
@@ -986,18 +1006,23 @@ async fn main() {
             // can exercise the local server without Screen Recording or
             // Microphone TCC. Fresh and incomplete onboarding still defers the
             // entire engine below; this seed never bypasses the consent gate.
-            // "no-audio" keeps vision enabled while disabling only audio, which
-            // lets Windows hosted runners exercise OCR without booting Whisper.
+            // "capture-vision" explicitly opts an E2E-only profile into vision;
+            // "no-audio" disables audio without changing vision consent. This
+            // lets Windows runners exercise OCR without booting Whisper while
+            // preserving the consumer default when no explicit capture seed is
+            // present. "no-recording" always takes precedence.
             // See get_e2e_seed_flags above for parsing.
             let e2e_flags = get_e2e_seed_flags();
+            apply_e2e_recording_seed(&mut store.recording, &e2e_flags);
             if e2e_flags.iter().any(|f| f == "no-recording") {
-                store.recording.disable_audio = true;
-                store.recording.disable_vision = true;
                 info!("E2E seed: recording disabled (vision + audio)");
-            }
-            if e2e_flags.iter().any(|f| f == "no-audio") {
-                store.recording.disable_audio = true;
-                info!("E2E seed: audio disabled");
+            } else {
+                if e2e_flags.iter().any(|f| f == "no-audio") {
+                    info!("E2E seed: audio disabled");
+                }
+                if e2e_flags.iter().any(|f| f == "capture-vision") {
+                    info!("E2E seed: vision capture explicitly enabled");
+                }
             }
             if e2e_flags.iter().any(|f| f == "event-trigger-capture") {
                 store.recording.capture_on_keystroke = Some(true);
@@ -1638,7 +1663,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 #[cfg(test)]
 mod startup_privacy_tests {
     use super::{
-        get_mime_type, onboarding_allows_capture, parse_e2e_seed_flags,
+        apply_e2e_recording_seed, get_mime_type, onboarding_allows_capture,
+        parse_e2e_seed_flags,
         tessdata_candidate_is_complete,
     };
     use crate::store::OnboardingStore;
@@ -1674,6 +1700,32 @@ mod startup_privacy_tests {
             parse_e2e_seed_flags(Some(" onboarding, NO-AUDIO "), true),
             ["onboarding", "no-audio"]
         );
+    }
+
+    #[test]
+    fn e2e_capture_requires_an_explicit_seed_and_no_recording_wins() {
+        let defaults = crate::store::SettingsStore::default().recording;
+        assert!(defaults.disable_audio);
+        assert!(defaults.disable_vision);
+
+        let mut capture = defaults.clone();
+        apply_e2e_recording_seed(
+            &mut capture,
+            &["no-audio".to_string(), "capture-vision".to_string()],
+        );
+        assert!(capture.disable_audio);
+        assert!(!capture.disable_vision);
+
+        let mut disabled = defaults;
+        apply_e2e_recording_seed(
+            &mut disabled,
+            &[
+                "capture-vision".to_string(),
+                "no-recording".to_string(),
+            ],
+        );
+        assert!(disabled.disable_audio);
+        assert!(disabled.disable_vision);
     }
 
     #[test]

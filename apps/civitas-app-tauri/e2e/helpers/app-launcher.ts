@@ -73,8 +73,9 @@ const APP_PID_FILE = resolve(E2E_DATA_DIR, "app.pid");
 //
 // Override with `CIVITAS_E2E_SEED=onboarding` (or any custom value) when
 // running on a host that DOES have TCC granted and you want to exercise the
-// real capture pipeline. Add `no-audio` when a lane only needs vision/OCR and
-// should not boot Whisper. Add `event-trigger-capture` for the Windows
+// real capture pipeline. Add `capture-vision` to explicitly authorize vision
+// in the isolated E2E profile and `no-audio` when the lane should not boot
+// Whisper. Add `event-trigger-capture` for the Windows
 // key/clipboard/window-focus trigger lane; raw key and clipboard rows stay
 // disabled unless an explicit DB-capture seed opts them in. The same env var is
 // read by specs (e.g. timeline) to skip when recording is off.
