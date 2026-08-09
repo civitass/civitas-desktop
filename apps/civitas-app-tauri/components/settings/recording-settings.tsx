@@ -2695,7 +2695,11 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Civi
   const audioCaptureActive = audioCapturePolicy.active;
 
   return (
-    <div className="space-y-5" ref={sectionRootRef}>
+    <div
+      className="space-y-5"
+      data-testid="section-settings-recording"
+      ref={sectionRootRef}
+    >
       <LocalModelDisclosureDialog
         engine={pendingLocalModelActivation?.engine ?? null}
         onCancel={() => setPendingLocalModelActivation(null)}

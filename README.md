@@ -1,11 +1,12 @@
 <p align="center">
-  <img src="docs/assets/civitas-desktop-wordmark.svg" width="720" alt="Civitas Desktop">
+  <img src="docs/assets/civitas-desktop-wordmark.svg" width="620" alt="Civitas Desktop">
 </p>
 
 <p align="center">
-  <strong>Rewind your day. Know what to do next.</strong><br><br>
-  A local-first work memory that turns the moments you choose into a private<br>
-  Timeline, an evidence-linked graph, and useful next actions.
+  <strong>Turn the work you just did into the next move you can trust.</strong><br><br>
+  Civitas is a local-first memory for your working day: rewind a private
+  Timeline,<br>recover the reasoning behind a decision, and review
+  evidence-linked next actions.
 </p>
 
 <p align="center">
@@ -18,12 +19,6 @@
   <a href="docs/PRIVACY_AND_DATA_BOUNDARY.md">Privacy boundary</a>
 </p>
 
-> [!NOTE]
-> Civitas publishes macOS and Windows binaries together only after both pass
-> signing and installation verification. If the Releases page has no current
-> version, use the source build below; there is no unofficial download or
-> unsigned Windows substitute.
-
 <p align="center">
   <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat&color=1d1d1f"></a>
   <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat"></a>
@@ -31,34 +26,30 @@
   <img alt="Local first" src="https://img.shields.io/badge/local--first-675d58?style=flat">
 </p>
 
----
-
-## Your work has a memory. Make it useful.
-
-Civitas turns the work context you choose into a personal knowledge graph of
-people, projects, decisions, reasons, blockers, procedures, and commitments.
-Every answer and suggestion can lead back to local evidence, so you can inspect
-what Civitas used instead of trusting a fluent guess.
-
-It is built for one person recovering context across apps—not for employee
-monitoring, fleet administration, or a company control plane. Capture, search,
-the timeline, the graph, feedback, and profile metadata stay on your computer by
-default. AI is either loopback-local or a provider you explicitly connect.
-
-## Rewind the moment. See the next move.
-
-This is the signature Civitas loop. Move through your private Timeline to
-recover the exact work context, then open Next Actions to turn that evidence
-into ranked commitments and open loops. Each prediction keeps its reason,
-evidence age, risk, and controls visible; nothing executes by itself.
-
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/demo/timeline.png" width="1200" alt="The actual Civitas Desktop Timeline showing a privacy-safe native launch-review session and local time scrubber">
+    <img src="docs/assets/demo/timeline.png" width="1200" alt="The real Civitas Desktop Timeline showing a privacy-safe synthetic launch workspace and local time scrubber">
   </a>
 </p>
 
-<p align="center"><em>Timeline — the original moment, kept local and close.</em></p>
+<p align="center"><sub><strong>The real Civitas Timeline.</strong> The work shown inside it is a deterministic, privacy-safe demo session.</sub></p>
+
+> [!NOTE]
+> Signed macOS and Windows binaries are published together only after both pass
+> signing and clean-install verification. If the Releases page has no current
+> version, use the source build below; Civitas does not advertise an unsigned
+> substitute.
+
+## From the moment to the next move
+
+| Remember | Understand | Continue |
+| --- | --- | --- |
+| Rewind the exact screen, app, meeting, or local transcript. | Reconstruct projects, people, decisions, reasons, blockers, and procedures in an evidence-linked graph. | Review ranked commitments and open loops with reason, evidence age, uncertainty, and safety state visible. |
+
+Civitas is designed for one person recovering context across apps—not for
+employee monitoring, fleet administration, or a company control plane. Capture,
+search, Timeline, graph, feedback, and profile metadata stay on your computer by
+default. AI is either loopback-local or a provider you explicitly connect.
 
 <p align="center">
   <a href="docs/assets/demo/next-actions.png">
@@ -66,12 +57,12 @@ evidence age, risk, and controls visible; nothing executes by itself.
   </a>
 </p>
 
-<p align="center"><em>Next Actions — the most useful continuation, grounded in evidence and kept as a draft.</em></p>
+<p align="center"><sub><strong>Next Actions.</strong> Evidence-backed continuations stay reviewable drafts; nothing executes by itself.</sub></p>
 
-> These are reproducible captures of the real desktop application. They use an
-> isolated local profile and a privacy-safe native-app session created only for
-> the demo—never founder, contributor, or customer data. The publication E2E
-> suite recreates and verifies the same screens.
+Both images are reproducible captures of the real desktop application. The
+publication E2E suite creates an isolated local profile and deterministic
+synthetic content—never founder, contributor, or customer data—then verifies the
+same user-visible surfaces before saving the screenshots.
 
 ## Three everyday wins
 

@@ -16,7 +16,7 @@ const ShortcutSection = () => {
   const { settings } = useSettings();
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-testid="section-settings-shortcuts">
       <p className="text-muted-foreground text-sm mb-4">
         Keyboard shortcuts and hotkeys
       </p>

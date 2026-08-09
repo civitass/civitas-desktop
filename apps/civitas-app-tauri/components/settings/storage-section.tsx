@@ -83,7 +83,7 @@ export function StorageSection() {
   }, [updateSettings]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-testid="section-settings-storage">
       <p className="text-muted-foreground text-sm mb-4">
         Local disk usage, retention, and data location.
       </p>

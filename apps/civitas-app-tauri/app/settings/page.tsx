@@ -222,9 +222,10 @@ function SettingsContent() {
         {/* Back to app */}
         <div className={cn("px-4 py-3 border-b", isTranslucent ? "vibrant-sidebar-border" : "border-border")}>
           <button
+            type="button"
             onClick={() => router.push("/home")}
             className={cn(
-              "flex items-center space-x-1.5 text-sm transition-colors w-full",
+              "focus-ring flex w-full items-center space-x-1.5 rounded-md text-sm transition-colors duration-150 ease-out",
               isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -287,8 +288,10 @@ function SettingsContent() {
                   <div className="space-y-0.5">
                     {group.items.map((item) => (
                       <button
+                        type="button"
                         key={item.id}
                         data-testid={`settings-nav-${item.id}`}
+                        aria-current={section === item.id ? "page" : undefined}
                         onClick={() => setSection(item.id)}
                         className={cn(
                           "focus-ring w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors duration-150 ease-out group",

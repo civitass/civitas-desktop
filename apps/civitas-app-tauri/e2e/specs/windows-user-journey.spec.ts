@@ -363,6 +363,21 @@ async function expectCurrentSettingsSection(
   );
 }
 
+async function openSettingsSection(
+  section: string,
+  readySelector: string,
+): Promise<void> {
+  const settingsNav = await $('[data-testid="nav-settings"]');
+  await settingsNav.waitForDisplayed({ timeout: t(15_000) });
+  await settingsNav.click();
+
+  const sectionNav = await $(`[data-testid="settings-nav-${section}"]`);
+  await sectionNav.waitForDisplayed({ timeout: t(15_000) });
+  await sectionNav.click();
+  await expectCurrentSettingsSection(section, t(20_000));
+  await $(readySelector).waitForDisplayed({ timeout: t(20_000) });
+}
+
 describe("Windows user journey", function () {
   this.timeout(180_000);
 
@@ -431,13 +446,10 @@ describe("Windows user journey", function () {
 
     await openHomeWindow();
 
-    const settingsNav = await $('[data-testid="nav-settings"]');
-    await settingsNav.waitForDisplayed({ timeout: t(15_000) });
-    await settingsNav.click();
-
-    const recordingNav = await $('[data-testid="settings-nav-recording"]');
-    await recordingNav.waitForDisplayed({ timeout: t(15_000) });
-    await recordingNav.click();
+    await openSettingsSection(
+      "recording",
+      '[data-testid="section-settings-recording"]',
+    );
 
     await waitForBodyText(
       (bodyText) =>
@@ -447,13 +459,33 @@ describe("Windows user journey", function () {
       "Recording settings did not show the core audio/screen controls",
     );
 
-    const audioWasEnabled = await switchIsChecked("#disableAudio");
+    const microphoneWasEnabled = await switchIsChecked("#captureMicrophone");
     try {
-      await setSwitchChecked("#disableAudio", true);
-      // Audio recording is enabled by default (disableAudio: false), so the
-      // troubleshooting controls below render without a pending change. Do NOT
-      // assert "apply & restart" here — that button only appears when there are
-      // unsaved changes, which is not the case when audio is already enabled.
+      if (!microphoneWasEnabled) {
+        await $("#captureMicrophone").click();
+        const localModelConsent = await $("button=Use locally");
+        if (await localModelConsent.isDisplayed().catch(() => false)) {
+          await localModelConsent.click();
+        }
+        await browser.waitUntil(
+          async () => await switchIsChecked("#captureMicrophone"),
+          {
+            timeout: t(15_000),
+            interval: 250,
+            timeoutMsg:
+              "Microphone consent did not enable from the visible Recording controls",
+          },
+        );
+      }
+      await browser.waitUntil(
+        async () => await switchIsChecked("#disableAudio"),
+        {
+          timeout: t(15_000),
+          interval: 250,
+          timeoutMsg:
+            "Audio capture did not resume after explicit microphone consent",
+        },
+      );
       await waitForBodyText(
         (bodyText) =>
           bodyText.includes("auto-select audio devices") &&
@@ -467,8 +499,8 @@ describe("Windows user journey", function () {
       );
       expect(existsSync(recordingScreenshot)).toBe(true);
     } finally {
-      if (!audioWasEnabled) {
-        await setSwitchChecked("#disableAudio", false).catch(() => {});
+      if (!microphoneWasEnabled) {
+        await setSwitchChecked("#captureMicrophone", false).catch(() => {});
       }
     }
   });
@@ -527,13 +559,10 @@ describe("Windows user journey", function () {
 
     await openHomeWindow();
 
-    const settingsNav = await $('[data-testid="nav-settings"]');
-    await settingsNav.waitForDisplayed({ timeout: t(15_000) });
-    await settingsNav.click();
-
-    const shortcutsNav = await $('[data-testid="settings-nav-shortcuts"]');
-    await shortcutsNav.waitForDisplayed({ timeout: t(15_000) });
-    await shortcutsNav.click();
+    await openSettingsSection(
+      "shortcuts",
+      '[data-testid="section-settings-shortcuts"]',
+    );
 
     await waitForBodyText(
       (bodyText) =>
@@ -756,13 +785,10 @@ describe("Windows user journey", function () {
 
     await openHomeWindow();
 
-    const settingsNav = await $('[data-testid="nav-settings"]');
-    await settingsNav.waitForDisplayed({ timeout: t(15_000) });
-    await settingsNav.click();
-
-    const storageNav = await $('[data-testid="settings-nav-storage"]');
-    await storageNav.waitForDisplayed({ timeout: t(15_000) });
-    await storageNav.click();
+    await openSettingsSection(
+      "storage",
+      '[data-testid="section-settings-storage"]',
+    );
 
     await waitForBodyText(
       (bodyText) =>
