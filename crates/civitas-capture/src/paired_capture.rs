@@ -114,6 +114,9 @@ pub struct PairedCaptureResult {
     pub captured_at: DateTime<Utc>,
     /// Total time for the paired capture
     pub duration_ms: u64,
+    /// Native OCR latency when this capture actually ran OCR. `None` means
+    /// accessibility supplied sufficient text and the OCR fallback was skipped.
+    pub ocr_duration_ms: Option<u64>,
     /// App name from accessibility tree or OCR
     pub app_name: Option<String>,
     /// Window name from accessibility tree or OCR
@@ -199,8 +202,9 @@ pub async fn paired_capture(
     if force_ocr {
         debug!("paired_capture: forcing OCR for the E2E pixel-to-index proof");
     }
-    let (ocr_text, ocr_text_json) =
+    let (ocr_text, ocr_text_json, ocr_duration_ms) =
         if should_run_ocr(has_accessibility_text, a11y_is_thin, force_ocr) {
+            let ocr_started = Instant::now();
             // Windows native OCR is async, so call it directly (not inside spawn_blocking)
             #[cfg(target_os = "windows")]
             let raw_result = civitas_screen::perform_ocr_windows(&ctx.image, &ctx.languages)
@@ -252,9 +256,13 @@ pub async fn paired_capture(
             // Strip editor gutter noise (see strip_gutter_noise doc). Applied to
             // the flat text but NOT to text_json — the JSON carries per-box OCR
             // coordinates which downstream overlay/highlight UIs need intact.
-            (strip_gutter_noise(&raw.0), raw.1)
+            (
+                strip_gutter_noise(&raw.0),
+                raw.1,
+                Some(ocr_started.elapsed().as_millis() as u64),
+            )
         } else {
-            (String::new(), "[]".to_string())
+            (String::new(), "[]".to_string(), None)
         };
     let ocr_text = civitas_db::text_normalizer::normalize_cjk_ocr_spacing(&ocr_text);
 
@@ -396,6 +404,7 @@ pub async fn paired_capture(
         capture_trigger: ctx.capture_trigger.to_string(),
         captured_at: ctx.captured_at,
         duration_ms,
+        ocr_duration_ms,
         app_name: ctx.app_name.map(String::from),
         window_name: ctx.window_name.map(String::from),
         browser_url: ctx.browser_url.map(String::from),

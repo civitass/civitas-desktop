@@ -144,6 +144,14 @@ function spawnWindowsMarkerWindow(marker: string): () => void {
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class CivitasE2EForeground {
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Civitas Vision Probe'
 $form.StartPosition = 'CenterScreen'
@@ -177,7 +185,26 @@ $picture.Dock = 'Fill'
 $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
 $picture.Image = $bitmap
 $form.Controls.Add($picture)
+$form.Add_Shown({
+  # Wait until the bitmap has painted, then create a real foreground transition.
+  # The recording pipeline is event driven; TopMost alone does not guarantee a
+  # WindowFocus event on hosted Windows runners.
+  $script:markerActivationTimer = New-Object System.Windows.Forms.Timer
+  $script:markerActivationTimer.Interval = 750
+  $script:activationAttempts = 0
+  $script:markerActivationTimer.Add_Tick({
+    [void][CivitasE2EForeground]::SetForegroundWindow($form.Handle)
+    $form.Activate()
+    $picture.Invalidate()
+    $script:activationAttempts += 1
+    if ($script:activationAttempts -ge 4) {
+      $script:markerActivationTimer.Stop()
+    }
+  })
+  $script:markerActivationTimer.Start()
+})
 [void]$form.ShowDialog()
+$script:markerActivationTimer.Dispose()
 $picture.Dispose()
 $bitmap.Dispose()
 `;
@@ -727,12 +754,22 @@ describe("Windows core recording pipeline", function () {
     if (!cfg) throw new Error("Local API config was not initialized");
     if (markerProbe) return markerProbe;
 
-    const marker = `CIVITAS CORE CAPTURE MARKER ${Date.now()}`;
+    const marker = "CIVITAS CORE CAPTURE MARKER";
     const markerSinceIso = new Date(Date.now() - 5_000).toISOString();
+    const beforeHealth = await getHealth(cfg);
+    const beforeFrames = framesDbWritten(beforeHealth);
     cleanupMarkerWindow = spawnWindowsMarkerWindow(marker);
 
-    const health = await tryWaitForFrameCapture(cfg);
-    await browser.pause(t(3_000));
+    // A healthy startup frame is not proof that the newly opened pixel marker
+    // was captured. Require a DB write after the marker window appears before
+    // querying OCR, otherwise this test can wait against stale startup data.
+    const health = await waitForFrameWriteAfter(
+      cfg,
+      beforeFrames,
+      "pixel-only marker foreground transition",
+      t(75_000),
+    );
+    await browser.pause(t(1_000));
 
     markerProbe = {
       health,
@@ -747,6 +784,7 @@ describe("Windows core recording pipeline", function () {
       "[windows-core-recording] marker probe",
       JSON.stringify({
         frameStatus: markerProbe.health.frame_status ?? null,
+        framesBeforeMarker: beforeFrames,
         pipeline: markerProbe.health.pipeline ?? null,
         markerRows: markerProbe.rows.length,
       }),

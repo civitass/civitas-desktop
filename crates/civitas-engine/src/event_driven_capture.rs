@@ -719,6 +719,9 @@ pub async fn event_driven_capture_loop(
                     }
                     vision_metrics.record_capture();
                     vision_metrics.record_db_write(Duration::from_millis(result.duration_ms));
+                    if let Some(ocr_duration_ms) = result.ocr_duration_ms {
+                        vision_metrics.record_ocr(Duration::from_millis(ocr_duration_ms), 0, 0);
+                    }
                     if let Some(ref cache) = hot_frame_cache {
                         push_to_hot_cache(cache, result, &device_name, &CaptureTrigger::Manual)
                             .await;
@@ -1339,6 +1342,13 @@ pub async fn event_driven_capture_loop(
                             vision_metrics.record_capture();
                             vision_metrics
                                 .record_db_write(Duration::from_millis(result.duration_ms));
+                            if let Some(ocr_duration_ms) = result.ocr_duration_ms {
+                                vision_metrics.record_ocr(
+                                    Duration::from_millis(ocr_duration_ms),
+                                    0,
+                                    0,
+                                );
+                            }
 
                             if let Some(ref cache) = hot_frame_cache {
                                 push_to_hot_cache(cache, result, &device_name, &trigger).await;
