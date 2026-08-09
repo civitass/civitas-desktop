@@ -355,7 +355,10 @@ jobs:
         working-directory: ./apps/civitas-app-tauri
         env:
           RECORD_VIDEO: "true"
-          CIVITAS_E2E_SEED: "onboarding,no-audio,capture-vision"
+          # The force-ocr seed is accepted by debug/E2E builds only. It makes
+          # this pixel proof independent of accessibility text exposed by the
+          # WinForms marker host while production stays accessibility-first.
+          CIVITAS_E2E_SEED: "onboarding,no-audio,capture-vision,force-ocr"
           CIVITAS_E2E_REQUIRE_REAL_CAPTURE: "true"
         run: |
           bun run wdio run e2e/wdio.conf.ts --spec e2e/specs/windows-core-recording.spec.ts

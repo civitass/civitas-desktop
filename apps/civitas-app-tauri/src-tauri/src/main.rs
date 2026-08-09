@@ -1010,7 +1010,8 @@ async fn main() {
             // "no-audio" disables audio without changing vision consent. This
             // lets Windows runners exercise OCR without booting Whisper while
             // preserving the consumer default when no explicit capture seed is
-            // present. "no-recording" always takes precedence.
+            // present. "force-ocr" enables the native pixel-to-index proof in
+            // debug/E2E builds only. "no-recording" always takes precedence.
             // See get_e2e_seed_flags above for parsing.
             let e2e_flags = get_e2e_seed_flags();
             apply_e2e_recording_seed(&mut store.recording, &e2e_flags);
@@ -1022,6 +1023,10 @@ async fn main() {
                 }
                 if e2e_flags.iter().any(|f| f == "capture-vision") {
                     info!("E2E seed: vision capture explicitly enabled");
+                }
+                if e2e_flags.iter().any(|f| f == "force-ocr") {
+                    std::env::set_var("CIVITAS_E2E_FORCE_OCR", "1");
+                    info!("E2E seed: native OCR forced for capture proof");
                 }
             }
             if e2e_flags.iter().any(|f| f == "event-trigger-capture") {
@@ -1697,8 +1702,8 @@ mod startup_privacy_tests {
                 .is_empty()
         );
         assert_eq!(
-            parse_e2e_seed_flags(Some(" onboarding, NO-AUDIO "), true),
-            ["onboarding", "no-audio"]
+            parse_e2e_seed_flags(Some(" onboarding, NO-AUDIO, FORCE-OCR "), true),
+            ["onboarding", "no-audio", "force-ocr"]
         );
     }
 

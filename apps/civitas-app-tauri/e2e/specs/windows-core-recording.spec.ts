@@ -8,8 +8,11 @@
  * The default CI lane uses `onboarding,no-recording` so the app UI can be
  * tested without depending on host capture devices. This spec is for the
  * targeted Windows recording lane: it runs with
- * `CIVITAS_E2E_SEED=onboarding,no-audio,capture-vision` in CI and verifies the real core
- * vision loop when the runner exposes usable capture:
+ * `CIVITAS_E2E_SEED=onboarding,no-audio,capture-vision,force-ocr` in CI and
+ * verifies the real core vision loop when the runner exposes usable capture.
+ * `force-ocr` is debug/E2E-only: it prevents unrelated accessible window
+ * chrome from bypassing the pixel OCR proof while consumer behavior remains
+ * accessibility-first.
  *
  *   foreground pixels -> OCR/indexing -> search API -> Timeline UI
  *
@@ -40,6 +43,7 @@ const canRunEventTriggerCapture = canRun && eventTriggerCaptureEnabled;
 const keyboardDbCaptureEnabled = seedFlags.includes("keyboard-db-capture");
 const requireRealCapture =
   process.env.CIVITAS_E2E_REQUIRE_REAL_CAPTURE === "true";
+const forceOcrEnabled = seedFlags.includes("force-ocr");
 
 type HealthBody = {
   status?: string;
@@ -708,6 +712,11 @@ describe("Windows core recording pipeline", function () {
   before(async function () {
     await waitForAppReady();
     if (!canRun) return;
+    if (requireRealCapture && !forceOcrEnabled) {
+      throw new Error(
+        "The required Windows recording gate must include the debug-only force-ocr seed",
+      );
+    }
 
     await openHomeWindow();
     await waitForLocalApi();
@@ -733,6 +742,15 @@ describe("Windows core recording pipeline", function () {
           ? await waitForMarkerRows(cfg, markerSinceIso)
           : [],
     };
+
+    console.log(
+      "[windows-core-recording] marker probe",
+      JSON.stringify({
+        frameStatus: markerProbe.health.frame_status ?? null,
+        pipeline: markerProbe.health.pipeline ?? null,
+        markerRows: markerProbe.rows.length,
+      }),
+    );
 
     return markerProbe;
   }

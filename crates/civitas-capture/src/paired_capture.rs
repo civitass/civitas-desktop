@@ -42,6 +42,24 @@ fn strip_gutter_noise(text: &str) -> String {
     GUTTER.replace_all(text, " ").into_owned()
 }
 
+fn should_run_ocr(has_accessibility_text: bool, a11y_is_thin: bool, force_ocr: bool) -> bool {
+    force_ocr || !has_accessibility_text || a11y_is_thin
+}
+
+/// The dedicated pixel-to-index E2E gate must prove native OCR even when the
+/// marker host exposes unrelated window chrome through accessibility APIs.
+/// Keep this escape hatch out of release builds; normal capture remains
+/// accessibility-first and only falls back to OCR for absent or thin trees.
+fn e2e_force_ocr_enabled() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var("CIVITAS_E2E_FORCE_OCR").is_ok_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+}
+
 /// Limits concurrent OCR tasks to avoid CPU spikes when multiple monitors
 /// trigger capture simultaneously.
 #[cfg(not(target_os = "windows"))]
@@ -174,63 +192,70 @@ pub async fn paired_capture(
             .map(|s| a11y_content_is_thin(s, ctx.window_name, ctx.browser_url, ctx.app_name))
             .unwrap_or(false);
 
-    // Run OCR when: no a11y text, app prefers OCR, OR a11y text is thin (hybrid)
-    let (ocr_text, ocr_text_json) = if !has_accessibility_text || a11y_is_thin {
-        // Windows native OCR is async, so call it directly (not inside spawn_blocking)
-        #[cfg(target_os = "windows")]
-        let raw_result = civitas_screen::perform_ocr_windows(&ctx.image, &ctx.languages)
-            .await
-            .map(|(text, json, _confidence)| (text, json))
-            .map_err(|error| anyhow!("Windows OCR failed: {error}"));
-        // Apple and Tesseract OCR are sync, use spawn_blocking with semaphore
-        // to limit concurrent OCR and avoid CPU spikes on multi-monitor setups.
-        #[cfg(not(target_os = "windows"))]
-        let raw_result = {
-            let _permit = ocr_semaphore()
-                .acquire()
+    // Run OCR when: no a11y text, app prefers OCR, OR a11y text is thin (hybrid).
+    // The final case is an explicit debug-only E2E proof mode; it cannot be
+    // enabled in release builds and does not alter consumer capture behavior.
+    let force_ocr = e2e_force_ocr_enabled();
+    if force_ocr {
+        debug!("paired_capture: forcing OCR for the E2E pixel-to-index proof");
+    }
+    let (ocr_text, ocr_text_json) =
+        if should_run_ocr(has_accessibility_text, a11y_is_thin, force_ocr) {
+            // Windows native OCR is async, so call it directly (not inside spawn_blocking)
+            #[cfg(target_os = "windows")]
+            let raw_result = civitas_screen::perform_ocr_windows(&ctx.image, &ctx.languages)
                 .await
-                .map_err(|error| anyhow!("OCR concurrency controller closed: {error}"))?;
-            let image_for_ocr = ctx.image.clone();
-            let languages = ctx.languages.clone();
-            tokio::task::spawn_blocking(move || {
-                #[cfg(target_os = "macos")]
-                {
-                    civitas_screen::perform_ocr_apple_checked(&image_for_ocr, &languages)
-                        .map(|(text, json, _confidence)| (text, json))
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    civitas_screen::perform_ocr_tesseract_checked(&image_for_ocr, languages)
-                        .map(|(text, json, _confidence)| (text, json))
-                }
-            })
-            .await
-            .map_err(|error| anyhow!("OCR worker failed: {error}"))?
-            .map_err(anyhow::Error::msg)
-        };
-
-        let raw = match raw_result {
-            Ok(result) => result,
-            Err(error) => {
-                // The snapshot was written before text extraction. If OCR
-                // fails, remove that otherwise-unreachable file before
-                // returning the explicit pipeline error.
-                if !snapshot_path_str.is_empty() {
-                    if std::fs::remove_file(&snapshot_path_str).is_err() {
-                        warn!("failed to remove an unindexed snapshot after OCR failure");
+                .map(|(text, json, _confidence)| (text, json))
+                .map_err(|error| anyhow!("Windows OCR failed: {error}"));
+            // Apple and Tesseract OCR are sync, use spawn_blocking with semaphore
+            // to limit concurrent OCR and avoid CPU spikes on multi-monitor setups.
+            #[cfg(not(target_os = "windows"))]
+            let raw_result = {
+                let _permit = ocr_semaphore()
+                    .acquire()
+                    .await
+                    .map_err(|error| anyhow!("OCR concurrency controller closed: {error}"))?;
+                let image_for_ocr = ctx.image.clone();
+                let languages = ctx.languages.clone();
+                tokio::task::spawn_blocking(move || {
+                    #[cfg(target_os = "macos")]
+                    {
+                        civitas_screen::perform_ocr_apple_checked(&image_for_ocr, &languages)
+                            .map(|(text, json, _confidence)| (text, json))
                     }
-                }
-                return Err(error);
-            }
-        };
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        civitas_screen::perform_ocr_tesseract_checked(&image_for_ocr, languages)
+                            .map(|(text, json, _confidence)| (text, json))
+                    }
+                })
+                .await
+                .map_err(|error| anyhow!("OCR worker failed: {error}"))?
+                .map_err(anyhow::Error::msg)
+            };
 
-        // Strip editor gutter noise (see strip_gutter_noise doc). Applied to
-        // the flat text but NOT to text_json — the JSON carries per-box OCR
-        // coordinates which downstream overlay/highlight UIs need intact.
-        (strip_gutter_noise(&raw.0), raw.1)
-    } else {
-        (String::new(), "[]".to_string())
-    };
+            let raw = match raw_result {
+                Ok(result) => result,
+                Err(error) => {
+                    // The snapshot was written before text extraction. If OCR
+                    // fails, remove that otherwise-unreachable file before
+                    // returning the explicit pipeline error.
+                    if !snapshot_path_str.is_empty() {
+                        if std::fs::remove_file(&snapshot_path_str).is_err() {
+                            warn!("failed to remove an unindexed snapshot after OCR failure");
+                        }
+                    }
+                    return Err(error);
+                }
+            };
+
+            // Strip editor gutter noise (see strip_gutter_noise doc). Applied to
+            // the flat text but NOT to text_json — the JSON carries per-box OCR
+            // coordinates which downstream overlay/highlight UIs need intact.
+            (strip_gutter_noise(&raw.0), raw.1)
+        } else {
+            (String::new(), "[]".to_string())
+        };
     let ocr_text = civitas_db::text_normalizer::normalize_cjk_ocr_spacing(&ocr_text);
 
     // --- Extract data from tree snapshot, fall back to OCR text ---
@@ -616,6 +641,18 @@ fn sanitize_ocr_text_json(text_json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ocr_selection_preserves_accessibility_first_behavior() {
+        assert!(!should_run_ocr(true, false, false));
+        assert!(should_run_ocr(false, false, false));
+        assert!(should_run_ocr(true, true, false));
+    }
+
+    #[test]
+    fn explicit_e2e_force_overrides_complete_accessibility_text() {
+        assert!(should_run_ocr(true, false, true));
+    }
     use civitas_a11y::tree::AccessibilityTreeNode;
     use image::{DynamicImage, RgbImage};
     use tempfile::TempDir;
