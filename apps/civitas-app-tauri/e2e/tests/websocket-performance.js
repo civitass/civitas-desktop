@@ -26,13 +26,15 @@ const WebSocket = require('ws');
 const WS_URL = 'ws://localhost:3030/stream/frames';
 const TIMEOUT_MS = 60000; // 60 seconds - matches customer-reported hang time
 
-// Everything on this socket comes from the server under test. Flatten it to a
-// single line before logging so a crafted frame cannot forge log records.
-function forLog(value) {
+// Everything on this socket comes from the server under test. Flatten each
+// value where it enters, not where it is printed, so a crafted frame cannot
+// forge log records through any of the paths that later report it.
+function flatten(value) {
   return String(value)
     .replace(/\n/g, " ")
     .replace(/\r/g, " ")
-    .replace(/[\u2028\u2029]/g, " ")
+    .replace(/\u2028/g, " ")
+    .replace(/\u2029/g, " ")
     .slice(0, 200);
 }
 
@@ -101,14 +103,15 @@ class TimelinePerformanceTester {
 
                     // Handle error messages
                     if (parsed.error) {
-                        this.metrics.errors.push(parsed.error);
-                        console.log(`  [${elapsed}ms] ERROR: ${forLog(parsed.error)}`);
+                        const reportedError = flatten(parsed.error);
+                        this.metrics.errors.push(reportedError);
+                        console.log(`  [${elapsed}ms] ERROR: ${reportedError}`);
                         return;
                     }
 
                     // Handle batched frames
                     if (Array.isArray(parsed)) {
-                        const frameCount = parsed.length;
+                        const frameCount = Number(parsed.length);
                         this.metrics.batchCount++;
                         this.metrics.totalFrames += frameCount;
                         this.metrics.totalBytes += dataStr.length;
@@ -116,9 +119,9 @@ class TimelinePerformanceTester {
                         if (!this.firstFrameReceived) {
                             this.firstFrameReceived = true;
                             this.metrics.firstFrameTime = elapsed;
-                            console.log(`  [${elapsed}ms] FIRST FRAME RECEIVED! (batch of ${forLog(frameCount)})`);
+                            console.log(`  [${elapsed}ms] FIRST FRAME RECEIVED! (batch of ${frameCount})`);
                         } else {
-                            console.log(`  [${elapsed}ms] Batch ${this.metrics.batchCount}: +${forLog(frameCount)} frames (total: ${forLog(this.metrics.totalFrames)})`);
+                            console.log(`  [${elapsed}ms] Batch ${this.metrics.batchCount}: +${frameCount} frames (total: ${Number(this.metrics.totalFrames)})`);
                         }
 
                         // Track frame count over time
@@ -126,7 +129,7 @@ class TimelinePerformanceTester {
                         this.metrics.timeToFrameCounts[timeKey] = this.metrics.totalFrames;
                     }
                 } catch (e) {
-                    console.log(`  [${elapsed}ms] Parse error: ${e.message}`);
+                    console.log(`  [${elapsed}ms] Parse error: ${flatten(e.message)}`);
                 }
             });
 
@@ -138,7 +141,7 @@ class TimelinePerformanceTester {
 
             ws.on('error', (error) => {
                 clearTimeout(timeout);
-                this.metrics.errors.push(error.message);
+                this.metrics.errors.push(flatten(error.message));
                 reject(error);
             });
 
