@@ -82,7 +82,10 @@ function extractTargets(content) {
   const targets = [];
   const withoutCode = stripFencedCode(content);
   const patterns = [
-    /!?\[[^\]\n]*\]\(\s*(<[^>\n]+>|(?:\\.|[^)\s])+)(?:\s+["'][^)\n]*)?\s*\)/g,
+    // `[^)\s\\]` must exclude the backslash: if both branches can consume one,
+    // the alternation is ambiguous and a link body of many `\!` backtracks
+    // exponentially.
+    /!?\[[^\]\n]*\]\(\s*(<[^>\n]+>|(?:\\.|[^)\s\\])+)(?:\s+["'][^)\n]*)?\s*\)/g,
     /^\s{0,3}\[[^\]\n]+\]:\s*(<[^>\n]+>|\S+)/gm,
     /<(?:a|img)\b[^>]*\b(?:href|src)\s*=\s*["']([^"']+)["'][^>]*>/gi,
   ];

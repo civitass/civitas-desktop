@@ -70,6 +70,7 @@ import {
 } from "@/lib/chat-utils";
 import { deriveFallbackConversationTitle } from "@/lib/utils/chat-title";
 import { isInternalTitleSession } from "@/lib/utils/internal-session";
+import { randomIdSuffix } from "@/lib/utils";
 import {
   useChatStore,
   sessionRecordFromMeta,
@@ -536,8 +537,8 @@ function applyEventToSessionContent(sid: string, payload: PiInnerEvent) {
     const images = imageDataUrlsFromPiContent(payload.message?.content);
     if (!text && images.length === 0) return;
 
-    const userId = `pi-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const assistantId = `pi-assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userId = `pi-user-${Date.now()}-${randomIdSuffix()}`;
+    const assistantId = `pi-assistant-${Date.now()}-${randomIdSuffix()}`;
     const userMsg: MutableMessage = {
       id: userId,
       role: "user",
@@ -576,7 +577,7 @@ function applyEventToSessionContent(sid: string, payload: PiInnerEvent) {
   if (t === "message_start" && payload.message?.role === "assistant") {
     const cur = store.sessions[sid];
     if (cur?.streamingMessageId) return;
-    const newId = `pi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const newId = `pi-${Date.now()}-${randomIdSuffix()}`;
     const newMsg: MutableMessage = {
       id: newId,
       role: "assistant",

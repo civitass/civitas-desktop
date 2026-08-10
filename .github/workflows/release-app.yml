@@ -59,7 +59,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^version = \"\\([^\"]*\\)\"/\\1/p' apps/civitas-app-tauri/src-tauri/Cargo.toml | head -1)"
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' apps/civitas-app-tauri/src-tauri/Cargo.toml | head -1)"
           expected_tag="v${version}"
           if [ -z "$version" ] || [ "$REQUESTED_TAG" != "$expected_tag" ]; then
             echo "::error::release tag must be ${expected_tag}; received ${REQUESTED_TAG}"
@@ -381,7 +381,7 @@ jobs:
             -k "$keychain_password" \
             "$keychain_path"
           security list-keychains -d user -s "$keychain_path"
-          identity="$(security find-identity -v -p codesigning "$keychain_path" | sed -n 's/.*\"\\(Developer ID Application:[^\"]*\\)\".*/\\1/p' | head -1)"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
           if [ -z "$identity" ]; then
             echo "::error::Developer ID Application identity was not found"
             exit 1
@@ -482,7 +482,7 @@ jobs:
           test -n "${EXPECTED_APPLE_TEAM_ID:-}"
 
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          codesign -dvv "$app_path" 2>&1 | grep -Eq 'flags=.*\\(runtime\\)'
+          codesign -dvv "$app_path" 2>&1 | grep -Eq 'flags=.*\(runtime\)'
           minimum_version="$(plutil -extract LSMinimumSystemVersion raw "$app_path/Contents/Info.plist")"
           test "$minimum_version" = "${{ matrix.deployment_target }}"
 
@@ -557,7 +557,7 @@ jobs:
           mounted_signature="$(codesign -dvvv --verbose=4 "$mounted_app" 2>&1)"
           grep -Fq "TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}" <<<"$mounted_signature"
           grep -Fq "Authority=${APPLE_SIGNING_IDENTITY}" <<<"$mounted_signature"
-          grep -Eq 'flags=.*\\(runtime\\)' <<<"$mounted_signature"
+          grep -Eq 'flags=.*\(runtime\)' <<<"$mounted_signature"
 
           actual_entitlements="$RUNNER_TEMP/civitas-release-entitlements-actual.plist"
           actual_entitlements_json="$RUNNER_TEMP/civitas-release-entitlements-actual.json"

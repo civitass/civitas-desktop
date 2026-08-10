@@ -72,4 +72,6 @@ coordinated date or explicit maintainer approval.
 
 The architecture and known residual risks are documented in
 [Threat model](docs/THREAT_MODEL.md). Release authenticity checks are in
-[Release verification](docs/RELEASE_VERIFICATION.md).
+[Release verification](docs/RELEASE_VERIFICATION.md). How CodeQL findings are
+fixed or dismissed, and why, is recorded in
+[Code scanning triage](docs/CODE_SCANNING.md).

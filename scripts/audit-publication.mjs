@@ -316,7 +316,7 @@ function auditRuntimeSource(files) {
         "Retired hosted-provider/account symbols remain outside an explicit one-way migration module.",
       );
     }
-    if (/https?:\/\/(?:api\.)?qrserver\.com/i.test(content)) {
+    if (content.toLowerCase().includes("qrserver.com")) {
       addFinding(
         "remote_qr_secret_disclosure",
         file,
@@ -357,10 +357,10 @@ function auditRuntimeSource(files) {
         );
       }
     }
+    const loweredContent = content.toLowerCase();
     if (
-      /https?:\/\/(?:www\.google\.com\/s2\/favicons|t2\.gstatic\.com\/favicon)/i.test(
-        content,
-      )
+      loweredContent.includes("google.com/s2/favicons") ||
+      loweredContent.includes("t2.gstatic.com/favicon")
     ) {
       addFinding(
         "remote_private_favicon_lookup",
@@ -1083,7 +1083,9 @@ function auditReleaseWorkflow(files) {
       /cargo install cargo-audit\s*(?:$|\n)/im,
       /cargo install cargo-deny\s*(?:$|\n)/im,
       /7z2301-x64\.exe/i,
-      /eternallybored\.org\/misc\/wget/i,
+      // Bound the host label on both sides so the rule matches this host and
+      // not `not-eternallybored.org` or `eternallybored.org.example.com`.
+      /(?:^|[^\w.-])eternallybored\.org(?![\w.-])/i,
       /releases\/latest/i,
       /^\s*lfs:\s*true\s*$/im,
     ]) {

@@ -44,7 +44,7 @@ import {
   ChatMessage,
   ChatConversation,
 } from "@/lib/hooks/use-settings";
-import { cn } from "@/lib/utils";
+import { cn, randomIdSuffix } from "@/lib/utils";
 import {
   Loader2,
   Send,
@@ -2465,7 +2465,7 @@ export function StandaloneChat({
         return;
       }
 
-      const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const pendingId = `pending-${Date.now()}-${randomIdSuffix()}`;
       setPendingDocs((prev) => [...prev, { id: pendingId, name, ext }]);
 
       try {
@@ -3175,7 +3175,7 @@ export function StandaloneChat({
       return;
     }
     (window as any).__e2eSeedUserMessage = (sid: string, text: string) => {
-      const id = `e2e-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = `e2e-user-${Date.now()}-${randomIdSuffix()}`;
       const userMsg = {
         id,
         role: "user" as const,
@@ -7425,7 +7425,7 @@ export function StandaloneChat({
       followUpAbortRef.current = null;
     }
     lastUserMessageRef.current = trimmed;
-    const turnIntentId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const turnIntentId = `steer-${Date.now()}-${randomIdSuffix()}`;
     const steerAttachments = consumePendingAttachments();
     const optimisticUser: Message = {
       id: turnIntentId,

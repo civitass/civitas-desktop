@@ -59,11 +59,12 @@ impl Integration for Pipedrive {
     ) -> Result<String> {
         let api_token = require_str(creds, "api_token")?;
         let domain = require_str(creds, "domain")?;
+        // Send the token as a header, matching `proxy_config` above. Pipedrive
+        // still accepts `?api_token=`, but a credential in the query string is
+        // recorded verbatim by every proxy and server access log on the path.
         let resp: Value = client
-            .get(format!(
-                "https://{}.pipedrive.com/api/v1/users/me?api_token={}",
-                domain, api_token
-            ))
+            .get(format!("https://{}.pipedrive.com/api/v1/users/me", domain))
+            .bearer_auth(api_token)
             .send()
             .await?
             .error_for_status()?

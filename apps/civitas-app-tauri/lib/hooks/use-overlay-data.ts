@@ -226,6 +226,12 @@ export function useOverlayData(
             const rawDeviceLevels: Record<string, number> = m.audio?.device_levels ?? {};
             const deviceLevels: Record<string, number> = {};
             for (const [name, level] of Object.entries(rawDeviceLevels)) {
+              // Device names arrive over the metrics socket, so they are keys
+              // from outside this process. Writing `__proto__` or `constructor`
+              // here would mutate Object.prototype for the whole renderer.
+              if (name === "__proto__" || name === "constructor" || name === "prototype") {
+                continue;
+              }
               deviceLevels[name] = Math.min(1, (level as number) * 15);
             }
 

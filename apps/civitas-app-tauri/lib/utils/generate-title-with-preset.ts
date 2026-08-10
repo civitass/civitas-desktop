@@ -12,6 +12,7 @@ import { mountAgentEventBus, registerForeground } from "@/lib/events/bus";
 import type { AgentEventEnvelope } from "@/lib/events/types";
 import { INTERNAL_TITLE_PREFIX } from "@/lib/utils/internal-session";
 import { getCivitasDataRoot } from "@/lib/data-root";
+import { randomIdSuffix } from "@/lib/utils";
 
 const TITLE_MAX_LENGTH = 50;
 const TITLE_TIMEOUT_MS = 15000;
@@ -114,7 +115,7 @@ async function generateTitleViaPi(
   }
 
   // Unique session ID per call — no collisions across windows or concurrent calls
-  const sessionId = `${INTERNAL_TITLE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionId = `${INTERNAL_TITLE_PREFIX}${Date.now()}-${randomIdSuffix()}`;
 
   await mountAgentEventBus();
 

@@ -26,6 +26,14 @@ import { mkdirSync } from "fs";
 import { createServer } from "http";
 import { URL } from "url";
 
+// Baileys errors carry session paths, protocol internals, and stack frames.
+// The HTTP surface is reachable by anything that can open a loopback socket, so
+// callers get a stable label and the detail goes to the operator's stderr only.
+function describeFailure(err) {
+  console.error("[whatsapp-gateway] request failed:", err);
+  return "whatsapp gateway request failed";
+}
+
 const SESSION_DIR = process.env.WHATSAPP_SESSION_DIR || join(homedir(), ".civitas", "whatsapp-session");
 const HTTP_PORT = parseInt(process.env.WHATSAPP_HTTP_PORT || "3035", 10);
 mkdirSync(SESSION_DIR, { recursive: true });
@@ -111,7 +119,7 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify({ success: true, to: jid }));
     } catch (err) {
       res.writeHead(500);
-      return res.end(JSON.stringify({ error: err.message || String(err) }));
+      return res.end(JSON.stringify({ error: describeFailure(err) }));
     }
   }
 
@@ -137,7 +145,7 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify(contacts));
     } catch (err) {
       res.writeHead(500);
-      return res.end(JSON.stringify({ error: err.message || String(err) }));
+      return res.end(JSON.stringify({ error: describeFailure(err) }));
     }
   }
 
@@ -169,7 +177,7 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify(chats));
     } catch (err) {
       res.writeHead(500);
-      return res.end(JSON.stringify({ error: err.message || String(err) }));
+      return res.end(JSON.stringify({ error: describeFailure(err) }));
     }
   }
 
@@ -198,7 +206,7 @@ const server = createServer(async (req, res) => {
       }));
     } catch (err) {
       res.writeHead(500);
-      return res.end(JSON.stringify({ error: err.message || String(err) }));
+      return res.end(JSON.stringify({ error: describeFailure(err) }));
     }
   }
 

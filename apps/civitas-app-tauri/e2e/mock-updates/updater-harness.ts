@@ -130,9 +130,10 @@ function ensurePrivateKeyString(env: Record<string, string | undefined>): void {
   try {
     env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(p, "utf8").trim();
   } catch {
+    // The path itself is operator-supplied and can name a location worth
+    // keeping out of CI logs, so report the variable, not its value.
     console.error(
-      "[updater-local] could not read TAURI_SIGNING_PRIVATE_KEY_PATH=",
-      p,
+      "[updater-local] could not read the file named by TAURI_SIGNING_PRIVATE_KEY_PATH",
     );
     process.exit(1);
   }

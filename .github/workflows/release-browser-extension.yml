@@ -73,7 +73,7 @@ jobs:
         run: |
           if rg -n \
             --glob '!*.test.ts' \
-            'chrome\\.debugger|Runtime\\.evaluate|action:.{0,12}eval|\\?token=|get_cookies|chrome\\.cookies|<all_urls>' \
+            'chrome\.debugger|Runtime\.evaluate|action:.{0,12}eval|\?token=|get_cookies|chrome\.cookies|<all_urls>' \
             src static dist; then
             echo "::error::Browser extension contains a forbidden execution, cookie, broad-host, or URL-credential marker."
             exit 1

@@ -275,9 +275,23 @@ function stopHeartbeat(): void {
   heartbeatTimer = null;
 }
 
+// Chrome refuses to inject content scripts into the Web Store, so treat it as
+// unshareable. Match on the parsed hostname: a substring test also rejects an
+// unrelated page whose path or query merely mentions the store, and accepts a
+// lookalike host that embeds the string somewhere other than the host.
+const RESTRICTED_HOSTS = ["chromewebstore.google.com", "chrome.google.com"];
+
 function isRestrictedUrl(url: string | undefined): boolean {
   if (!url) return true;
-  return !/^https?:\/\//i.test(url) || url.includes("chromewebstore.google.com");
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return true;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return true;
+  const host = parsed.hostname.toLowerCase();
+  return RESTRICTED_HOSTS.includes(host);
 }
 
 async function getActiveTabId(): Promise<number> {

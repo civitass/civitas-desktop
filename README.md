@@ -1,37 +1,43 @@
 <p align="center">
-  <img src="docs/assets/civitas-desktop-wordmark.svg" width="620" alt="Civitas Desktop">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
+    <img src="docs/assets/readme/hero-light.svg" alt="Civitas Desktop — the memory behind your next move">
+  </picture>
+</p>
+
+<h3 align="center">Remember the moment. Understand the why. Continue with confidence.</h3>
+
+<p align="center">
+  Civitas rewinds a private Timeline of your day, recovers why decisions were made,<br>
+  and drafts evidence-linked next actions — all on your computer.
 </p>
 
 <p align="center">
-  <strong>Turn the work you just did into the next move you can trust.</strong><br><br>
-  Rewind a private Timeline. Recover why a decision was made.<br>
-  Continue with evidence-linked next actions.
-</p>
-
-<p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>Signed downloads</strong></a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>Download</strong></a>
+  &nbsp;·&nbsp;
   <a href="docs/BUILDING.md">Build from source</a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
+  &nbsp;·&nbsp;
   <a href="docs/BYOK.md">Connect your AI</a>
-  &nbsp;&nbsp;·&nbsp;&nbsp;
+  &nbsp;·&nbsp;
   <a href="docs/PRIVACY_AND_DATA_BOUNDARY.md">Privacy boundary</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/civitass/civitas-desktop?style=flat&color=1d1d1f"></a>
-  <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1d1d1f?style=flat"></a>
-  <a href="https://github.com/civitass/civitas-desktop/actions/workflows/release-app.yml"><img alt="Release verification" src="https://img.shields.io/github/actions/workflow/status/civitass/civitas-desktop/release-app.yml?style=flat&label=verified%20build"></a>
-  <img alt="Local first" src="https://img.shields.io/badge/local--first-675d58?style=flat">
+  <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-7a5f48?style=flat&labelColor=2b2b2e"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/macOS%20·%20Windows-1d1d1f?style=flat&labelColor=2b2b2e">
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-7a5f48?style=flat&labelColor=2b2b2e">
+  <img alt="Bring your own model" src="https://img.shields.io/badge/bring%20your%20own%20model-1d1d1f?style=flat&labelColor=2b2b2e">
 </p>
+
+<br>
 
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/demo/timeline.png" width="1200" alt="The real Civitas Desktop Timeline showing a privacy-safe synthetic launch workspace and local time scrubber">
+    <img src="docs/assets/readme/shot-timeline.svg" alt="The real Civitas Desktop Timeline replaying a privacy-safe synthetic launch workspace with the local time scrubber">
   </a>
 </p>
 
-<p align="center"><strong>Timeline</strong> — a real Civitas capture with a deterministic, privacy-safe demo day.</p>
+<p align="center"><sub><strong>Timeline</strong> — the real application replaying a deterministic, privacy-safe demo day. Click the shot for the unretouched capture.</sub></p>
 
 > [!NOTE]
 > Signed macOS and Windows binaries are published together only after both pass
@@ -50,18 +56,22 @@ employee monitoring, fleet administration, or a company control plane. Capture,
 search, Timeline, graph, feedback, and profile metadata stay on your computer by
 default. AI is either loopback-local or a provider you explicitly connect.
 
+<br>
+
 <p align="center">
   <a href="docs/assets/demo/next-actions.png">
-    <img src="docs/assets/demo/next-actions.png" width="1200" alt="The actual Civitas Desktop Next Actions view showing ranked privacy-safe launch commitments with evidence and safety state">
+    <img src="docs/assets/readme/shot-next-actions.svg" alt="The actual Civitas Desktop Next Actions view showing ranked privacy-safe launch commitments with evidence and safety state">
   </a>
 </p>
 
-<p align="center"><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</p>
+<p align="center"><sub><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</sub></p>
 
-Both images are reproducible captures of the real desktop application. The
-publication E2E suite creates an isolated local profile and deterministic
-synthetic content—never founder, contributor, or customer data—then verifies the
-same user-visible surfaces before saving the screenshots.
+Every window above frames an unretouched capture of the real desktop
+application. The publication E2E suite creates an isolated local profile and
+deterministic synthetic content—never founder, contributor, or customer
+data—then verifies the same user-visible surfaces before saving the
+screenshots. The backdrop and window chrome are presentational; the pixels
+inside are the captures, and each shot links to its raw PNG.
 
 ## Three everyday wins
 
@@ -119,26 +129,12 @@ same user-visible surfaces before saving the screenshots.
 
 ## How it works
 
-```text
-the apps and meetings you choose
-              │
-              ▼
-  local screen · accessibility · audio capture
-              │
-              ▼
-       SQLite + FTS5 + local media
-              │
-      ┌───────┴────────┐
-      ▼                ▼
- timeline/search   evidence-linked graph
-      │                │
-      └───────┬────────┘
-              ▼
-       Ask · Next Actions · MCP
-              │
-              ▼
- local model, or a remote provider you explicitly configure
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/how-it-works-dark.svg">
+    <img src="docs/assets/readme/how-it-works-light.svg" alt="Diagram: chosen apps and meetings flow into local capture, a local SQLite store, Timeline and knowledge graph, then Ask, Next Actions, and MCP. AI runs against a loopback local model, or a remote provider only after explicit opt-in.">
+  </picture>
+</p>
 
 The desktop app and engine run on the user's computer. The engine binds its
 authenticated API to `127.0.0.1:3030`; there is no LAN setting or service
@@ -184,13 +180,15 @@ integration automatically.
 | Amazon Bedrock | Short-term key, AWS profile, or temporary access keys | Region-pinned Bedrock Runtime | You manage models and access in AWS |
 | Compatible endpoint | Optional API key | Exact HTTPS or loopback host shown in Settings | You operate a trusted OpenAI-compatible server |
 
+<br>
+
 <p align="center">
   <a href="docs/assets/demo/ai-providers.png">
-    <img src="docs/assets/demo/ai-providers.png" width="920" alt="The actual Civitas Desktop AI settings showing local inference and supported bring-your-own-provider choices">
+    <img src="docs/assets/readme/shot-ai-providers.svg" alt="The actual Civitas Desktop AI settings showing local inference and supported bring-your-own-provider choices">
   </a>
 </p>
 
-<p align="center"><em>Choose the boundary first. Add a credential only when a remote provider is intentional.</em></p>
+<p align="center"><sub><strong>Settings → AI</strong> — choose the boundary first; add a credential only when a remote provider is intentional.</sub></p>
 
 The app provides save, replace, test, activate, and delete flows. Diagnostics
 use the fixed prompt `Reply with OK.` and never return the credential.
@@ -395,3 +393,16 @@ For vulnerabilities, do not open a public issue; follow [SECURITY.md](SECURITY.m
 
 Civitas is shaped by [Chuyue Wang and Eric Bi](CONTRIBUTORS.md), alongside the
 open-source work acknowledged in [NOTICE.md](NOTICE.md).
+
+<br>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/mark-dark.svg">
+    <img src="docs/assets/readme/mark-light.svg" width="40" alt="Civitas mark">
+  </picture>
+</p>
+
+<p align="center">
+  <sub>Local first · account-free · bring your own model</sub>
+</p>

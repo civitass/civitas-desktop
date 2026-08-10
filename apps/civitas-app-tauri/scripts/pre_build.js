@@ -995,10 +995,11 @@ if (platform == "windows") {
   if (winArch === "arm64") {
     const ffmpegLib = path.join(cwd, config.ffmpegRealname, "lib");
     await fs.mkdir(ffmpegLib, { recursive: true });
+    // Write unconditionally. An exists-then-write pair races against a
+    // concurrent build writing the same placeholder, and the file is empty
+    // either way, so there is nothing to preserve.
     const placeholder = path.join(ffmpegLib, ".gitkeep");
-    if (!(await fs.exists(placeholder))) {
-      await fs.writeFile(placeholder, "");
-    }
+    await fs.writeFile(placeholder, "");
   }
 
   exports.openBlas = await setupOpenBlas({ cwd, winArch });

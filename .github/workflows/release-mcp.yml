@@ -131,12 +131,12 @@ jobs:
             grep -Fqx "$required" "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"
           done
           if grep -Eq \
-            '^(src/|tsconfig\\.json$|vitest\\.config\\.ts$|node_modules/(@anthropic-ai/mcpb|typescript|ts-node|vitest|vite|esbuild|rollup|@rollup/|@rolldown/|lightningcss))' \
+            '^(src/|tsconfig\.json$|vitest\.config\.ts$|node_modules/(@anthropic-ai/mcpb|typescript|ts-node|vitest|vite|esbuild|rollup|@rollup/|@rolldown/|lightningcss))' \
             "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"; then
             echo "::error::mcpb contains source, tests, build tools, or development dependencies"
             exit 1
           fi
-          if grep -Eq '\\.(node|dylib|so|dll|exe)$' "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"; then
+          if grep -Eq '\.(node|dylib|so|dll|exe)$' "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"; then
             echo "::error::mcpb unexpectedly contains a native executable or library"
             exit 1
           fi

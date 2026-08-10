@@ -332,6 +332,28 @@
   <script>
     let currentFilter = 'all';
     let pendingRequestId = null;
+    // Untrusted result text for the currently rendered cards, indexed by the
+    // `data-result` attribute on each action button.
+    let resultPayloads = [];
+
+    // The embedding MCP host. Captured once at load so both directions of the
+    // bridge are pinned to a single origin: outbound payloads carry captured
+    // screen text, so they must never be broadcast to '*' when the host origin
+    // is knowable, and inbound frames from any other window are ignored.
+    const HOST_ORIGIN = (() => {
+      const ancestors = window.location.ancestorOrigins;
+      if (ancestors && ancestors.length > 0 && ancestors[0] !== 'null') {
+        return ancestors[0];
+      }
+      if (document.referrer) {
+        try {
+          return new URL(document.referrer).origin;
+        } catch (_) {
+          return null;
+        }
+      }
+      return null;
+    })();
 
     // MCP App communication layer
     const mcp = {
@@ -345,7 +367,7 @@
           id: this.requestId,
           method: 'tools/call',
           params: { name, arguments: args }
-        }, '*');
+        }, HOST_ORIGIN || '*');
         return this.requestId;
       },
 
@@ -354,12 +376,17 @@
           jsonrpc: '2.0',
           method: 'message/send',
           params: { content: text }
-        }, '*');
+        }, HOST_ORIGIN || '*');
       }
     };
 
     // listen for messages from host
     window.addEventListener('message', (event) => {
+      // Only the embedding host may drive this surface. Without both checks any
+      // page that can reach this frame could inject fabricated tool results.
+      if (event.source !== window.parent) return;
+      if (HOST_ORIGIN !== null && event.origin !== HOST_ORIGIN) return;
+
       const data = event.data;
 
       // handle tool results
@@ -459,25 +486,35 @@
       statsEl.classList.remove('hidden');
 
       // render results
+      //
+      // Every interpolated field originates in captured screen text, window
+      // titles, and app names, so all of it is untrusted. Text nodes go through
+      // escapeHtml, the type is narrowed to a class-safe slug, and the action
+      // buttons carry their payload in a data attribute read by a delegated
+      // listener instead of an inline handler — an inline handler would need the
+      // payload to survive both HTML-attribute and JavaScript-string parsing.
+      resultPayloads = [];
       container.innerHTML = results.map(result => {
         const content = result.content || {};
         const type = result.type?.toLowerCase() || 'unknown';
+        const typeSlug = type.replace(/[^a-z0-9-]/g, '') || 'unknown';
         const text = content.text || content.transcription || '';
         const app = content.app_name || content.device_name || 'unknown';
         const window = content.window_name || '';
         const time = content.timestamp ? formatTime(new Date(content.timestamp)) : '';
+        const payloadIndex = resultPayloads.push(text) - 1;
 
         return `
           <div class="result-card">
             <div class="result-header">
-              <span class="result-type type-${type}">${getTypeIcon(type)} ${type}</span>
-              <span class="result-time">${time}</span>
+              <span class="result-type type-${typeSlug}">${escapeHtml(getTypeIcon(type))} ${escapeHtml(type)}</span>
+              <span class="result-time">${escapeHtml(time)}</span>
             </div>
             <div class="result-app">${escapeHtml(app)}${window ? ' - ' + escapeHtml(window) : ''}</div>
             <div class="result-text">${escapeHtml(truncate(text, 300))}</div>
             <div class="result-actions">
-              <button class="action-btn" onclick="copyText('${escapeJs(text)}')">copy</button>
-              <button class="action-btn" onclick="askAbout('${escapeJs(text.substring(0, 100))}')">ask AI</button>
+              <button class="action-btn" data-action="copy" data-result="${payloadIndex}">copy</button>
+              <button class="action-btn" data-action="ask" data-result="${payloadIndex}">ask AI</button>
             </div>
           </div>
         `;
@@ -532,16 +569,6 @@
         .replace(/'/g, '&#039;');
     }
 
-    function escapeJs(str) {
-      if (!str) return '';
-      return str
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, '\\n')
-        .replace(/\r/g, '\\r');
-    }
-
     function copyText(text) {
       navigator.clipboard.writeText(text).then(() => {
         // could show a toast here
@@ -551,6 +578,18 @@
     function askAbout(text) {
       mcp.sendMessage(`Tell me more about: "${text}"`);
     }
+
+    // Result actions are delegated so untrusted captured text never has to be
+    // encoded into markup. The button only carries an index into the payloads
+    // captured by the render that produced it.
+    document.getElementById('results').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+      const payload = resultPayloads[Number(button.dataset.result)];
+      if (typeof payload !== 'string') return;
+      if (button.dataset.action === 'copy') copyText(payload);
+      if (button.dataset.action === 'ask') askAbout(payload.substring(0, 100));
+    });
 
     // auto-focus search input
     document.getElementById('query').focus();

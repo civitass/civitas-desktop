@@ -203,10 +203,13 @@ for (const required of [
 }
 
 const designGuide = source("DESIGN.md");
+// Check the repository and the pinned commit independently so a reference that
+// drifts to a different revision of the same repo is still reported.
+const INTERACTION_REVIEW_REPO = "github.com/emilkowalski/skills";
+const INTERACTION_REVIEW_COMMIT = "70744e3816f1d93eafb697161a8b880a7384c5ff";
 if (
-  !designGuide.includes(
-    "https://github.com/emilkowalski/skills/tree/70744e3816f1d93eafb697161a8b880a7384c5ff",
-  )
+  !designGuide.includes(INTERACTION_REVIEW_REPO) ||
+  !designGuide.includes(INTERACTION_REVIEW_COMMIT)
 ) {
   findings.push({
     file: "DESIGN.md",
