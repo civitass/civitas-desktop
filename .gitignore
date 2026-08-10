@@ -39,6 +39,9 @@ onnxruntime-win-x64*/
 .env
 .env.local
 
+# local-only operator credential notes — never commit
+keys.md
+
 # JavaScript stuff
 node_modules/
 packages/browser-extension/dist/
