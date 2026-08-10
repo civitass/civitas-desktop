@@ -400,7 +400,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
         debouncedFrame?.frameId && (
           <div
             id="frame-context-menu"
-            className="fixed z-[9999] isolate min-w-[200px] overflow-hidden rounded-md border border-border/70 bg-popover/92 py-1 text-sm text-popover-foreground shadow-lg backdrop-blur-xl outline-none *:outline-none"
+			className="fixed z-[9999] isolate min-w-[200px] overflow-hidden rounded-md border border-border/70 bg-popover/95 py-1 text-sm text-popover-foreground shadow-lg backdrop-blur-xl outline-none *:outline-none"
             style={{
               left: contextMenuPositionRef.current.x,
               top: contextMenuPositionRef.current.y,

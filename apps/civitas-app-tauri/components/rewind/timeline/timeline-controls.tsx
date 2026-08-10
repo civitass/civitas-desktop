@@ -319,7 +319,7 @@ export function TimelineControls({
 					<button
 						type="button"
 						onClick={onChatClick}
-					className="group flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-sm backdrop-blur-xl transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						className="group flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-sm backdrop-blur-xl transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					>
 						{chatShortcutDisplay ? (
 							<span className="text-xs text-muted-foreground">{chatShortcutDisplay}</span>
