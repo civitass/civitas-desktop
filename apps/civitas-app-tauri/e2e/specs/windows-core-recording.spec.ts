@@ -778,24 +778,20 @@ describe("Windows core recording pipeline", function () {
     );
     expect(captureRequest.monitorSubscribers).toBeGreaterThan(0);
 
-    // A healthy startup frame is not proof that the newly opened pixel marker
-    // was captured. Require a DB write after the explicit trigger before
-    // querying OCR, otherwise this test can wait against stale startup data.
-    const health = await waitForFrameWriteAfter(
-      cfg,
-      beforeFrames,
-      "pixel-only marker native capture request",
-      t(75_000),
-    );
-    await browser.pause(t(1_000));
+    // Prove the consumer-visible persisted result directly. The health
+    // counter is approximate process-lifetime telemetry, not a durable DB
+    // acknowledgement tied to this request. Treating it as one caused false
+    // failures on hosted Windows runners: snapshot compaction observed new
+    // rows, but this test stopped before querying them. A fresh OCR search hit
+    // for text painted only after `markerSinceIso` is the stronger contract:
+    // native pixels -> OCR -> DB -> authenticated retrieval.
+    const rows = await waitForMarkerRows(cfg, markerSinceIso, t(75_000));
+    const health = await getHealth(cfg);
 
     markerProbe = {
       health,
       markerSinceIso,
-      rows:
-        health.frame_status === "ok"
-          ? await waitForMarkerRows(cfg, markerSinceIso)
-          : [],
+      rows,
     };
 
     console.log(
