@@ -29,7 +29,11 @@ const TIMEOUT_MS = 60000; // 60 seconds - matches customer-reported hang time
 // Everything on this socket comes from the server under test. Flatten it to a
 // single line before logging so a crafted frame cannot forge log records.
 function forLog(value) {
-  return String(value).replace(/[\r\n\u2028\u2029]+/g, " ").slice(0, 200);
+  return String(value)
+    .replace(/\n/g, " ")
+    .replace(/\r/g, " ")
+    .replace(/[\u2028\u2029]/g, " ")
+    .slice(0, 200);
 }
 
 class TimelinePerformanceTester {

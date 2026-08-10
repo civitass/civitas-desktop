@@ -23,7 +23,13 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
@@ -123,6 +129,23 @@ function collectText(value: unknown): string {
   return String(value);
 }
 
+// Both marker hosts below write a file and then execute it. Placing that file
+// directly in the shared temp directory lets any other account on the machine
+// pre-create or symlink the path and choose what runs. `mkdtemp` creates a
+// fresh directory owned by this process (0700), so the name cannot be
+// predicted and nothing else can plant a file inside it.
+function privateScratchDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+function removeScratchDir(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // A detached child may still hold the directory open on Windows.
+  }
+}
+
 function psString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -136,10 +159,8 @@ function spawnDetachedPowerShell(
   // script enters its own try/catch, leaving neither a window nor a diagnostic
   // sentinel. A BOM-prefixed .ps1 gives PowerShell an unambiguous parser and
   // encoding boundary, and also avoids Windows command-line quoting limits.
-  const scriptPath = join(
-    tmpdir(),
-    `civitas-e2e-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`,
-  );
+  const scriptDir = privateScratchDir("civitas-e2e-ps-");
+  const scriptPath = join(scriptDir, "marker.ps1");
   writeFileSync(scriptPath, `\uFEFF${script}`, "utf8");
 
   const child = spawn(
@@ -151,11 +172,7 @@ function spawnDetachedPowerShell(
     if (launchErrorPath) {
       writeFileSync(launchErrorPath, error.stack ?? error.message, "utf8");
     }
-    try {
-      unlinkSync(scriptPath);
-    } catch {
-      // The launcher may have already removed its temporary script.
-    }
+    removeScratchDir(scriptDir);
   });
   child.once("exit", (code, signal) => {
     const readyPath = launchErrorPath?.endsWith(".error")
@@ -173,11 +190,8 @@ function spawnDetachedPowerShell(
         "utf8",
       );
     }
-    try {
-      unlinkSync(scriptPath);
-    } catch {
-      // Cleanup is idempotent with the explicit stop path below.
-    }
+    // Cleanup is idempotent with the explicit stop path below.
+    removeScratchDir(scriptDir);
   });
   child.unref();
 
@@ -190,11 +204,8 @@ function spawnDetachedPowerShell(
     } catch {
       // already closed
     }
-    try {
-      unlinkSync(scriptPath);
-    } catch {
-      // The child exit handler may already have removed it.
-    }
+    // The child exit handler may already have removed it.
+    removeScratchDir(scriptDir);
   };
 }
 
@@ -203,10 +214,8 @@ function spawnWindowsMarkerWindow(marker: string): {
   errorPath: string;
   readyPath: string;
 } {
-  const readyPath = join(
-    tmpdir(),
-    `civitas-vision-marker-${process.pid}-${Date.now()}.ready`,
-  );
+  const markerDir = privateScratchDir("civitas-vision-marker-");
+  const readyPath = join(markerDir, "marker.ready");
   const errorPath = `${readyPath}.error`;
   const hostPath = `${readyPath}.hta`;
   const html = `<!doctype html>
@@ -288,13 +297,8 @@ function spawnWindowsMarkerWindow(marker: string): {
           // The marker may already have closed.
         }
       }
-      for (const path of [readyPath, errorPath, hostPath]) {
-        try {
-          unlinkSync(path);
-        } catch {
-          // The process may have closed before writing its status marker.
-        }
-      }
+      // The process may have closed before writing its status marker.
+      removeScratchDir(markerDir);
     },
   };
 }

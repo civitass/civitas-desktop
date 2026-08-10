@@ -316,7 +316,9 @@ function auditRuntimeSource(files) {
         "Retired hosted-provider/account symbols remain outside an explicit one-way migration module.",
       );
     }
-    if (content.toLowerCase().includes("qrserver.com")) {
+    // Bound the host label on both sides so this matches the QR service and
+    // not an unrelated host that merely ends with the same characters.
+    if (/(?:^|[^\w.-])(?:api\.)?qrserver\.com(?![\w.-])/i.test(content)) {
       addFinding(
         "remote_qr_secret_disclosure",
         file,
