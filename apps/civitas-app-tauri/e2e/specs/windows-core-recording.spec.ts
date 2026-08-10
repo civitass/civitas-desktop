@@ -23,7 +23,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
@@ -149,13 +149,17 @@ function spawnDetachedPowerShell(script: string): () => void {
 
 function spawnWindowsMarkerWindow(marker: string): {
   cleanup: () => void;
+  errorPath: string;
   readyPath: string;
 } {
   const readyPath = join(
     tmpdir(),
     `civitas-vision-marker-${process.pid}-${Date.now()}.ready`,
   );
+  const errorPath = `${readyPath}.error`;
   const script = `
+$ErrorActionPreference = 'Stop'
+try {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -200,40 +204,43 @@ $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
 $picture.Image = $bitmap
 $form.Controls.Add($picture)
 $form.Add_Shown({
-  # Wait until the bitmap has painted, then create a real foreground transition.
-  # The recording pipeline is event driven; TopMost alone does not guarantee a
-  # WindowFocus event on hosted Windows runners.
-  $script:markerActivationTimer = New-Object System.Windows.Forms.Timer
-  $script:markerActivationTimer.Interval = 750
-  $script:activationAttempts = 0
-  $script:markerActivationTimer.Add_Tick({
+  try {
+    # Shown runs after the native handle exists. Refresh is synchronous, so the
+    # ready file cannot precede the pixel-only bitmap reaching the desktop.
+    # Avoid a WinForms Timer here: PowerShell event callbacks on hosted runners
+    # can lose their script-scoped timer before its Tick handler runs.
     [void][CivitasE2EForeground]::SetForegroundWindow($form.Handle)
     $form.Activate()
     $picture.Invalidate()
-    $script:activationAttempts += 1
-    if ($script:activationAttempts -ge 4) {
-      $script:markerActivationTimer.Stop()
-      $picture.Refresh()
-      [System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
-    }
-  })
-  $script:markerActivationTimer.Start()
+    $picture.Refresh()
+    $form.Refresh()
+    [System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
+  } catch {
+    [System.IO.File]::WriteAllText(${psString(errorPath)}, $_.Exception.ToString())
+    $form.Close()
+  }
 })
 [void]$form.ShowDialog()
-$script:markerActivationTimer.Dispose()
 $picture.Dispose()
 $bitmap.Dispose()
+} catch {
+  [System.IO.File]::WriteAllText(${psString(errorPath)}, $_.Exception.ToString())
+  exit 1
+}
 `;
 
   const stopProcess = spawnDetachedPowerShell(script);
   return {
+    errorPath,
     readyPath,
     cleanup: () => {
       stopProcess();
-      try {
-        unlinkSync(readyPath);
-      } catch {
-        // The process may have closed before writing its readiness marker.
+      for (const path of [readyPath, errorPath]) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // The process may have closed before writing its status marker.
+        }
       }
     },
   };
@@ -790,11 +797,21 @@ describe("Windows core recording pipeline", function () {
 
     // Require an explicit paint/activation handshake instead of guessing how
     // long cold PowerShell + WinForms startup takes on a hosted runner.
-    await browser.waitUntil(() => existsSync(markerWindow.readyPath), {
-      timeout: t(20_000),
-      interval: 250,
-      timeoutMsg: "Windows OCR marker window never painted",
-    });
+    await browser.waitUntil(
+      () =>
+        existsSync(markerWindow.readyPath) ||
+        existsSync(markerWindow.errorPath),
+      {
+        timeout: t(20_000),
+        interval: 250,
+        timeoutMsg: "Windows OCR marker window never painted",
+      },
+    );
+    if (existsSync(markerWindow.errorPath)) {
+      throw new Error(
+        `Windows OCR marker window failed: ${readFileSync(markerWindow.errorPath, "utf8")}`,
+      );
+    }
 
     // Civitas is intentionally in the capture ignore list. A detached TopMost
     // marker can be visible while Windows still reports Civitas as foreground;
