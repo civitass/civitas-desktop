@@ -31,10 +31,10 @@ const TIMEOUT_MS = 60000; // 60 seconds - matches customer-reported hang time
 // forge log records through any of the paths that later report it.
 function flatten(value) {
   return String(value)
-    .replace(/\n/g, " ")
-    .replace(/\r/g, " ")
-    .replace(/\u2028/g, " ")
-    .replace(/\u2029/g, " ")
+    .replace(/\n/g, "")
+    .replace(/\r/g, "")
+    .replace(/\u2028/g, "")
+    .replace(/\u2029/g, "")
     .slice(0, 200);
 }
 
@@ -103,13 +103,7 @@ class TimelinePerformanceTester {
 
                     // Handle error messages
                     if (parsed.error) {
-                        // Written out rather than routed through `flatten` so the
-                        // flattening is visible on the one value that is stored
-                        // and replayed by the end-of-run summary.
-                        const reportedError = String(parsed.error)
-                            .replace(/\n/g, " ")
-                            .replace(/\r/g, " ")
-                            .slice(0, 200);
+                        const reportedError = flatten(parsed.error);
                         this.metrics.errors.push(reportedError);
                         console.log(`  [${elapsed}ms] ERROR: ${reportedError}`);
                         return;
