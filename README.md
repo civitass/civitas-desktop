@@ -39,12 +39,6 @@
 
 <p align="center"><sub><strong>Timeline</strong> — the real application replaying a deterministic, privacy-safe demo day. Click the shot for the unretouched capture.</sub></p>
 
-> [!NOTE]
-> Signed macOS and Windows binaries are published together only after both pass
-> signing and clean-install verification. If the Releases page has no current
-> version, use the source build below; Civitas does not advertise an unsigned
-> substitute.
-
 ## From the moment to the next move
 
 | Remember | Understand | Continue |
@@ -368,17 +362,6 @@ explicit integration boundaries.
 4. Permission is specific, revocable, and never inferred from captured text.
 5. A suggestion is a draft until the user acts.
 6. Privacy/security regressions block release.
-
-## Fork provenance and license
-
-Civitas is an MIT-licensed fork of
-[Screenpipe](https://github.com/screenpipe/screenpipe) at upstream commit
-`892199f7`, the last upstream commit released under MIT. Later proprietary
-Screenpipe code and the upstream `ee/` directory are not included.
-
-See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and the
-[provenance ADR](docs/adr/0001-fork-provenance-and-licensing.md).
 
 ## Contributing
 
