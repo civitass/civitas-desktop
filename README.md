@@ -390,3 +390,8 @@ welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening a change.
 
 For vulnerabilities, do not open a public issue; follow [SECURITY.md](SECURITY.md).
+
+## Contributors
+
+Civitas is shaped by [Chuyue Wang and Eric Bi](CONTRIBUTORS.md), alongside the
+open-source work acknowledged in [NOTICE.md](NOTICE.md).
