@@ -103,7 +103,13 @@ class TimelinePerformanceTester {
 
                     // Handle error messages
                     if (parsed.error) {
-                        const reportedError = flatten(parsed.error);
+                        // Written out rather than routed through `flatten` so the
+                        // flattening is visible on the one value that is stored
+                        // and replayed by the end-of-run summary.
+                        const reportedError = String(parsed.error)
+                            .replace(/\n/g, " ")
+                            .replace(/\r/g, " ")
+                            .slice(0, 200);
                         this.metrics.errors.push(reportedError);
                         console.log(`  [${elapsed}ms] ERROR: ${reportedError}`);
                         return;
