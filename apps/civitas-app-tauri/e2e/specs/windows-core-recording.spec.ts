@@ -23,7 +23,9 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
 import { E2E_SEED_FLAGS } from "../helpers/app-launcher.js";
@@ -145,7 +147,14 @@ function spawnDetachedPowerShell(script: string): () => void {
   };
 }
 
-function spawnWindowsMarkerWindow(marker: string): () => void {
+function spawnWindowsMarkerWindow(marker: string): {
+  cleanup: () => void;
+  readyPath: string;
+} {
+  const readyPath = join(
+    tmpdir(),
+    `civitas-vision-marker-${process.pid}-${Date.now()}.ready`,
+  );
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -204,6 +213,8 @@ $form.Add_Shown({
     $script:activationAttempts += 1
     if ($script:activationAttempts -ge 4) {
       $script:markerActivationTimer.Stop()
+      $picture.Refresh()
+      [System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
     }
   })
   $script:markerActivationTimer.Start()
@@ -214,7 +225,18 @@ $picture.Dispose()
 $bitmap.Dispose()
 `;
 
-  return spawnDetachedPowerShell(script);
+  const stopProcess = spawnDetachedPowerShell(script);
+  return {
+    readyPath,
+    cleanup: () => {
+      stopProcess();
+      try {
+        unlinkSync(readyPath);
+      } catch {
+        // The process may have closed before writing its readiness marker.
+      }
+    },
+  };
 }
 
 function spawnWindowsFocusProbe(marker: string): () => void {
@@ -763,16 +785,26 @@ describe("Windows core recording pipeline", function () {
     const markerSinceIso = new Date(Date.now() - 5_000).toISOString();
     const beforeHealth = await getHealth(cfg);
     const beforeFrames = framesDbWritten(beforeHealth);
-    cleanupMarkerWindow = spawnWindowsMarkerWindow(marker);
+    const markerWindow = spawnWindowsMarkerWindow(marker);
+    cleanupMarkerWindow = markerWindow.cleanup;
 
-    // Wait until the persistent WinForms surface has painted, then wake the
-    // real native capture loop explicitly. Hosted Windows runners can suppress
-    // foreground WinEvents from detached interactive processes; relying on
-    // that OS event made the acceptance test hang before OCR even ran. This
-    // command supplies only a Manual trigger: the app must still capture the
-    // external window's pixels and pass them through production OCR, storage,
-    // search, and Timeline code.
-    await browser.pause(t(2_500));
+    // Require an explicit paint/activation handshake instead of guessing how
+    // long cold PowerShell + WinForms startup takes on a hosted runner.
+    await browser.waitUntil(() => existsSync(markerWindow.readyPath), {
+      timeout: t(20_000),
+      interval: 250,
+      timeoutMsg: "Windows OCR marker window never painted",
+    });
+
+    // Civitas is intentionally in the capture ignore list. A detached TopMost
+    // marker can be visible while Windows still reports Civitas as foreground;
+    // in that state the production privacy gate correctly rejects the entire
+    // frame. Hide (do not destroy) the main WebView so the external marker is
+    // the only foreground surface, then wake the real native pipeline. The
+    // marker still supplies pixels only: OCR, persistence, search, and Timeline
+    // all remain production code.
+    await invokeOrThrow("hide_main_window");
+    await browser.pause(t(750));
     const captureRequest = await invokeOrThrow<E2eCaptureRequestResult>(
       "e2e_request_native_capture",
     );
@@ -788,23 +820,28 @@ describe("Windows core recording pipeline", function () {
     const rows = await waitForMarkerRows(cfg, markerSinceIso, t(75_000));
     const health = await getHealth(cfg);
 
-    markerProbe = {
+    const probe: MarkerProbe = {
       health,
       markerSinceIso,
       rows,
     };
 
+    // Cache only a successful end-to-end probe. Webdriver retries must create
+    // a fresh external window and native capture request after a failed OCR
+    // attempt instead of replaying the same failed observation.
+    if (probe.rows.length > 0) markerProbe = probe;
+
     console.log(
       "[windows-core-recording] marker probe",
       JSON.stringify({
-        frameStatus: markerProbe.health.frame_status ?? null,
+        frameStatus: probe.health.frame_status ?? null,
         framesBeforeMarker: beforeFrames,
-        pipeline: markerProbe.health.pipeline ?? null,
-        markerRows: markerProbe.rows.length,
+        pipeline: probe.health.pipeline ?? null,
+        markerRows: probe.rows.length,
       }),
     );
 
-    return markerProbe;
+    return probe;
   }
 
   afterEach(() => {
