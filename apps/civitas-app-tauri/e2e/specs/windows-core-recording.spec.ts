@@ -254,24 +254,21 @@ $picture.Dock = 'Fill'
 $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
 $picture.Image = $bitmap
 $form.Controls.Add($picture)
-$form.Add_Shown({
-  try {
-    # Shown runs after the native handle exists. Refresh is synchronous, so the
-    # ready file cannot precede the pixel-only bitmap reaching the desktop.
-    # Avoid a WinForms Timer here: PowerShell event callbacks on hosted runners
-    # can lose their script-scoped timer before its Tick handler runs.
-    [void][CivitasE2EForeground]::SetForegroundWindow($form.Handle)
-    $form.Activate()
-    $picture.Invalidate()
-    $picture.Refresh()
-    $form.Refresh()
-    [System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
-  } catch {
-    [System.IO.File]::WriteAllText(${psString(errorPath)}, $_.Exception.ToString())
-    $form.Close()
-  }
-})
-[void]$form.ShowDialog()
+
+# Hosted PowerShell can silently drop WinForms event callbacks even while the
+# process exits successfully. Keep readiness on the primary STA runspace: show
+# creates the native handle, DoEvents performs initial layout/paint, and the
+# synchronous refreshes finish before the sentinel is written.
+$form.Show()
+[System.Windows.Forms.Application]::DoEvents()
+[void][CivitasE2EForeground]::SetForegroundWindow($form.Handle)
+$form.Activate()
+$picture.Invalidate()
+$picture.Refresh()
+$form.Refresh()
+[System.Windows.Forms.Application]::DoEvents()
+[System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
+[System.Windows.Forms.Application]::Run($form)
 $picture.Dispose()
 $bitmap.Dispose()
 } catch {
