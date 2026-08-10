@@ -3398,7 +3398,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Civi
               const displayName = getAudioDeviceDisplayName(device.name);
               // Use per-device level if available, fall back to global speechRatio
               const deviceLevel =
-                overlayData.deviceLevels[device.name] ??
+                overlayData.deviceLevels.get(device.name) ??
                 overlayData.speechRatio;
               return (
                 <AudioDeviceOption

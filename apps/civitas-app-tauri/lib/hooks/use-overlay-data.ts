@@ -15,7 +15,10 @@ interface OverlayData {
   screenActive: boolean;
   captureFps: number;
   ocrPulseTimestamp: number;
-  deviceLevels: Record<string, number>;
+  // A Map, not an object: the keys are audio device names supplied by the
+  // metrics socket, and writing an outside-controlled name as an object
+  // property is what makes prototype pollution possible.
+  deviceLevels: ReadonlyMap<string, number>;
 }
 
 const INITIAL_STATE: OverlayData = {
@@ -24,7 +27,7 @@ const INITIAL_STATE: OverlayData = {
   screenActive: false,
   captureFps: 0,
   ocrPulseTimestamp: 0,
-  deviceLevels: {},
+  deviceLevels: new Map(),
 };
 
 interface UseOverlayDataOptions {
@@ -56,18 +59,19 @@ const normalizeOverlayData = (
       ? Math.max(0, roundTo(data.captureFps, 0.5))
       : data.captureFps,
     ocrPulseTimestamp: options.includeOcrPulse ? data.ocrPulseTimestamp : 0,
-    deviceLevels: options.includeDeviceLevels ? data.deviceLevels : {},
+    deviceLevels: options.includeDeviceLevels ? data.deviceLevels : new Map(),
   };
 };
 
 const sameDeviceLevels = (
-  a: Record<string, number>,
-  b: Record<string, number>,
+  a: ReadonlyMap<string, number>,
+  b: ReadonlyMap<string, number>,
 ) => {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => a[key] === b[key]);
+  if (a.size !== b.size) return false;
+  for (const [name, level] of a) {
+    if (b.get(name) !== level) return false;
+  }
+  return true;
 };
 
 const sameOverlayData = (a: OverlayData, b: OverlayData) =>
@@ -224,15 +228,9 @@ export function useOverlayData(
 
             // Per-device audio levels
             const rawDeviceLevels: Record<string, number> = m.audio?.device_levels ?? {};
-            const deviceLevels: Record<string, number> = {};
+            const deviceLevels = new Map<string, number>();
             for (const [name, level] of Object.entries(rawDeviceLevels)) {
-              // Device names arrive over the metrics socket, so they are keys
-              // from outside this process. Writing `__proto__` or `constructor`
-              // here would mutate Object.prototype for the whole renderer.
-              if (name === "__proto__" || name === "constructor" || name === "prototype") {
-                continue;
-              }
-              deviceLevels[name] = Math.min(1, (level as number) * 15);
+              deviceLevels.set(name, Math.min(1, (level as number) * 15));
             }
 
             // Vision: delta-based FPS from frame counters (updates every 500ms)
