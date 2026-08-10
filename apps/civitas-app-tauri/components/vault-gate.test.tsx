@@ -35,7 +35,11 @@ describe("VaultGate", () => {
       await screen.findByRole("heading", { name: "Unlock your local library" }),
     ).toBeVisible();
     expect(screen.queryByText("Private timeline")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Vault password")).toHaveFocus();
+    // Focus lands in an effect that runs after the locked phase renders, so
+    // assert it eventually rather than in the same tick as the heading.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Vault password")).toHaveFocus(),
+    );
   });
 
   it("shows a content-free recovery error after a wrong password", async () => {
