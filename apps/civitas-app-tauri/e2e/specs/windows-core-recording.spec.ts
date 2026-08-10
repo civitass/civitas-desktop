@@ -208,82 +208,87 @@ function spawnWindowsMarkerWindow(marker: string): {
     `civitas-vision-marker-${process.pid}-${Date.now()}.ready`,
   );
   const errorPath = `${readyPath}.error`;
-  const script = `
-$ErrorActionPreference = 'Stop'
-try {
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class CivitasE2EForeground {
-  [DllImport("user32.dll")]
-  public static extern bool SetForegroundWindow(IntPtr hWnd);
-}
-"@
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'Civitas Vision Probe'
-$form.StartPosition = 'CenterScreen'
-$form.Width = 1000
-$form.Height = 380
-$form.TopMost = $true
-$form.BackColor = [System.Drawing.Color]::White
+  const hostPath = `${readyPath}.hta`;
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Civitas Vision Probe</title>
+  <hta:application id="civitasProbe" applicationname="Civitas Vision Probe" border="thin" caption="yes" showintaskbar="yes" singleinstance="no" windowstate="normal">
+  <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff}canvas{display:block}</style>
+</head>
+<body>
+  <canvas id="marker" width="960" height="300" aria-hidden="true"></canvas>
+  <script>
+    (function () {
+      var readyPath = ${JSON.stringify(readyPath)};
+      var errorPath = ${JSON.stringify(errorPath)};
+      function writeStatus(path, value) {
+        var file = new ActiveXObject("Scripting.FileSystemObject").CreateTextFile(path, true);
+        file.Write(value);
+        file.Close();
+      }
+      try {
+        window.resizeTo(1000, 380);
+        window.moveTo(Math.max(0, (screen.availWidth - 1000) / 2), Math.max(0, (screen.availHeight - 380) / 2));
+        var canvas = document.getElementById("marker");
+        var context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = "#000000";
+        context.font = "bold 48px Arial";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(${JSON.stringify(marker)}, canvas.width / 2, canvas.height / 2);
+        window.focus();
+        writeStatus(readyPath, "painted");
+      } catch (error) {
+        writeStatus(errorPath, error.description || error.message || String(error));
+        window.close();
+      }
+    }());
+  <\/script>
+</body>
+</html>`;
+  writeFileSync(hostPath, html, "utf8");
 
-# Render the marker into pixels and expose only an Image control to UIA. A
-# normal Label makes the marker available through accessibility, causing the
-# accessibility-first capture path to correctly skip OCR and leaving this OCR
-# acceptance test unable to prove the native vision adapter.
-$bitmap = New-Object System.Drawing.Bitmap(960, 300)
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.Clear([System.Drawing.Color]::White)
-$graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-$font = New-Object System.Drawing.Font('Arial', 34, [System.Drawing.FontStyle]::Bold)
-$brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::Black)
-$format = New-Object System.Drawing.StringFormat
-$format.Alignment = [System.Drawing.StringAlignment]::Center
-$format.LineAlignment = [System.Drawing.StringAlignment]::Center
-$rect = New-Object System.Drawing.RectangleF(0, 0, 960, 300)
-$graphics.DrawString(${psString(marker)}, $font, $brush, $rect, $format)
-$graphics.Dispose()
-$font.Dispose()
-$brush.Dispose()
-$format.Dispose()
+  const child = spawn("mshta.exe", [hostPath], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  child.once("error", (error) => {
+    writeFileSync(errorPath, error.stack ?? error.message, "utf8");
+  });
+  child.once("exit", (code, signal) => {
+    if (!existsSync(readyPath) && !existsSync(errorPath)) {
+      writeFileSync(
+        errorPath,
+        `Windows HTML marker host exited before readiness (code=${code ?? "null"}, signal=${signal ?? "none"})`,
+        "utf8",
+      );
+    }
+  });
+  child.unref();
 
-$picture = New-Object System.Windows.Forms.PictureBox
-$picture.Dock = 'Fill'
-$picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
-$picture.Image = $bitmap
-$form.Controls.Add($picture)
-
-# Hosted PowerShell can silently drop WinForms event callbacks even while the
-# process exits successfully. Keep readiness on the primary STA runspace: show
-# creates the native handle, DoEvents performs initial layout/paint, and the
-# synchronous refreshes finish before the sentinel is written.
-$form.Show()
-[System.Windows.Forms.Application]::DoEvents()
-[void][CivitasE2EForeground]::SetForegroundWindow($form.Handle)
-$form.Activate()
-$picture.Invalidate()
-$picture.Refresh()
-$form.Refresh()
-[System.Windows.Forms.Application]::DoEvents()
-[System.IO.File]::WriteAllText(${psString(readyPath)}, 'painted')
-[System.Windows.Forms.Application]::Run($form)
-$picture.Dispose()
-$bitmap.Dispose()
-} catch {
-  [System.IO.File]::WriteAllText(${psString(errorPath)}, $_.Exception.ToString())
-  exit 1
-}
-`;
-
-  const stopProcess = spawnDetachedPowerShell(script, errorPath);
   return {
     errorPath,
     readyPath,
     cleanup: () => {
-      stopProcess();
-      for (const path of [readyPath, errorPath]) {
+      if (child.pid) {
+        try {
+          execFileSync(
+            "taskkill.exe",
+            ["/PID", String(child.pid), "/T", "/F"],
+            {
+              stdio: "ignore",
+            },
+          );
+        } catch {
+          // The marker may already have closed.
+        }
+      }
+      for (const path of [readyPath, errorPath, hostPath]) {
         try {
           unlinkSync(path);
         } catch {
