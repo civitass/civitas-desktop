@@ -138,6 +138,18 @@ function privateScratchDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+// The detached marker host writes its own sentinel while these handlers run,
+// so an exists-then-write pair can overwrite a readiness file that landed in
+// between. `wx` makes the claim atomic: the first writer wins and later ones
+// fail harmlessly.
+function claimSentinel(path: string, contents: string): void {
+  try {
+    writeFileSync(path, contents, { encoding: "utf8", flag: "wx" });
+  } catch {
+    // Another sentinel already claimed this path; keep whichever won.
+  }
+}
+
 function removeScratchDir(dir: string): void {
   try {
     rmSync(dir, { recursive: true, force: true });
@@ -178,16 +190,10 @@ function spawnDetachedPowerShell(
     const readyPath = launchErrorPath?.endsWith(".error")
       ? launchErrorPath.slice(0, -".error".length)
       : undefined;
-    if (
-      launchErrorPath &&
-      readyPath &&
-      !existsSync(launchErrorPath) &&
-      !existsSync(readyPath)
-    ) {
-      writeFileSync(
+    if (launchErrorPath && readyPath && !existsSync(readyPath)) {
+      claimSentinel(
         launchErrorPath,
         `PowerShell marker host exited before readiness (code=${code ?? "null"}, signal=${signal ?? "none"})`,
-        "utf8",
       );
     }
     // Cleanup is idempotent with the explicit stop path below.
@@ -270,11 +276,10 @@ function spawnWindowsMarkerWindow(marker: string): {
     writeFileSync(errorPath, error.stack ?? error.message, "utf8");
   });
   child.once("exit", (code, signal) => {
-    if (!existsSync(readyPath) && !existsSync(errorPath)) {
-      writeFileSync(
+    if (!existsSync(readyPath)) {
+      claimSentinel(
         errorPath,
         `Windows HTML marker host exited before readiness (code=${code ?? "null"}, signal=${signal ?? "none"})`,
-        "utf8",
       );
     }
   });
