@@ -23,7 +23,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
@@ -127,12 +127,58 @@ function psString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function spawnDetachedPowerShell(script: string): () => void {
+function spawnDetachedPowerShell(
+  script: string,
+  launchErrorPath?: string,
+): () => void {
+  // Passing a multiline WinForms program through `powershell.exe -Command`
+  // is not reliable on hosted Windows runners: the child can exit before the
+  // script enters its own try/catch, leaving neither a window nor a diagnostic
+  // sentinel. A BOM-prefixed .ps1 gives PowerShell an unambiguous parser and
+  // encoding boundary, and also avoids Windows command-line quoting limits.
+  const scriptPath = join(
+    tmpdir(),
+    `civitas-e2e-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`,
+  );
+  writeFileSync(scriptPath, `\uFEFF${script}`, "utf8");
+
   const child = spawn(
     "powershell.exe",
-    ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+    ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
     { detached: true, stdio: "ignore", windowsHide: false },
   );
+  child.once("error", (error) => {
+    if (launchErrorPath) {
+      writeFileSync(launchErrorPath, error.stack ?? error.message, "utf8");
+    }
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // The launcher may have already removed its temporary script.
+    }
+  });
+  child.once("exit", (code, signal) => {
+    const readyPath = launchErrorPath?.endsWith(".error")
+      ? launchErrorPath.slice(0, -".error".length)
+      : undefined;
+    if (
+      launchErrorPath &&
+      readyPath &&
+      !existsSync(launchErrorPath) &&
+      !existsSync(readyPath)
+    ) {
+      writeFileSync(
+        launchErrorPath,
+        `PowerShell marker host exited before readiness (code=${code ?? "null"}, signal=${signal ?? "none"})`,
+        "utf8",
+      );
+    }
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // Cleanup is idempotent with the explicit stop path below.
+    }
+  });
   child.unref();
 
   return () => {
@@ -143,6 +189,11 @@ function spawnDetachedPowerShell(script: string): () => void {
       });
     } catch {
       // already closed
+    }
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // The child exit handler may already have removed it.
     }
   };
 }
@@ -229,7 +280,7 @@ $bitmap.Dispose()
 }
 `;
 
-  const stopProcess = spawnDetachedPowerShell(script);
+  const stopProcess = spawnDetachedPowerShell(script, errorPath);
   return {
     errorPath,
     readyPath,
