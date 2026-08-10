@@ -4,13 +4,12 @@
 
 <p align="center">
   <strong>Turn the work you just did into the next move you can trust.</strong><br><br>
-  Civitas is a local-first memory for your working day: rewind a private
-  Timeline,<br>recover the reasoning behind a decision, and review
-  evidence-linked next actions.
+  Rewind a private Timeline. Recover why a decision was made.<br>
+  Continue with evidence-linked next actions.
 </p>
 
 <p align="center">
-  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>macOS + Windows releases</strong></a>
+  <a href="https://github.com/civitass/civitas-desktop/releases"><strong>Signed downloads</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/BUILDING.md">Build from source</a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
@@ -32,7 +31,7 @@
   </a>
 </p>
 
-<p align="center"><strong>The real Civitas Timeline.</strong> The work shown inside it is a deterministic, privacy-safe demo session.</p>
+<p align="center"><strong>Timeline</strong> — a real Civitas capture with a deterministic, privacy-safe demo day.</p>
 
 > [!NOTE]
 > Signed macOS and Windows binaries are published together only after both pass
@@ -57,7 +56,7 @@ default. AI is either loopback-local or a provider you explicitly connect.
   </a>
 </p>
 
-<p align="center"><strong>Next Actions.</strong> Evidence-backed continuations stay reviewable drafts; nothing executes by itself.</p>
+<p align="center"><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</p>
 
 Both images are reproducible captures of the real desktop application. The
 publication E2E suite creates an isolated local profile and deterministic

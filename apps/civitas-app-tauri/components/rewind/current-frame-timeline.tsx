@@ -43,6 +43,7 @@ import { toast } from "@/components/ui/use-toast";
 import { useFrameLoading } from "@/components/rewind/hooks/use-frame-loading";
 import { useLiveText } from "@/components/rewind/hooks/use-live-text";
 import { useFrameActions } from "@/components/rewind/hooks/use-frame-actions";
+import { Button } from "@/components/ui/button";
 
 export interface DetectedUrl {
   normalized: string;
@@ -83,9 +84,9 @@ interface CurrentFrameTimelineProps {
 
 export const SkeletonLoader: FC = () => {
   return (
-    <div className="absolute inset-0 w-full h-full bg-gray-900/50 overflow-hidden">
+    <div className="absolute inset-0 h-full w-full overflow-hidden bg-foreground/10">
       <div
-        className="w-full h-full bg-gradient-to-r from-gray-800/30 via-gray-600/30 to-gray-800/30 animate-shimmer"
+        className="h-full w-full animate-shimmer bg-gradient-to-r from-foreground/[0.04] via-foreground/[0.12] to-foreground/[0.04]"
         style={{
           backgroundSize: "200% 100%",
           animation: "shimmer 1.5s infinite linear",
@@ -344,37 +345,39 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
     return (
       <div className="absolute inset-0 overflow-hidden bg-background">
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="max-w-sm w-full mx-4">
-            <div className="bg-card border border-border p-8">
-              <div className="flex justify-center mb-6">
-                <div className="w-16 h-16 border border-border flex items-center justify-center">
+          <div className="mx-4 w-full max-w-sm">
+            <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+              <div className="mb-5 flex justify-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted/70">
                   <ImageOff className="w-8 h-8 text-muted-foreground" />
                 </div>
               </div>
               <div className="text-center space-y-3">
-                <h3 className="text-xl font-mono font-semibold text-foreground uppercase tracking-wide">
-                  No Frame Selected
+                <h3 className="text-xl font-semibold tracking-tight text-foreground">
+                  No frame selected
                 </h3>
-                <p className="text-sm font-mono text-muted-foreground leading-relaxed">
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   Select a point on the timeline to view a recorded frame.
                 </p>
               </div>
               {onNavigate && (
-                <div className="mt-8 flex gap-2">
-                  <button
+                <div className="mt-6 flex gap-2">
+                  <Button
+                    variant="outline"
                     onClick={() => onNavigate("prev")}
                     disabled={!canNavigatePrev}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-background hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed border border-border text-foreground text-sm font-mono uppercase transition-colors"
+                    className="flex-1 gap-2"
                   >
-                    <ChevronLeft className="w-4 h-4" /> Previous
-                  </button>
-                  <button
+                    <ChevronLeft className="h-4 w-4" /> Previous
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={() => onNavigate("next")}
                     disabled={!canNavigateNext}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-background hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed border border-border text-foreground text-sm font-mono uppercase transition-colors"
+                    className="flex-1 gap-2"
                   >
-                    Next <ChevronRight className="w-4 h-4" />
-                  </button>
+                    Next <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
               )}
             </div>
@@ -397,7 +400,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
         debouncedFrame?.frameId && (
           <div
             id="frame-context-menu"
-            className="fixed z-[9999] isolate bg-white/70 dark:bg-black/50 backdrop-blur-xl py-0 text-sm min-w-[200px] rounded-none overflow-hidden shadow-none border-0 outline-none ring-0 *:outline-none"
+            className="fixed z-[9999] isolate min-w-[200px] overflow-hidden rounded-md border border-border/70 bg-popover/92 py-1 text-sm text-popover-foreground shadow-lg backdrop-blur-xl outline-none *:outline-none"
             style={{
               left: contextMenuPositionRef.current.x,
               top: contextMenuPositionRef.current.y,
@@ -485,7 +488,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
             {templatePipes.length > 0 && (
               <>
                 <div className="h-px bg-border/30 my-0.5" />
-                <div className="px-3 py-1 text-2xs text-muted-foreground uppercase tracking-wider">
+                <div className="px-3 py-1 text-2xs font-medium text-muted-foreground">
                   run pipe
                 </div>
                 {templatePipes.map((pipe) => (

@@ -6,7 +6,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 const strictSurfaces = [
   "apps/civitas-app-tauri/components/next-actions/next-actions-panel.tsx",
@@ -25,6 +28,11 @@ const strictSurfaces = [
 const supportingSurfaces = [
   "apps/civitas-app-tauri/components/settings/connections-section.tsx",
   "apps/civitas-app-tauri/components/settings/privacy-section.tsx",
+];
+
+const timelinePresentationSurfaces = [
+  "apps/civitas-app-tauri/components/rewind/timeline/timeline-controls.tsx",
+  "apps/civitas-app-tauri/components/rewind/current-frame-timeline.tsx",
 ];
 
 const findings = [];
@@ -55,7 +63,8 @@ const globalInteractionRules = [
   {
     id: "transition_all",
     pattern: /\btransition-all\b|transition\s*:\s*["'`]\s*all\b/g,
-    message: "Name the exact transition properties; broad transitions can animate layout or paint.",
+    message:
+      "Name the exact transition properties; broad transitions can animate layout or paint.",
   },
   {
     id: "ease_in",
@@ -79,7 +88,8 @@ const surfaceStyleRules = [
     id: "vivid_status_color",
     pattern:
       /\b(?:blue|purple|violet|cyan|emerald|green|red|orange|yellow|pink|indigo|teal)-\d+\b/g,
-    message: "Use Civitas neutral, sepia, warning, or destructive design tokens.",
+    message:
+      "Use Civitas neutral, sepia, warning, or destructive design tokens.",
   },
   {
     id: "arbitrary_pixel_type",
@@ -93,6 +103,26 @@ const geometryRules = [
     id: "oversized_radius",
     pattern: /\brounded-(?:xl|2xl|3xl|\[\d+(?:\.\d+)?px\])/g,
     message: "Use the documented native radius tiers.",
+  },
+];
+
+const timelinePresentationRules = [
+  {
+    id: "legacy_timeline_typography",
+    pattern: /\bfont-mono\b|\buppercase\b/g,
+    message:
+      "Timeline chrome uses the native system type hierarchy and sentence case; reserve mono treatment for technical values.",
+  },
+  {
+    id: "legacy_timeline_geometry",
+    pattern: /\brounded-none\b/g,
+    message: "Floating Timeline controls must use the native radius tiers.",
+  },
+  {
+    id: "literal_timeline_material",
+    pattern: /\b(?:bg|text)-(?:white|black|gray)-/g,
+    message:
+      "Timeline chrome must use semantic light/dark design tokens rather than literal palette colors.",
   },
 ];
 
@@ -131,6 +161,9 @@ for (const relativePath of strictSurfaces) {
 }
 for (const relativePath of supportingSurfaces) {
   inspect(relativePath, surfaceStyleRules);
+}
+for (const relativePath of timelinePresentationSurfaces) {
+  inspect(relativePath, timelinePresentationRules);
 }
 
 const globals = source("apps/civitas-app-tauri/app/globals.css");
@@ -189,10 +222,12 @@ if (findings.length > 0) {
       `${finding.file}:${finding.line} [${finding.id}] ${finding.message}`,
     );
   }
-  console.error(`Consumer design audit failed with ${findings.length} finding(s).`);
+  console.error(
+    `Consumer design audit failed with ${findings.length} finding(s).`,
+  );
   process.exit(1);
 }
 
 console.log(
-  `Consumer design audit passed (${productionUiFiles.length} production UI files; ${strictSurfaces.length} strict surfaces; ${supportingSurfaces.length} supporting surfaces).`,
+  `Consumer design audit passed (${productionUiFiles.length} production UI files; ${strictSurfaces.length} strict surfaces; ${supportingSurfaces.length} supporting surfaces; ${timelinePresentationSurfaces.length} Timeline presentation surfaces).`,
 );

@@ -148,13 +148,14 @@ export function TimelineControls({
 			
 			{/* Center section - Timeline controls */}
 			<div className={`flex items-center gap-2 ${embedded ? "mt-1" : "mt-8"}`}>
-				<div className="flex items-center h-10 bg-background border border-border px-1">
+				<div className="flex h-10 items-center rounded-lg border border-border/80 bg-background/95 p-1 shadow-sm backdrop-blur-xl">
 					<Button
 						variant="ghost"
 						size="icon"
 						onClick={() => jumpDay(-1)}
-						className="h-8 w-8 text-foreground hover:bg-foreground hover:text-background transition-colors duration-150"
+						className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 						disabled={isAtEarliestDate || isNavigating}
+						title="Previous day"
 					>
 						<ChevronLeft className="h-4 w-4" />
 					</Button>
@@ -163,7 +164,8 @@ export function TimelineControls({
 						<PopoverTrigger asChild>
 							<button
 								type="button"
-								className="px-3 h-8 text-sm font-mono text-foreground min-w-[100px] text-center hover:bg-foreground hover:text-background transition-colors duration-150 flex items-center justify-center gap-2"
+								className="flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-md px-3 text-sm font-medium tabular-nums text-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.98] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								aria-label={`Choose date. Current date ${format(currentDate, "d MMMM yyyy")}`}
 							>
 								{isNavigating ? (
 									<Loader2 className="h-3 w-3 animate-spin" />
@@ -207,8 +209,9 @@ export function TimelineControls({
 						variant="ghost"
 						size="icon"
 						onClick={() => jumpDay(1)}
-						className="h-8 w-8 text-foreground hover:bg-foreground hover:text-background transition-colors duration-150"
+						className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 						disabled={isAtToday || isNavigating}
+						title="Next day"
 					>
 						<ChevronRight className="h-4 w-4" />
 					</Button>
@@ -217,7 +220,7 @@ export function TimelineControls({
 						variant="ghost"
 						size="icon"
 						onClick={onJumpToday}
-						className="h-8 w-8 text-foreground hover:bg-foreground hover:text-background transition-colors duration-150"
+						className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 						title="Jump to now"
 					>
 						<RefreshCw className="h-4 w-4" />
@@ -225,12 +228,12 @@ export function TimelineControls({
 				</div>
 
 				{hasAudioNearby && onTogglePlayPause && (
-					<div className="flex items-center h-10 bg-background border border-border px-1 gap-0.5">
+					<div className="flex h-10 items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-1 shadow-sm backdrop-blur-xl">
 						<Button
 							variant="ghost"
 							size="icon"
 							onClick={onTogglePlayPause}
-							className="h-8 w-8 text-foreground hover:bg-foreground hover:text-background transition-colors duration-150"
+							className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 							title={isPlaying ? "Pause (Space)" : "Play (Space)"}
 						>
 							{isPlaying ? (
@@ -243,7 +246,7 @@ export function TimelineControls({
 							<button
 								type="button"
 								onClick={onCycleSpeed}
-								className="px-2 h-8 text-xs font-mono text-foreground hover:bg-foreground hover:text-background transition-colors duration-150 min-w-[36px] text-center"
+								className="h-8 min-w-[40px] rounded-md px-2 text-xs font-medium tabular-nums text-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 								title="Playback speed"
 							>
 								{playbackSpeed ?? 1}x
@@ -293,7 +296,7 @@ export function TimelineControls({
 							variant="ghost"
 							size="icon"
 							onClick={onSearchClick}
-							className="h-10 w-10 bg-background border border-border text-foreground hover:bg-foreground hover:text-background transition-colors duration-150"
+							className="h-10 w-10 rounded-lg border border-border/80 bg-background/95 text-muted-foreground shadow-sm backdrop-blur-xl hover:bg-muted hover:text-foreground"
 							title="Search"
 						>
 							<Search className="h-4 w-4" />
@@ -302,12 +305,12 @@ export function TimelineControls({
 						<button
 							type="button"
 							onClick={onSearchClick}
-							className="flex items-center h-10 gap-1.5 bg-background border border-border px-4 font-mono hover:bg-foreground hover:text-background transition-colors duration-150 cursor-pointer group"
+							className="group flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-sm backdrop-blur-xl transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 						>
 							{searchShortcutDisplay ? (
-								<span className="text-xs text-muted-foreground group-hover:text-background">{searchShortcutDisplay}</span>
+								<span className="text-xs text-muted-foreground">{searchShortcutDisplay}</span>
 							) : null}
-							<span className="text-xs text-foreground group-hover:text-background">Search</span>
+							<span>Search</span>
 						</button>
 					)
 				)}
@@ -316,12 +319,12 @@ export function TimelineControls({
 					<button
 						type="button"
 						onClick={onChatClick}
-						className="flex items-center h-10 gap-1.5 bg-background border border-border px-4 font-mono hover:bg-foreground hover:text-background transition-colors duration-150 cursor-pointer group"
+					className="group flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-4 text-sm font-medium text-foreground shadow-sm backdrop-blur-xl transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97] motion-reduce:transition-colors motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					>
 						{chatShortcutDisplay ? (
-							<span className="text-xs text-muted-foreground group-hover:text-background">{chatShortcutDisplay}</span>
+							<span className="text-xs text-muted-foreground">{chatShortcutDisplay}</span>
 						) : null}
-						<span className="text-xs text-foreground group-hover:text-background">Chat</span>
+						<span>Chat</span>
 					</button>
 				)}
 			</div>
