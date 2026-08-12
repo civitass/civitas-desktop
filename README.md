@@ -77,8 +77,8 @@ inside are the captures, and each shot links to its raw PNG.
 
 ## Start in three steps
 
-1. If a signed version is present, download the verified macOS DMG or Windows
-   installer from
+1. If a signed version is present, download the verified macOS DMG — or the
+   Windows installer, once a release covers it — from
    [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
    Otherwise, [build from source](docs/BUILDING.md).
 2. Choose exactly what Civitas may capture. Screen and microphone permissions
@@ -211,11 +211,17 @@ managed packages without deleting work data, provider profiles, or credentials.
 
 Official automation builds, signs, notarizes, staples, installs, verifies, and
 attaches every artifact to a protected draft. It publishes that draft only
-after the exact-commit CI, macOS and Windows signatures, notarization, updater
-signatures, checksums, SBOM, provenance, and isolated installation gates all
-pass. A missing credential or failed gate leaves no advertised release.
+after the exact-commit CI, code signatures for every platform in the release,
+notarization, updater signatures, checksums, SBOM, provenance, and isolated
+installation gates all pass. A missing credential or failed gate leaves no
+advertised release for that platform.
 
 ## Install on Windows
+
+Windows binaries ship once Authenticode signing credentials are configured;
+until then a release covers macOS only and you can
+[build from source](docs/BUILDING.md). Check the release assets for the
+platforms a given version actually covers.
 
 1. Open [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
 2. Download `Civitas-Desktop_<version>_x64-setup.exe` and `SHA256SUMS`.
@@ -228,7 +234,10 @@ pass. A missing credential or failed gate leaves no advertised release.
 
 The official Windows artifact is release-blocked unless both the application
 and installer have a valid timestamped Authenticode signature. Civitas does
-not publish an unsigned package as an official release.
+not publish an unsigned package as an official release, and does not hold the
+verified macOS artifacts back while Windows signing is pending — see
+[Release verification](docs/RELEASE_VERIFICATION.md) for how each release
+records the platforms it covers.
 
 ## Build from source
 

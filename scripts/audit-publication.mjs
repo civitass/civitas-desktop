@@ -1294,8 +1294,14 @@ function auditReleaseWorkflow(files) {
     "verify-desktop-release.ps1",
     "expected one signed Windows x86-64 installer",
     '.platforms["windows-x86_64"]',
-    "release-assets/*.nsis.zip",
-    "release-assets/*.exe",
+    // The Windows leg is opt-in behind a repository variable, so the release
+    // must fail closed in both directions: no Windows artifact and no Windows
+    // updater entry may reach a draft the signing leg did not produce.
+    "CIVITAS_WINDOWS_RELEASE_ENABLED",
+    "Windows installer present while the Windows release leg did not run",
+    "Windows updater archive present while the Windows release leg did not run",
+    '.platforms | has("windows-x86_64") | not',
+    "refusing to attest an implausibly small artifact set",
     "Publish the fully verified release",
     'gh release edit "$RELEASE_TAG"',
     "--draft=false",

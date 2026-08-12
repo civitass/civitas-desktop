@@ -726,6 +726,11 @@ jobs:
     needs:
       - validate
       - draft-release
+    # Windows releases require timestamped Authenticode signing, which needs
+    # the SSL.com eSigner credentials. Set the repository variable
+    # CIVITAS_WINDOWS_RELEASE_ENABLED to 'true' once those secrets exist; until
+    # then a release ships macOS only rather than shipping Windows unsigned.
+    if: ${{ vars.CIVITAS_WINDOWS_RELEASE_ENABLED == 'true' }}
     runs-on: windows-2022
     environment: consumer-release
     timeout-minutes: 180
@@ -876,6 +881,15 @@ jobs:
       - supply-chain
       - build-macos
       - build-windows
+    # A skipped Windows leg is the macOS-only release path. Every other
+    # non-success result — failure, cancellation — still blocks publication.
+    if: >-
+      ${{ !cancelled()
+      && needs.validate.result == 'success'
+      && needs.supply-chain.result == 'success'
+      && needs.build-macos.result == 'success'
+      && (needs.build-windows.result == 'success'
+      || needs.build-windows.result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: consumer-release
     timeout-minutes: 20
@@ -911,6 +925,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          WINDOWS_RELEASE: ${{ needs.build-windows.result == 'success' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -920,14 +935,26 @@ jobs:
             echo "::error::expected two architecture-specific DMGs, found ${dmg_count}"
             exit 1
           fi
+          if [ "$WINDOWS_RELEASE" = "true" ]; then
+            expected_signatures=3
+          else
+            expected_signatures=2
+          fi
           signature_count="$(find release-assets -maxdepth 1 -type f -name '*.sig' | wc -l | tr -d ' ')"
-          if [ "$signature_count" -lt 3 ]; then
-            echo "::error::expected updater signatures for both macOS architectures and Windows, found ${signature_count}"
+          if [ "$signature_count" -lt "$expected_signatures" ]; then
+            echo "::error::expected ${expected_signatures} updater signatures, found ${signature_count}"
             exit 1
           fi
           windows_installer_count="$(find release-assets -maxdepth 1 -type f -name '*x64-setup.exe' | wc -l | tr -d ' ')"
-          if [ "$windows_installer_count" -ne 1 ]; then
-            echo "::error::expected one signed Windows x86-64 installer, found ${windows_installer_count}"
+          if [ "$WINDOWS_RELEASE" = "true" ]; then
+            if [ "$windows_installer_count" -ne 1 ]; then
+              echo "::error::expected one signed Windows x86-64 installer, found ${windows_installer_count}"
+              exit 1
+            fi
+          elif [ "$windows_installer_count" -ne 0 ]; then
+            # Fail closed in the other direction too: an installer that reached
+            # the draft without the signing leg has no verified signature.
+            echo "::error::Windows installer present while the Windows release leg did not run"
             exit 1
           fi
           test -f release-assets/latest.json
@@ -981,30 +1008,40 @@ jobs:
           done
 
           windows_updater_count="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' | wc -l | tr -d ' ')"
-          if [ "$windows_updater_count" -ne 1 ]; then
-            echo "::error::expected one Windows updater archive, found ${windows_updater_count}"
-            exit 1
+          if [ "$WINDOWS_RELEASE" = "true" ]; then
+            if [ "$windows_updater_count" -ne 1 ]; then
+              echo "::error::expected one Windows updater archive, found ${windows_updater_count}"
+              exit 1
+            fi
+            windows_updater="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' -print -quit)"
+            windows_signature="${windows_updater}.sig"
+            test -f "$windows_signature"
+            rsign verify "$windows_updater" \
+              --public-key-path "$updater_public_key" \
+              --sig-file "$windows_signature" \
+              --quiet
+            windows_name="$(basename "$windows_updater")"
+            windows_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${windows_name}"
+            windows_manifest_signature="$(cat "$windows_signature")"
+            jq \
+              --arg url "$windows_url" \
+              --arg signature "$windows_manifest_signature" \
+              '.platforms["windows-x86_64"] = {url: $url, signature: $signature}' \
+              release-assets/latest.json > release-assets/latest.json.tmp
+            mv release-assets/latest.json.tmp release-assets/latest.json
+            jq -e '
+              .platforms["windows-x86_64"].url and
+              .platforms["windows-x86_64"].signature
+            ' release-assets/latest.json >/dev/null
+          else
+            if [ "$windows_updater_count" -ne 0 ]; then
+              echo "::error::Windows updater archive present while the Windows release leg did not run"
+              exit 1
+            fi
+            # A Windows client must not be offered an update that this release
+            # never produced, so the manifest must carry no Windows platform.
+            jq -e '.platforms | has("windows-x86_64") | not' release-assets/latest.json >/dev/null
           fi
-          windows_updater="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' -print -quit)"
-          windows_signature="${windows_updater}.sig"
-          test -f "$windows_signature"
-          rsign verify "$windows_updater" \
-            --public-key-path "$updater_public_key" \
-            --sig-file "$windows_signature" \
-            --quiet
-          windows_name="$(basename "$windows_updater")"
-          windows_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${windows_name}"
-          windows_manifest_signature="$(cat "$windows_signature")"
-          jq \
-            --arg url "$windows_url" \
-            --arg signature "$windows_manifest_signature" \
-            '.platforms["windows-x86_64"] = {url: $url, signature: $signature}' \
-            release-assets/latest.json > release-assets/latest.json.tmp
-          mv release-assets/latest.json.tmp release-assets/latest.json
-          jq -e '
-            .platforms["windows-x86_64"].url and
-            .platforms["windows-x86_64"].signature
-          ' release-assets/latest.json >/dev/null
 
           cp publication-metadata/* release-assets/
           checksum_file="$RUNNER_TEMP/SHA256SUMS"
@@ -1036,18 +1073,36 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
+      - name: Resolve attestation subjects
+        id: subjects
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Expand to the files that actually exist: the Windows globs match
+          # nothing on a macOS-only release, and an unmatched pattern fails the
+          # attestation step.
+          {
+            echo "paths<<SUBJECTS"
+            for pattern in '*.dmg' '*.exe' '*.nsis.zip' '*.tar.gz' 'latest.json' 'SHA256SUMS' '*.spdx.json'; do
+              find release-assets -maxdepth 1 -type f -name "$pattern" -print
+            done | sort -u
+            echo "SUBJECTS"
+          } >> "$GITHUB_OUTPUT"
+          subject_count="$(
+            for pattern in '*.dmg' '*.exe' '*.nsis.zip' '*.tar.gz' 'latest.json' 'SHA256SUMS' '*.spdx.json'; do
+              find release-assets -maxdepth 1 -type f -name "$pattern" -print
+            done | sort -u | wc -l | tr -d ' '
+          )"
+          if [ "$subject_count" -lt 5 ]; then
+            echo "::error::refusing to attest an implausibly small artifact set (${subject_count})"
+            exit 1
+          fi
+
       # actions/attest-build-provenance v2
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
-          subject-path: |
-            release-assets/*.dmg
-            release-assets/*.exe
-            release-assets/*.nsis.zip
-            release-assets/*.tar.gz
-            release-assets/latest.json
-            release-assets/SHA256SUMS
-            release-assets/*.spdx.json
+          subject-path: ${{ steps.subjects.outputs.paths }}
 
       - name: Publish the fully verified release
         shell: bash

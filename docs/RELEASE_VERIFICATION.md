@@ -1,11 +1,25 @@
 # Release verification
 
 Official Civitas Desktop artifacts are built by the pinned GitHub Actions
-workflow from an immutable commit. The workflow is fail-closed: it cannot
-complete the draft unless both macOS DMGs are Developer ID signed, notarized,
-and stapled and the Windows application and installer have valid timestamped
-Authenticode signatures. Automation creates a **draft** GitHub Release; it
-cannot publish the release.
+workflow from an immutable commit. The workflow is fail-closed per platform: it
+cannot complete the draft unless both macOS DMGs are Developer ID signed,
+notarized, and stapled, and — whenever the Windows leg runs — the Windows
+application and installer carry valid timestamped Authenticode signatures.
+Automation creates a **draft** GitHub Release; it cannot publish the release.
+
+## Platform coverage
+
+A release may ship macOS only. The Windows leg runs solely when the repository
+variable `CIVITAS_WINDOWS_RELEASE_ENABLED` is `true`, which in turn requires the
+Authenticode signing credentials to be configured. Civitas does not publish an
+unsigned Windows package as an official release, and does not withhold the
+verified macOS artifacts while Windows signing is pending.
+
+When the Windows leg does not run, the workflow additionally verifies that no
+Windows installer or updater archive reached the draft and that `latest.json`
+carries no `windows-x86_64` entry — so an installed Windows client is never
+offered an update this release did not build. Check the release notes and the
+asset list for the platforms a given version actually covers.
 
 ## Expected release files
 
@@ -13,10 +27,10 @@ For each version, the draft should contain:
 
 - macOS DMGs for Apple Silicon and Intel, or the architecture matrix stated in
   the release notes;
-- one signed Windows x86-64 NSIS installer named
+- when the Windows leg ran, one signed Windows x86-64 NSIS installer named
   `Civitas-Desktop_<version>_x64-setup.exe`;
-- Tauri updater archives and signatures for both macOS architectures and
-  Windows x86-64, plus one canonical `latest.json`;
+- Tauri updater archives and signatures for both macOS architectures — and for
+  Windows x86-64 when that leg ran — plus one canonical `latest.json`;
 - `SHA256SUMS`;
 - SPDX JSON SBOM named for the version;
 - Civitas license, notice, and third-party notices;
@@ -41,8 +55,9 @@ may mirror the exact bytes, but GitHub Releases is the primary public source.
 6. Verify checksums, provenance, code signature, notarization ticket,
    Gatekeeper assessment, architecture, updater signature, and bundled
    contents.
-7. Install on clean supported macOS and Windows versions and complete the smoke
-   matrix. The automated Windows job also performs an isolated silent install,
+7. Install on clean supported versions of every platform the release covers and
+   complete the smoke matrix. The automated Windows job also performs an
+   isolated silent install,
    verifies every installed executable and library against the reviewed,
    timestamped publisher certificate, and exercises the uninstaller.
 8. Test upgrade from the prior supported version with a backed-up synthetic
