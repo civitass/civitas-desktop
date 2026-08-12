@@ -495,6 +495,69 @@ jobs:
             --target ${{ matrix.target }}
             --features official-build,metal,redact-onnx-coreml
 
+      # tauri-action notarizes and staples the .app, then wraps it in a DMG. The
+      # DMG itself never gets submitted, so it carries no ticket: `stapler
+      # validate` rejects it, and a user who opens it without a network round
+      # trip to Apple is told the app cannot be verified. Sign, notarize, and
+      # staple the DMG as well, then replace the copy tauri-action already
+      # pushed so the asset that ships is the stapled one.
+      - name: Notarize and staple the release DMG
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle_dir="apps/civitas-app-tauri/src-tauri/target/${{ matrix.target }}/release/bundle"
+          dmg_path="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$dmg_path"
+          test -n "${APPLE_SIGNING_IDENTITY:-}"
+
+          # Derive the uploaded name from the bundle rather than restating
+          # tauri-action's pattern: the bundler already writes
+          # "Civitas Desktop_<version>_<arch>.dmg", and the configured
+          # releaseAssetNamePattern is the same string with spaces hyphenated.
+          # Reading the arch token off the real file beats hardcoding a
+          # target-triple mapping that only two of the legs would exercise.
+          asset_name="$(basename "$dmg_path" | tr ' ' '-')"
+          case "$asset_name" in
+            "Civitas-Desktop_${RELEASE_VERSION}_"*.dmg) ;;
+            *)
+              echo "::error::unexpected DMG bundle name: ${asset_name}"
+              exit 1
+              ;;
+          esac
+
+          # Replacing an asset requires knowing its exact name. Assert the name
+          # we derived is the one already on the draft, so a change to the
+          # upload pattern fails here instead of quietly publishing a second,
+          # unstapled DMG alongside the stapled one.
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+                --json assets --jq '.assets[].name' | grep -Fxq "$asset_name"; then
+            echo "::error::draft has no asset named ${asset_name} to replace"
+            exit 1
+          fi
+
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dmg_path"
+          xcrun notarytool submit "$dmg_path" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 45m
+          xcrun stapler staple "$dmg_path"
+          xcrun stapler validate "$dmg_path"
+
+          staged="${RUNNER_TEMP}/${asset_name}"
+          cp "$dmg_path" "$staged"
+          gh release upload "$RELEASE_TAG" "$staged" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
       - name: Remove ephemeral notarization material
         if: always()
         shell: bash
