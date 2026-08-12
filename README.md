@@ -33,11 +33,11 @@
 
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/readme/shot-timeline.svg" alt="The real Civitas Desktop Timeline replaying a privacy-safe synthetic launch workspace with the local time scrubber">
+    <img src="docs/assets/readme/scene-timeline.svg" alt="The real Civitas Desktop Timeline, captured from the application and shown on a photographed workspace display">
   </a>
 </p>
 
-<p align="center"><sub><strong>Timeline</strong> — the real application replaying a deterministic, privacy-safe demo day. Click the shot for the unretouched capture.</sub></p>
+<p align="center"><sub><strong>Timeline</strong> — the real application replaying a deterministic, privacy-safe demo day, shown on a photographed display. Click for the unretouched capture. <em>Workspace photograph: DESIGNECOLOGIST, Unsplash.</em></sub></p>
 
 ## From the moment to the next move
 
@@ -60,12 +60,13 @@ default. AI is either loopback-local or a provider you explicitly connect.
 
 <p align="center"><sub><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</sub></p>
 
-Every window above frames an unretouched capture of the real desktop
-application. The publication E2E suite creates an isolated local profile and
-deterministic synthetic content—never founder, contributor, or customer
-data—then verifies the same user-visible surfaces before saving the
-screenshots. The backdrop and window chrome are presentational; the pixels
-inside are the captures, and each shot links to its raw PNG.
+Every demo visual on this page is built from an unretouched capture of the
+real desktop application. The publication E2E suite creates an isolated local
+profile and deterministic synthetic content—never founder, contributor, or
+customer data—then verifies the same user-visible surfaces before saving the
+screenshots. Window chrome, backdrops, and the photographed display are
+presentational; the interface pixels are the captures themselves, and every
+shot links to its raw PNG.
 
 ## Three everyday wins
 

@@ -36,6 +36,15 @@ case "$target" in
     ;;
 esac
 
+# x86_64 builds compile hand-written assembly and need nasm >= 2.13. Fail here
+# with something actionable rather than 300 lines into FFmpeg's configure.
+if [ "$arch" = "x86_64" ]; then
+  if ! command -v nasm >/dev/null 2>&1; then
+    echo "nasm is required to build the x86_64 FFmpeg sidecars; install it (brew install nasm)" >&2
+    exit 2
+  fi
+fi
+
 version_lte() {
   awk -v actual="$1" -v limit="$2" '
     BEGIN {

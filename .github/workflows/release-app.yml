@@ -337,6 +337,20 @@ jobs:
         working-directory: apps/civitas-app-tauri
         run: bun run bindings:check
 
+      - name: Ensure the FFmpeg assembler toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # FFmpeg's x86 assembly needs nasm >= 2.13, which the Intel runner
+          # image does not ship; without it configure aborts with "nasm not
+          # found or too old". The arm64 leg builds no x86 assembly, but
+          # installing on both keeps the two legs on one path. Put the brew
+          # copy ahead of any older system nasm for the steps that follow.
+          brew list nasm >/dev/null 2>&1 || brew install nasm
+          nasm_bin="$(brew --prefix nasm)/bin"
+          echo "$nasm_bin" >> "$GITHUB_PATH"
+          PATH="$nasm_bin:$PATH" nasm -v
+
       - name: Build license-safe FFmpeg sidecars from pinned source
         working-directory: apps/civitas-app-tauri
         run: bash ./scripts/build_ffmpeg_macos.sh "${{ matrix.target }}"
