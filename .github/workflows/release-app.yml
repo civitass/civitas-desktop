@@ -332,11 +332,6 @@ jobs:
           bun install --frozen-lockfile
         working-directory: apps/civitas-app-tauri
 
-      - name: Validate generated Tauri bindings
-        if: matrix.target == 'aarch64-apple-darwin'
-        working-directory: apps/civitas-app-tauri
-        run: bun run bindings:check
-
       - name: Ensure the FFmpeg assembler toolchain
         shell: bash
         run: |
@@ -362,6 +357,19 @@ jobs:
           cp ../../NOTICE.md src-tauri/assets/CIVITAS-NOTICE.md
           cp ../../THIRD_PARTY_NOTICES.md src-tauri/assets/THIRD-PARTY-NOTICES.md
           bun ./scripts/pre_build.js
+
+      # Must follow sidecar preparation, not precede it. Tauri merges
+      # tauri.macos.conf.json over the base config on macOS, and that overlay
+      # declares externalBin: [bun, ffmpeg, ffprobe]. Any macOS compile of
+      # civitas-app therefore fails in tauri-build with "resource path
+      # `bun-aarch64-apple-darwin` doesn't exist" until the steps above have
+      # placed those binaries. Run it on one architecture only: the check
+      # compares generated TypeScript against the Rust command surface, which
+      # is target independent, and a debug compile is expensive.
+      - name: Validate generated Tauri bindings
+        if: matrix.target == 'aarch64-apple-darwin'
+        working-directory: apps/civitas-app-tauri
+        run: bun run bindings:check
 
       - name: Select consumer production configuration
         shell: bash
