@@ -184,6 +184,11 @@ jobs:
           scan_root="$(mktemp -d)"
           trap 'rm -rf -- "$scan_root"' EXIT
           git archive HEAD | tar -x -C "$scan_root"
+          # mktemp -d creates the root 0700. The scanner runs with --cap-drop
+          # ALL, so it has no CAP_DAC_OVERRIDE to bypass that and cannot even
+          # traverse the mount. Open the tree for reading; it holds only the
+          # public release archive.
+          chmod -R a+rX "$scan_root"
 
           docker run --rm \
             --read-only \
