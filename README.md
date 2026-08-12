@@ -32,12 +32,10 @@
 <br>
 
 <p align="center">
-  <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/readme/scene-timeline.svg" alt="The real Civitas Desktop Timeline, captured from the application and shown on a photographed workspace display">
-  </a>
+  <img src="docs/assets/readme/scene-timeline.svg" alt="The Civitas Desktop Timeline rewinding a real moment of work — this repository's own GitHub commit history — on a photographed workspace display">
 </p>
 
-<p align="center"><sub><strong>Timeline</strong> — the real application replaying a deterministic, privacy-safe demo day, shown on a photographed display. Click for the unretouched capture. <em>Workspace photograph: DESIGNECOLOGIST, Unsplash.</em></sub></p>
+<p align="center"><sub><strong>Timeline</strong> — rewind to a real moment of work: this repository's own commit history, replayed in the Civitas Timeline with the day's scrubber below. Presentation composite. <em>Workspace photograph: DESIGNECOLOGIST, Unsplash.</em></sub></p>
 
 ## From the moment to the next move
 
@@ -60,13 +58,14 @@ default. AI is either loopback-local or a provider you explicitly connect.
 
 <p align="center"><sub><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</sub></p>
 
-Every demo visual on this page is built from an unretouched capture of the
-real desktop application. The publication E2E suite creates an isolated local
+The Next Actions and AI-settings shots frame unretouched captures of the real
+desktop application: the publication E2E suite creates an isolated local
 profile and deterministic synthetic content—never founder, contributor, or
 customer data—then verifies the same user-visible surfaces before saving the
-screenshots. Window chrome, backdrops, and the photographed display are
-presentational; the interface pixels are the captures themselves, and every
-shot links to its raw PNG.
+screenshots, and each shot links to its raw PNG. The Timeline scene above is a
+designed presentation composite: the real Timeline surface replaying a live
+capture of this repository's public commit history, shown on a photographed
+display.
 
 ## Three everyday wins
 
