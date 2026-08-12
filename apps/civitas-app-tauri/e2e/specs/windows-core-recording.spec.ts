@@ -230,10 +230,21 @@ function spawnWindowsMarkerWindow(marker: string): {
   <meta charset="utf-8">
   <title>Civitas Vision Probe</title>
   <hta:application id="civitasProbe" applicationname="Civitas Vision Probe" border="thin" caption="yes" showintaskbar="yes" singleinstance="no" windowstate="normal">
-  <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff}canvas{display:block}</style>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff}
+    /* Painted as DOM text, not canvas: mshta renders in a legacy IE mode where
+       HTMLCanvasElement has no getContext, so a canvas marker never draws and
+       the probe reports "Object doesn't support property or method
+       'getContext'". Large black text on white is what the OCR pass needs. */
+    #marker{
+      display:block;width:100%;height:300px;line-height:300px;
+      font-family:Arial,sans-serif;font-size:96px;font-weight:bold;
+      color:#000;background:#fff;text-align:center;white-space:nowrap;
+    }
+  </style>
 </head>
 <body>
-  <canvas id="marker" width="960" height="300" aria-hidden="true"></canvas>
+  <div id="marker"></div>
   <script>
     (function () {
       var readyPath = ${JSON.stringify(readyPath)};
@@ -246,15 +257,8 @@ function spawnWindowsMarkerWindow(marker: string): {
       try {
         window.resizeTo(1000, 380);
         window.moveTo(Math.max(0, (screen.availWidth - 1000) / 2), Math.max(0, (screen.availHeight - 380) / 2));
-        var canvas = document.getElementById("marker");
-        var context = canvas.getContext("2d");
-        context.fillStyle = "#ffffff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.fillStyle = "#000000";
-        context.font = "bold 48px Arial";
-        context.textAlign = "center";
-        context.textBaseline = "middle";
-        context.fillText(${JSON.stringify(marker)}, canvas.width / 2, canvas.height / 2);
+        var target = document.getElementById("marker");
+        target.innerText = ${JSON.stringify(marker)};
         window.focus();
         writeStatus(readyPath, "painted");
       } catch (error) {

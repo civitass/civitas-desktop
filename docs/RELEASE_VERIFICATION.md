@@ -21,6 +21,12 @@ carries no `windows-x86_64` entry — so an installed Windows client is never
 offered an update this release did not build. Check the release notes and the
 asset list for the platforms a given version actually covers.
 
+While Windows releases are disabled, the Windows end-to-end leg is also
+non-blocking: it still runs and still reports its result, but a Windows-only
+regression does not gate a macOS artifact it cannot affect. The macOS and Linux
+legs remain blocking, and enabling `CIVITAS_WINDOWS_RELEASE_ENABLED` restores
+the Windows leg as a release gate.
+
 ## Expected release files
 
 For each version, the draft should contain:

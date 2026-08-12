@@ -50,6 +50,10 @@ jobs:
     # green (run 28692981010: 46/46 spec files, core-recording, user-journey).
     # Pass windows_runner=windows-2022 to fall back to the GitHub-hosted runner.
     runs-on: ${{ (github.event_name == 'push' || inputs.windows_runner == 'windows-2022') && 'windows-2022' || fromJSON('["self-hosted","windows-desktop-test"]') }}
+    # A macOS-only release must not be gated on a Windows-only regression.
+    # This leg still runs and still reports red in the checks list; it stops
+    # failing the whole run only while Windows releases are disabled.
+    continue-on-error: ${{ vars.CIVITAS_WINDOWS_RELEASE_ENABLED != 'true' }}
     timeout-minutes: 90
     env:
       CC_x86_64_pc_windows_msvc: cl.exe
