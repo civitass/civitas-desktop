@@ -14,6 +14,15 @@ rustflags = [
 [target.x86_64-apple-darwin]
 rustflags = "-lc++ -l framework=Accelerate"
 
+[net]
+# Fetch the git dependencies with the system `git` rather than libgit2. The
+# bundled libgit2 TLS stack intermittently rejects github.com on macOS runners
+# ("untrusted connection error; class=Ssl") and takes a release build down with
+# it. This changes who performs the transport, not what is trusted: system git
+# validates the same certificate chain against the platform trust store, and
+# Cargo.lock still pins every git dependency to an exact revision.
+git-fetch-with-cli = true
+
 [env]
 # Use prebuilt NASM objects on Windows (no NASM install needed in CI): https://aws.github.io/aws-lc-rs/requirements/windows.html#prebuilt-nasm-objects
 AWS_LC_SYS_PREBUILT_NASM = "1"
