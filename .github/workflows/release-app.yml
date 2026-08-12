@@ -618,15 +618,28 @@ jobs:
           smoke_data=""
           smoke_pid=""
           cleanup_verification() {
+            # Capture the status the step is already exiting with, and hand it
+            # back at the end. Otherwise the last cleanup command's status
+            # becomes the step's, which can both fail a verification that
+            # actually passed and mask one that genuinely failed.
+            verification_status=$?
             if [ -n "$smoke_pid" ] && kill -0 "$smoke_pid" 2>/dev/null; then
               kill "$smoke_pid" 2>/dev/null || true
               wait "$smoke_pid" 2>/dev/null || true
             fi
-            hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
-            if [ -n "$smoke_data" ] && [ -d "$smoke_data" ]; then
-              rm -rf -- "$smoke_data"
+            # A volume that just hosted a launched app can stay busy briefly
+            # after the process dies. If the detach is skipped, the rm below
+            # recurses into a still-mounted read-only image and every unlink
+            # fails with EROFS, so retry with -force before giving up.
+            if ! hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1; then
+              sleep 5
+              hdiutil detach "$mount_dir" -force -quiet >/dev/null 2>&1 || true
             fi
-            rm -rf -- "$mount_dir"
+            if [ -n "$smoke_data" ] && [ -d "$smoke_data" ]; then
+              rm -rf -- "$smoke_data" || true
+            fi
+            rm -rf -- "$mount_dir" || true
+            return "$verification_status"
           }
           trap cleanup_verification EXIT
 
@@ -754,11 +767,28 @@ jobs:
 
           secret_pattern='-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk-ant-api03-[A-Za-z0-9_-]{32}|sk-proj-[A-Za-z0-9_-]{32}|github_pat_[A-Za-z0-9_]{40}|gh[pousr]_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{20}'
           while IFS= read -r -d '' candidate; do
-            if LC_ALL=C grep -aEq "$secret_pattern" "$candidate"; then
+            # -e is load bearing. The pattern starts with "-----", so passing it
+            # positionally made grep parse it as an option: it exited 2 on every
+            # file, matched nothing, and because the call sat in an `if`
+            # condition `set -e` never fired. The scan reported a DMG carrying a
+            # PEM key or an AWS key as clean.
+            scan_status=0
+            LC_ALL=C grep -aEq -e "$secret_pattern" "$candidate" || scan_status=$?
+            if [ "$scan_status" -eq 0 ]; then
               echo "::error::high-confidence credential material detected in bundled file: $candidate"
               exit 1
             fi
-          done < <(find "$mounted_app/Contents" -type f -size -16M -print0)
+            # Anything above "no match" means the scanner itself failed. Treat
+            # that as a failed release rather than a clean file, so a future
+            # breakage cannot silently no-op the way this one did.
+            if [ "$scan_status" -gt 1 ]; then
+              echo "::error::credential scan could not read ${candidate} (grep exit ${scan_status})"
+              exit 1
+            fi
+            # No size bound: the bundled executables are exactly the files most
+            # able to hide an embedded key, and every one of them is larger than
+            # the 16M cut-off this loop used to apply.
+          done < <(find "$mounted_app/Contents" -type f -print0)
 
           smoke_data="$(mktemp -d "$RUNNER_TEMP/civitas-release-smoke.XXXXXX")"
           smoke_log="$RUNNER_TEMP/civitas-release-smoke.log"
@@ -1059,6 +1089,61 @@ jobs:
           fi
           test -f release-assets/latest.json
           jq -e --arg version "$VERSION" '.version == $version' release-assets/latest.json >/dev/null
+          updater_public_key="$RUNNER_TEMP/civitas-updater.pub"
+          jq -er '.plugins.updater.pubkey' \
+            apps/civitas-app-tauri/src-tauri/tauri.prod.conf.json |
+            base64 --decode > "$updater_public_key"
+          grep -q '^untrusted comment: minisign public key:' "$updater_public_key"
+
+          # Rebuild the macOS entries instead of trusting the manifest as
+          # uploaded. tauri-action writes latest.json once per matrix leg into
+          # the same draft, so the two macOS legs perform an unsynchronised
+          # read-modify-write of a single asset, and the URL it records is an
+          # api.github.com draft-asset endpoint rather than the immutable tag
+          # download path. Deriving both from the artifacts this job already
+          # downloaded and signature-checked removes the race and pins the URL,
+          # exactly as the Windows branch below already does.
+          for platform in darwin-aarch64 darwin-x86_64; do
+            case "$platform" in
+              darwin-aarch64) arch_token="aarch64" ;;
+              darwin-x86_64) arch_token="x64" ;;
+              *) echo "::error::unhandled updater platform: ${platform}"; exit 1 ;;
+            esac
+            artifact_path="$(find release-assets -maxdepth 1 -type f -name "*_${arch_token}.app.tar.gz" -print -quit)"
+            if [ -z "$artifact_path" ]; then
+              echo "::error::no ${platform} updater archive among the release assets"
+              exit 1
+            fi
+            detached_signature="${artifact_path}.sig"
+            test -f "$detached_signature"
+            artifact_name="$(basename "$artifact_path")"
+
+            # Tauri emits the .sig as base64 of a minisign signature file, and
+            # stores that same base64 in latest.json. rsign parses the decoded
+            # form, so handing it the raw .sig aborts before verifying anything.
+            decoded_signature="$RUNNER_TEMP/${platform}.minisig"
+            base64 --decode < "$detached_signature" > "$decoded_signature"
+            grep -q '^untrusted comment:' "$decoded_signature"
+            rsign verify "$artifact_path" \
+              --public-key-path "$updater_public_key" \
+              --sig-file "$decoded_signature" \
+              --quiet
+
+            artifact_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${artifact_name}"
+            manifest_signature="$(cat "$detached_signature")"
+            # tauri-action publishes a "<platform>-app" alias beside the
+            # canonical key; rewrite both so no client can read a stale
+            # draft-asset URL out of the alias.
+            jq \
+              --arg platform "$platform" \
+              --arg url "$artifact_url" \
+              --arg signature "$manifest_signature" \
+              '.platforms[$platform] = {url: $url, signature: $signature}
+               | .platforms[$platform + "-app"] = {url: $url, signature: $signature}' \
+              release-assets/latest.json > release-assets/latest.json.tmp
+            mv release-assets/latest.json.tmp release-assets/latest.json
+          done
+
           jq -e '
             .platforms["darwin-aarch64"].url and
             .platforms["darwin-aarch64"].signature and
@@ -1066,46 +1151,18 @@ jobs:
             .platforms["darwin-x86_64"].signature
           ' release-assets/latest.json >/dev/null
 
-          updater_public_key="$RUNNER_TEMP/civitas-updater.pub"
-          jq -er '.plugins.updater.pubkey' \
-            apps/civitas-app-tauri/src-tauri/tauri.prod.conf.json |
-            base64 --decode > "$updater_public_key"
-          grep -q '^untrusted comment: minisign public key:' "$updater_public_key"
-
-          for platform in darwin-aarch64 darwin-x86_64; do
-            artifact_url="$(jq -er --arg platform "$platform" '.platforms[$platform].url' release-assets/latest.json)"
-            expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
-            case "$artifact_url" in
-              "$expected_prefix"*) ;;
+          # Every URL in the shipped manifest must point into this immutable
+          # tag, on any platform key including the aliases.
+          immutable_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
+          while IFS= read -r platform_url; do
+            case "$platform_url" in
+              "$immutable_prefix"*) ;;
               *)
-                echo "::error::${platform} updater URL is outside the immutable release: ${artifact_url}"
+                echo "::error::updater URL is outside the immutable release: ${platform_url}"
                 exit 1
                 ;;
             esac
-            artifact_name="${artifact_url#"$expected_prefix"}"
-            case "$artifact_name" in
-              ""|*"/"*|*"?"*|*"#"*)
-                echo "::error::${platform} updater URL has an unsafe artifact name: ${artifact_name}"
-                exit 1
-                ;;
-            esac
-            artifact_path="release-assets/${artifact_name}"
-            detached_signature="${artifact_path}.sig"
-            test -f "$artifact_path"
-            test -f "$detached_signature"
-
-            manifest_signature="$RUNNER_TEMP/${platform}.manifest.sig"
-            jq -er --arg platform "$platform" '.platforms[$platform].signature' \
-              release-assets/latest.json > "$manifest_signature"
-            rsign verify "$artifact_path" \
-              --public-key-path "$updater_public_key" \
-              --sig-file "$detached_signature" \
-              --quiet
-            rsign verify "$artifact_path" \
-              --public-key-path "$updater_public_key" \
-              --sig-file "$manifest_signature" \
-              --quiet
-          done
+          done < <(jq -r '.platforms[].url' release-assets/latest.json)
 
           windows_updater_count="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' | wc -l | tr -d ' ')"
           if [ "$WINDOWS_RELEASE" = "true" ]; then
@@ -1116,9 +1173,13 @@ jobs:
             windows_updater="$(find release-assets -maxdepth 1 -type f -name '*.nsis.zip' -print -quit)"
             windows_signature="${windows_updater}.sig"
             test -f "$windows_signature"
+            # Same base64 wrapping as the macOS signatures above.
+            windows_decoded_signature="$RUNNER_TEMP/windows-x86_64.minisig"
+            base64 --decode < "$windows_signature" > "$windows_decoded_signature"
+            grep -q '^untrusted comment:' "$windows_decoded_signature"
             rsign verify "$windows_updater" \
               --public-key-path "$updater_public_key" \
-              --sig-file "$windows_signature" \
+              --sig-file "$windows_decoded_signature" \
               --quiet
             windows_name="$(basename "$windows_updater")"
             windows_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${windows_name}"
