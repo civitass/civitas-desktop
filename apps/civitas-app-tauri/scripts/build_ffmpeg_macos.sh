@@ -70,7 +70,11 @@ trap 'rm -rf "$work_dir"' EXIT
 
 source_dir="${work_dir}/ffmpeg"
 install_dir="${work_dir}/install"
-mkdir -p "$source_dir" "$install_dir" "$output_dir"
+# assets/ too: the LGPL text and source pointer are written there at the end of
+# the build. With the default output directory it already exists in the repo, so
+# only a caller passing an explicit output directory hit the failure - 20-odd
+# minutes into a build that had already succeeded.
+mkdir -p "$source_dir" "$install_dir" "$output_dir" "${output_dir}/assets"
 
 source_archive="${CIVITAS_FFMPEG_SOURCE_ARCHIVE:-}"
 if [ -n "$source_archive" ]; then
