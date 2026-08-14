@@ -4,3 +4,7 @@
 
 # Commit the Cargo.lock file
 !Cargo.lock
+
+# Staged by build.rs from the tauri-plugin-permission-flow build output.
+# Ships into Contents/Resources so the plugin Bundle.module accessor resolves.
+/permission-flow/

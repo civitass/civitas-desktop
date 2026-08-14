@@ -30,7 +30,10 @@
       "icons/civitas-logo-tray-failed.png",
       "icons/civitas-logo-tray-beta.png"
     ],
-    "resources": ["assets/*"],
+    "resources": {
+      "assets/*": "assets/",
+      "permission-flow/PermissionFlow_PermissionFlow.bundle": "PermissionFlow_PermissionFlow.bundle"
+    },
     "macOS": {
       "entitlements": "entitlements.plist",
       "hardenedRuntime": true,

@@ -318,6 +318,122 @@ void notif_free_string(char* ptr) { if (ptr) free(ptr); }
     println!("cargo:rustc-link-lib=static=notification_panel");
 }
 
+/// Stage the SwiftPM resource bundle that `tauri-plugin-permission-flow` needs
+/// at runtime so `tauri.conf.json` can ship it inside the app.
+///
+/// The plugin's Swift package declares `resources: [.process("Resources")]`, so
+/// SwiftPM synthesises a `Bundle.module` accessor. That accessor searches a few
+/// fixed locations and calls `fatalError` when none of them holds
+/// `PermissionFlow_PermissionFlow.bundle`. One of the locations it bakes in is
+/// the absolute build directory, which exists on the build machine and nowhere
+/// else — so the bundle resolves during development and traps on a user's Mac.
+///
+/// `PermissionFlowButton` reads `Bundle.module` from inside a SwiftUI `body` to
+/// localize its title, and SwiftUI evaluates that body on the main thread, so
+/// the missing bundle is not a degraded label: it is `_assertionFailure` inside
+/// `dispatch_once`, i.e. an immediate SIGTRAP the moment the permission UI
+/// renders a localized title. That is what shipped in 2.6.0 and crashed on
+/// "Grant access".
+///
+/// Copying it next to the executable's other resources puts it in the first
+/// place the accessor looks (`Bundle.main.resourceURL`).
+#[cfg(target_os = "macos")]
+fn stage_permission_flow_resources() {
+    use std::path::{Path, PathBuf};
+
+    const BUNDLE_NAME: &str = "PermissionFlow_PermissionFlow.bundle";
+
+    fn find_bundle(dir: &Path, depth: usize) -> Option<PathBuf> {
+        if depth == 0 {
+            return None;
+        }
+        let entries = std::fs::read_dir(dir).ok()?;
+        let mut found = None;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if path.file_name().is_some_and(|name| name == BUNDLE_NAME) {
+                return Some(path);
+            }
+            if found.is_none() {
+                found = find_bundle(&path, depth - 1);
+            }
+        }
+        found
+    }
+
+    fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let source = entry.path();
+            let target = to.join(entry.file_name());
+            if source.is_dir() {
+                copy_dir(&source, &target)?;
+            } else {
+                std::fs::copy(&source, &target)?;
+            }
+        }
+        Ok(())
+    }
+
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    // OUT_DIR is <target>/<triple>/<profile>/build/<crate>-<hash>/out; its
+    // grandparent holds every build script's output for this exact target, so
+    // the copy always matches the architecture being linked.
+    let build_root = out_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("OUT_DIR always has a build-script parent directory");
+
+    let Some(source) = find_bundle(build_root, 8) else {
+        // Fail closed. A missing bundle here is not cosmetic: it ships an app
+        // that traps as soon as the permission UI draws.
+        panic!(
+            "{BUNDLE_NAME} was not produced under {}. tauri-plugin-permission-flow must build it \
+             before this crate links, and the app must ship it or the permission UI crashes at \
+             runtime.",
+            build_root.display()
+        );
+    };
+
+    let manifest_dir = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+    );
+    let staged = manifest_dir.join("permission-flow").join(BUNDLE_NAME);
+    if staged.exists() {
+        std::fs::remove_dir_all(&staged)
+            .unwrap_or_else(|error| panic!("failed to clear {}: {error}", staged.display()));
+    }
+    copy_dir(&source, &staged)
+        .unwrap_or_else(|error| panic!("failed to stage {BUNDLE_NAME}: {error}"));
+
+    // Guard the copy itself: an empty or partial bundle resolves as a Bundle and
+    // then fails to find any string, which would turn a loud crash into silent
+    // untranslated UI.
+    let localizations = std::fs::read_dir(&staged)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "lproj")
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    assert!(
+        localizations > 0 && staged.join("Info.plist").exists(),
+        "staged {BUNDLE_NAME} is missing Info.plist or every .lproj directory"
+    );
+
+    println!("cargo:rerun-if-changed={}", source.display());
+}
+
 fn main() {
     tauri_helper::generate_command_file(tauri_helper::TauriHelperOptions::default());
     filter_feature_gated_commands();
@@ -356,6 +472,9 @@ fn main() {
 
         // Build SwiftUI notification panel
         build_notification_panel();
+
+        // Stage the permission-flow localization bundle for tauri to ship.
+        stage_permission_flow_resources();
     }
 
     // Windows MSVC: provide the GCC `__builtin_bswap{16,32,64}` intrinsics

@@ -751,6 +751,34 @@ jobs:
             exit 1
           fi
 
+          # Every Swift package that declares resources compiles in a
+          # Bundle.module accessor whose miss path is fatalError, and the
+          # candidate locations it bakes in include this runner's absolute build
+          # directory. That resolves during the build and traps on a user's Mac,
+          # so a bundle the binary names but the app does not ship is a
+          # guaranteed SIGTRAP the moment the owning view renders, not a missing
+          # translation. 2.6.0 shipped exactly that and crashed on "Grant
+          # access", so assert the shipped app carries every bundle it asks for.
+          missing_bundles=0
+          while IFS= read -r bundle_name; do
+            staged_bundle="$(find "$mounted_app" -maxdepth 4 -name "$bundle_name" -print -quit)"
+            if [ -z "$staged_bundle" ]; then
+              echo "::error::binary references resource bundle ${bundle_name}, which the app does not ship; it would fatalError at runtime"
+              missing_bundles=$((missing_bundles + 1))
+              continue
+            fi
+            # An empty bundle still resolves, turning the loud crash into
+            # silently untranslated UI, so require actual content.
+            if [ -z "$(find "$staged_bundle" -type f -print -quit)" ]; then
+              echo "::error::resource bundle ${bundle_name} is present but empty"
+              missing_bundles=$((missing_bundles + 1))
+            fi
+          done < <(strings -a "$app_path/Contents/MacOS/civitas-app" | grep -oE '[A-Za-z0-9_.-]+\.bundle' | sort -u)
+          if [ "$missing_bundles" -ne 0 ]; then
+            echo "::error::${missing_bundles} referenced resource bundle(s) missing from the shipped application"
+            exit 1
+          fi
+
           while IFS= read -r -d '' candidate; do
             basename_lower="$(basename "$candidate" | tr '[:upper:]' '[:lower:]')"
             case "$basename_lower" in
