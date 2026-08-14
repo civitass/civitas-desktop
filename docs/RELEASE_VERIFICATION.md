@@ -46,6 +46,28 @@ For each version, the draft should contain:
 Do not substitute an unverified file from another host. R2 or another mirror
 may mirror the exact bytes, but GitHub Releases is the primary public source.
 
+## Preparing the release commit
+
+The release refuses to build a commit that lacks a successful run of every
+required workflow at that exact SHA. Two of those workflows will not start on
+their own for a typical release commit, so arrange them before tagging:
+
+- `e2e-test.yml` skips push runs unless the commit subject contains
+  `[run-e2e]`. Put it in the subject of the release commit, or dispatch the
+  workflow against the branch afterwards.
+- `test-frontend.yml` and `docs.yml` are path filtered. A release commit that
+  only bumps the version in `apps/civitas-app-tauri/src-tauri/Cargo.toml`
+  matches neither filter, so neither runs and the gate stalls with no way to
+  satisfy it from a push.
+
+For anything they do not cover, dispatch the workflow against the branch whose
+tip is the release commit: a `workflow_dispatch` run records the branch tip as
+its head SHA, which is what the gate matches on. Confirm the tip is still the
+release commit at dispatch time.
+
+Do not weaken the gate to work around this. It exists so that a published
+binary is traceable to a commit that actually passed the full suite.
+
 ## Maintainer gate before publication
 
 1. Confirm the release tag is exactly `v<version>` from the Tauri Cargo
