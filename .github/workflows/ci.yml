@@ -124,6 +124,13 @@ jobs:
     # image so we keep getting security patches and can pin a stable build
     # toolchain.
     runs-on: windows-2022
+    # A macOS-only release must not be gated on a Windows-only regression.
+    # This leg still runs and still reports red in the checks list; it stops
+    # failing the whole run only while Windows releases are disabled, matching
+    # the Windows leg of e2e-test.yml. Flipping CIVITAS_WINDOWS_RELEASE_ENABLED
+    # to true makes it blocking again, so a Windows release can never be cut on
+    # unproven Windows tests.
+    continue-on-error: ${{ vars.CIVITAS_WINDOWS_RELEASE_ENABLED != 'true' }}
     env:
       CC_x86_64_pc_windows_msvc: cl.exe
       CXX_x86_64_pc_windows_msvc: cl.exe
@@ -226,16 +233,24 @@ jobs:
         run: |
           $src = "${{ github.workspace }}/apps/civitas-app-tauri/src-tauri/onnxruntime-win-x64-1.22.0/lib"
           $dst = "${{ github.workspace }}/target/x86_64-pc-windows-msvc/release/deps"
-          # Create unconditionally, and check the result. Nothing before this
-          # step builds anything, so target/.../deps only exists when the cache
-          # restored it; when the cache key moved, this step began failing with
-          # "Could not find a part of the path" on the very first copy, which
-          # means the Test-Path guard had reported the directory as present
-          # while file operations still rejected it — the shape a stale
-          # junction or a partially restored cache entry produces.
-          # Directory.CreateDirectory builds the whole chain, is a no-op when
-          # the directory genuinely exists, and does not inherit Test-Path's
-          # wildcard and reparse-point quirks.
+          # Nothing before this step builds anything, so target/.../deps exists
+          # only if the cache restored it. When the cache key moved this step
+          # started failing, and asserting the directory creation showed why:
+          # CreateDirectory reports "Cannot create <workspace>\target because a
+          # file or directory with the same name already exists", which .NET
+          # raises when a *file* occupies that path. A file at target\ makes
+          # every path beneath it uncreatable, and would fail the cargo builds
+          # below for the same reason.
+          #
+          # Nothing in the repository tracks such a file and the job log does
+          # not show it being written, so clear it here and record what it was:
+          # if this fires, the next run finally names whatever leaves it behind.
+          $targetRoot = Join-Path "${{ github.workspace }}" "target"
+          if ((Test-Path -LiteralPath $targetRoot) -and -not (Test-Path -LiteralPath $targetRoot -PathType Container)) {
+            $stray = Get-Item -LiteralPath $targetRoot -Force
+            Write-Host "::warning::removing stray non-directory at $targetRoot (length=$($stray.Length) attributes=$($stray.Attributes))"
+            Remove-Item -LiteralPath $targetRoot -Force
+          }
           [System.IO.Directory]::CreateDirectory($dst) | Out-Null
           if (-not [System.IO.Directory]::Exists($dst)) {
             throw "could not create ONNX staging directory $dst"

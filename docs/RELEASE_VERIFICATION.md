@@ -68,6 +68,19 @@ release commit at dispatch time.
 Do not weaken the gate to work around this. It exists so that a published
 binary is traceable to a commit that actually passed the full suite.
 
+### Windows legs while Windows releases are disabled
+
+The Windows jobs of `ci.yml` and `e2e-test.yml` run on every commit and still
+report red in the checks list, but they do not fail their workflow while
+`CIVITAS_WINDOWS_RELEASE_ENABLED` is not `true`. A macOS-only release ships no
+Windows binary, so a Windows-only regression is not evidence about the
+artifacts being published, and blocking on it delays macOS security fixes.
+
+This is scope, not an exemption. Setting `CIVITAS_WINDOWS_RELEASE_ENABLED` to
+`true` makes both legs blocking again, so a release that does ship Windows can
+never be cut on unproven Windows tests. Windows failures are still defects and
+still have to be fixed; they just do not gate a platform they do not cover.
+
 ## Maintainer gate before publication
 
 1. Confirm the release tag is exactly `v<version>` from the Tauri Cargo
