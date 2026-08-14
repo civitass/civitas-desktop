@@ -226,8 +226,19 @@ jobs:
         run: |
           $src = "${{ github.workspace }}/apps/civitas-app-tauri/src-tauri/onnxruntime-win-x64-1.22.0/lib"
           $dst = "${{ github.workspace }}/target/x86_64-pc-windows-msvc/release/deps"
-          if (-not (Test-Path $dst)) {
-            New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          # Create unconditionally, and check the result. Nothing before this
+          # step builds anything, so target/.../deps only exists when the cache
+          # restored it; when the cache key moved, this step began failing with
+          # "Could not find a part of the path" on the very first copy, which
+          # means the Test-Path guard had reported the directory as present
+          # while file operations still rejected it — the shape a stale
+          # junction or a partially restored cache entry produces.
+          # Directory.CreateDirectory builds the whole chain, is a no-op when
+          # the directory genuinely exists, and does not inherit Test-Path's
+          # wildcard and reparse-point quirks.
+          [System.IO.Directory]::CreateDirectory($dst) | Out-Null
+          if (-not [System.IO.Directory]::Exists($dst)) {
+            throw "could not create ONNX staging directory $dst"
           }
           # Always remove + re-copy. Prior cancelled runs could leave
           # 0-byte stubs that Swatinem/rust-cache preserves across runs;
