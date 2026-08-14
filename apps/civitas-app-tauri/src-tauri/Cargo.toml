@@ -2,7 +2,7 @@
 
 [package]
 name = "civitas-app"
-version = "2.6.0"
+version = "2.6.1"
 description = "Local-first personal work memory and knowledge graph"
 authors = ["Civitas <eng@civitas.team>"]
 license = "MIT"
