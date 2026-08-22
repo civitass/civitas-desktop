@@ -1098,6 +1098,18 @@ if (process.env.GITHUB_ENV) {
 // Near the end of the script, call these functions
 await copyBunBinary();
 
+// Must happen before anything compiles the permission-flow plugin: it rewrites
+// that plugin's Swift so its localization bundle is looked up in the app's
+// Contents/Resources instead of beside the .app, where code signing forbids it.
+// Left unpatched, the plugin calls fatalError and the app dies with SIGTRAP the
+// moment the permission UI draws a localized label.
+if (platform === "macos") {
+  const { patchPermissionFlowBundle } = await import(
+    "./patch_permission_flow_bundle.mjs"
+  );
+  patchPermissionFlowBundle();
+}
+
 // --dev or --build
 const action = process.argv?.[2];
 if (action?.includes("--build") || action?.includes("--dev")) {
