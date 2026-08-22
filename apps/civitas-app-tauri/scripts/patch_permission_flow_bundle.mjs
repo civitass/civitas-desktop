@@ -32,6 +32,9 @@ import { homedir } from "node:os";
 
 const RESOLVER_FILE = "CivitasResourceBundle.swift";
 const SENTINEL = "civitasResourceBundle";
+// Compiled into the binary as a plain string literal, so a published build can
+// be checked for the patch with `strings` without needing symbols.
+const MARKER = "civitas-permission-flow-bundle-resolver-v1";
 
 const RESOLVER_SOURCE = `// civitas — learns how your team works and turns it into shared workflows
 // https://civitas.team
@@ -69,6 +72,12 @@ extension Foundation.Bundle {
         }
         // Deliberately not fatalError. Untranslated labels are a cosmetic
         // defect; trapping here kills the app on its permission screen.
+        //
+        // The marker is also how a shipped build is proved to contain this
+        // patch: it is a literal in __cstring whether or not this line runs,
+        // so \`strings\` on the binary distinguishes a patched app from one
+        // still carrying SwiftPM's trapping accessor.
+        NSLog("${MARKER}: falling back to the main bundle; permission UI will be untranslated")
         return Bundle.main
     }()
 }
