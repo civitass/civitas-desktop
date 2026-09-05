@@ -322,7 +322,23 @@ impl ServerCore {
             .transcription_mode(config.transcription_mode.clone())
             .openai_compatible_config(openai_compatible_config);
 
-        crate::health::set_boot_phase("building_audio", Some("starting audio pipeline"));
+        // Say what is actually happening. Speaker models download in the
+        // background on a first run; the phase no longer waits on them, but
+        // the owner deserves to know why the first start looks busier.
+        let speech_models_cached = config.disable_audio
+            || (civitas_audio::speaker::models::cached_model_exists(
+                civitas_audio::speaker::models::PyannoteModel::Segmentation,
+            ) && civitas_audio::speaker::models::cached_model_exists(
+                civitas_audio::speaker::models::PyannoteModel::Embedding,
+            ));
+        crate::health::set_boot_phase(
+            "building_audio",
+            Some(if speech_models_cached {
+                "starting audio pipeline"
+            } else {
+                "starting audio pipeline — local speech models download in the background on first run"
+            }),
+        );
         let mut audio_manager = audio_manager_builder.build(db.clone()).await.map_err(|e| {
             let msg = format!("Failed to build audio manager: {}", e);
             crate::health::set_boot_error(&msg);

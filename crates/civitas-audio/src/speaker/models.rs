@@ -32,13 +32,40 @@ pub enum PyannoteModel {
     Embedding,
 }
 
+/// Resolve a speaker model, waiting (up to the downloader's two-minute budget
+/// per model) for a download to finish. Use this only where the caller can
+/// afford to block; startup and periodic refresh must use
+/// [`get_cached_model_or_start_download`].
 pub async fn get_or_download_model(model_type: PyannoteModel) -> Result<LoadedModel> {
-    get_or_download_model_with_retries(model_type, MAX_RECOVERY_RETRIES).await
+    get_or_download_model_with_retries(model_type, MAX_RECOVERY_RETRIES, true).await
+}
+
+/// Resolve a speaker model without waiting on the network. A verified cached
+/// file is loaded immediately; otherwise a background download is started (at
+/// most one per model) and an error is returned so the caller can proceed
+/// without speaker labels and pick the model up on a later refresh.
+///
+/// Engine startup used the blocking variant, which held the boot phase at
+/// "starting audio pipeline" for up to four minutes on a first run or a slow,
+/// blocked, or offline network.
+pub async fn get_cached_model_or_start_download(model_type: PyannoteModel) -> Result<LoadedModel> {
+    get_or_download_model_with_retries(model_type, MAX_RECOVERY_RETRIES, false).await
+}
+
+/// Whether a speaker model file is already present in the local cache. A pure
+/// disk check: it never starts a download or verifies the checksum (loading
+/// does that), so it is cheap enough to shape a boot-phase message.
+pub fn cached_model_exists(model_type: PyannoteModel) -> bool {
+    let (_, filename, _, _, _) = model_state(model_type);
+    get_cache_dir()
+        .map(|dir| dir.join(filename).is_file())
+        .unwrap_or(false)
 }
 
 async fn get_or_download_model_with_retries(
     model_type: PyannoteModel,
     max_retries: u8,
+    wait_for_download: bool,
 ) -> Result<LoadedModel> {
     let mut retry_count = 0;
     loop {
@@ -67,7 +94,11 @@ async fn get_or_download_model_with_retries(
             model_path_lock,
         )
         .with_sha256(expected_sha256);
-        let path = downloader.ensure_model_available().await?;
+        let path = if wait_for_download {
+            downloader.ensure_model_available().await?
+        } else {
+            downloader.ensure_model_downloaded().await?
+        };
 
         match create_session(&path) {
             Ok(session) => return Ok(LoadedModel { path, session }),
