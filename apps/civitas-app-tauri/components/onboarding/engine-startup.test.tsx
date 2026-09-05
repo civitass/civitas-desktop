@@ -260,6 +260,53 @@ describe("EngineStartup completion recovery", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers a way out when an active boot phase runs long, without calling it stuck", async () => {
+    mocks.localFetch.mockResolvedValue(response(false));
+    mocks.getBootPhase.mockResolvedValue({
+      phase: "building_audio",
+      message:
+        "starting audio pipeline — local speech models download in the background on first run",
+      error: null,
+      sinceEpochSecs: 0,
+    });
+
+    render(<EngineStartup handleNextSlide={mocks.handleNextSlide} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Sentence case, no ellipsis, and a live region for assistive tech.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Starting audio pipeline — local speech models download in the background on first run",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Continue while it finishes" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    // An active phase must not be reported as stuck.
+    expect(screen.queryByText("engine failed to start.")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("· 20s");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(26_000);
+    });
+    const proceed = screen.getByRole("button", {
+      name: "Continue while it finishes",
+    });
+    expect(screen.getByText(/setup keeps finishing in the background/)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(proceed);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.completeOnboarding).toHaveBeenCalledTimes(1);
+  });
+
   it("requires a relaunch before starting capture after an in-process screen grant", async () => {
     mocks.settings.disableVision = false;
     mocks.checkScreenRecordingPermissionState.mockResolvedValue({

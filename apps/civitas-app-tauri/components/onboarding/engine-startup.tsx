@@ -53,6 +53,11 @@ const SUPPORT_URL =
 // producing data fast enough to summarize locally, switch to an honest ready
 // state instead of blocking onboarding.
 const NO_ACTIVITY_GRACE_MS = 9000;
+// A phase the backend still reports as active (audio build, migration) can
+// legitimately run long, so it never trips the generic "stuck" state. After
+// this long the owner still deserves a way out: capture keeps starting in the
+// background after onboarding closes.
+const LONG_WAIT_MS = 45000;
 
 interface ExternalLinkFailure {
   label: string;
@@ -74,7 +79,7 @@ function SetupActionNotice({
     <div
       role="alert"
       aria-live="polite"
-      className="w-full rounded-xl border border-destructive/20 bg-destructive/[0.04] px-4 py-3 text-left shadow-sm"
+      className="w-full rounded-lg border border-destructive/20 bg-destructive/[0.04] px-4 py-3 text-left shadow-sm"
     >
       <div className="flex items-start gap-3">
         <AlertCircle
@@ -140,6 +145,11 @@ function isBootPhaseSnapshot(
 
 const BOOT_PHASE_POLL_MS = 500;
 
+function sentenceCase(message: string): string {
+  const trimmed = message.trim().replace(/\.{3}$/, "");
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
   const { completeOnboarding } = useOnboarding();
   const [state, setState] = useState<StartupState>("starting");
@@ -149,6 +159,8 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
   const [audioReady, setAudioReady] = useState(false);
   const [visionReady, setVisionReady] = useState(false);
   const [isTakingLonger, setIsTakingLonger] = useState(false);
+  const [isLongWait, setIsLongWait] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   // When spawn_civitas rejects (e.g. TCC permission denied) we used to
   // swallow the error and let the 15s "stuck" timer fire with empty boot phase.
   // PostHog showed 90% of stuck users had serverStarted=false / boot_phase=?,
@@ -532,7 +544,19 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
       () => setIsTakingLonger(true),
       TAKING_LONGER_MS,
     );
-    return () => clearTimeout(longerTimer);
+    const longWaitTimer = setTimeout(() => setIsLongWait(true), LONG_WAIT_MS);
+    const ticker = setInterval(
+      () =>
+        setElapsedSeconds(
+          Math.floor((Date.now() - mountTimeRef.current) / 1000),
+        ),
+      1000,
+    );
+    return () => {
+      clearTimeout(longerTimer);
+      clearTimeout(longWaitTimer);
+      clearInterval(ticker);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1018,13 +1042,62 @@ export default function EngineStartup({ handleNextSlide }: EngineStartupProps) {
           {state === "starting" && (bootPhase?.message || isTakingLonger) && (
             <motion.p
               key={bootPhase?.phase ?? "taking-longer"}
-              className="font-mono text-2xs text-muted-foreground/60 mt-3 max-w-[360px] text-center"
+              role="status"
+              aria-live="polite"
+              className="mt-3 max-w-[380px] text-center text-xs leading-5 text-muted-foreground"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              {bootPhase?.message ?? "Starting engine..."}
+              {sentenceCase(bootPhase?.message ?? "Starting engine")}
+              {isTakingLonger && elapsedSeconds >= TAKING_LONGER_MS / 1000 && (
+                <span className="text-muted-foreground/60">
+                  {" "}· {elapsedSeconds}s
+                </span>
+              )}
             </motion.p>
+          )}
+        </AnimatePresence>
+
+        {/* Long-wait escape hatch. The backend may honestly still be working
+            (first-run model downloads, a large migration); the owner is not
+            held hostage to it. Finishing here closes onboarding while the
+            engine keeps starting in the background. */}
+        <AnimatePresence>
+          {state === "starting" && isLongWait && (
+            <motion.div
+              key="long-wait"
+              className="mt-5 flex w-full max-w-[420px] flex-col items-center gap-3 border-t border-border/60 pt-4 text-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <p className="text-xs leading-5 text-muted-foreground">
+                Still preparing. This can take a few minutes on a first run
+                while local speech models download, and nothing has left this
+                Mac. You can open Civitas now; setup keeps finishing in the
+                background.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleSkip}
+                  disabled={isFinishing}
+                  className="h-8 rounded-md px-3 text-xs"
+                >
+                  {isFinishing ? "Finishing setup…" : "Continue while it finishes"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={openLogsFolder}
+                  className="h-8 rounded-md px-3 text-xs"
+                >
+                  Show logs
+                </Button>
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>
 
