@@ -263,8 +263,22 @@ cargo test --locked -p civitas-db --test knowledge_quality_eval \
 
 Use the synthetic evaluation corpus and adversarial fixtures.
 
-- [ ] Explicit commitment, unresolved blocker, decision follow-up, recent
-  task-like evidence, and stale open-loop generators work.
+- [ ] Explicit commitment, deadline, scheduled preparation, routine,
+  saved-query follow-up, changed blocker, decision follow-up, open thread, and
+  work-graph generators work; open threads and decision follow-ups surface
+  with no AI provider configured.
+- [ ] A deadline or preparation saved more than 45 days ahead surfaces when it
+  becomes due (freshness follows the anchor, not the authoring time).
+- [ ] Open threads require at least two captured sessions, three actions, a
+  two-hour span, and a last touch between 2 and 72 hours ago; an artifact
+  without an honest label is rejected, not guessed.
+- [ ] Decision follow-ups require a transcript-attributed decision (or a
+  screen-sourced one with a verbatim rationale), a resolvable moment, and no
+  later state for the subject; a later state removes the card.
+- [ ] `done` with `completesMemoryId` appends the `done` tag to the user's
+  memory in the same transaction and rejects any non-commitment memory;
+  `DELETE /next-actions/feedback/{id}` reverts exactly one row and reopens the
+  memory it completed.
 - [ ] Evidence validator rejects missing, deleted, expired, ambiguous,
   contradicted, and privacy-zone sources.
 - [ ] Deduplication collapses semantic repeats without combining unrelated
@@ -275,7 +289,12 @@ Use the synthetic evaluation corpus and adversarial fixtures.
 - [ ] Sensitive/high-risk categories are suppressed or require explicit
   review; no medical/legal/financial certainty is implied.
 - [ ] Cards show action, reason, evidence, age, confidence, and safety state.
-- [ ] Done, Not now, and Dismiss persist locally and affect cooldown/ranking.
+- [ ] Done, Later, Helpful, and Dismiss persist locally and affect
+  cooldown/ranking; Done, Later, and Dismiss confirm inline with an Undo that
+  works until the row collapses, and a failed save restores the card.
+- [ ] The panel is pull-only: nothing is fetched until “Show next actions”, and
+  the last pull is kept for the session so leaving and returning does not
+  discard it.
 - [ ] Refresh does not resurrect dismissed/expired suggestions improperly.
 - [ ] Provider outage produces a deterministic safe fallback.
 - [ ] No candidate automatically sends, edits, navigates, purchases, deletes,

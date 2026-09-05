@@ -741,6 +741,373 @@ async fn actual_route_requires_saved_query_opt_in_and_preserves_series_feedback(
 }
 
 #[tokio::test]
+async fn actual_route_surfaces_an_interrupted_artifact_thread_from_captured_actions() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    let pull_request = json!([
+        {"kind": "pull_request", "value": "acme/api#123", "confidence": 0.95},
+        {"kind": "repo", "value": "acme/api", "confidence": 0.95}
+    ])
+    .to_string();
+    // Two sessions yesterday and this morning; the last touch was six hours ago.
+    for (offset_minutes, verb) in [
+        (27 * 60, "clicked"),
+        (27 * 60 - 15, "typed"),
+        (6 * 60 + 20, "clicked"),
+        (6 * 60, "saved"),
+    ] {
+        let at = (now - chrono::Duration::minutes(offset_minutes)).to_rfc3339();
+        sqlx::query(
+            "INSERT INTO semantic_actions
+             (ts_start, ts_end, verb, object, app_name, window_title, artifacts, event_count, mining_version)
+             VALUES (?1, ?1, ?2, 'Files changed', 'Arc', 'PR #123 · acme/api', ?3, 1, 1)",
+        )
+        .bind(at)
+        .bind(verb)
+        .bind(&pull_request)
+        .execute(&database.pool)
+        .await
+        .expect("insert synthetic artifact action");
+    }
+    // A single burst on another ticket is activity, not an interrupted thread.
+    for offset_minutes in [90, 80, 70] {
+        sqlx::query(
+            "INSERT INTO semantic_actions
+             (ts_start, ts_end, verb, app_name, artifacts, event_count, mining_version)
+             VALUES (?1, ?1, 'clicked', 'Linear', ?2, 1, 1)",
+        )
+        .bind((now - chrono::Duration::minutes(offset_minutes)).to_rfc3339())
+        .bind(json!([{"kind": "ticket", "value": "ENG-42", "confidence": 0.68}]).to_string())
+        .execute(&database.pool)
+        .await
+        .expect("insert synthetic burst action");
+    }
+
+    let (status, body) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let actions = body["actions"].as_array().expect("actions");
+    assert_eq!(actions.len(), 1, "{body}");
+    let thread = &actions[0];
+    assert_eq!(thread["source"], "open-thread");
+    assert_eq!(thread["title"], "Return to pull request acme/api#123");
+    assert_eq!(thread["preview"]["execution"], "none");
+    assert_eq!(thread["safetyState"], "draft-only");
+    let evidence = thread["evidence"].as_array().unwrap();
+    assert_eq!(evidence.len(), 4);
+    assert!(evidence
+        .iter()
+        .all(|item| item["destination"]["surface"] == "timeline"
+            && item["destination"]["timestamp"].is_string()));
+    let candidate_id = thread["id"].as_str().unwrap();
+    let feedback_id = thread["feedbackId"].as_str().unwrap();
+    assert_ne!(
+        candidate_id, feedback_id,
+        "threads carry a durable series identity"
+    );
+
+    let (feedback_status, feedback) = route_json(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/next-actions/feedback")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "candidateId": candidate_id,
+                    "feedbackId": feedback_id,
+                    "source": "open-thread",
+                    "action": "done"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(feedback_status, StatusCode::OK, "{feedback}");
+    assert_eq!(feedback["saved"], true);
+    assert_eq!(feedback["memoryCompleted"], false);
+    assert!(feedback["feedbackRowId"].as_i64().unwrap() > 0);
+
+    let (_, after) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(after["actions"], json!([]));
+    assert_eq!(after["feedbackSuppressedCount"], 1);
+}
+
+#[tokio::test]
+async fn actual_route_surfaces_a_decision_follow_up_until_a_later_state_is_recorded() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    let episode_started =
+        (now - chrono::Duration::days(3) - chrono::Duration::minutes(40)).to_rfc3339();
+    let episode_id: i64 = sqlx::query_scalar(
+        "INSERT INTO episodes (started_at, ended_at, status, mining_version)
+         VALUES (?1, ?1, 'closed', 1)
+         RETURNING id",
+    )
+    .bind(&episode_started)
+    .fetch_one(&database.pool)
+    .await
+    .expect("insert synthetic episode");
+    let recorded_at = (now - chrono::Duration::days(3)).to_rfc3339();
+    let decision_id: i64 = sqlx::query_scalar(
+        "INSERT INTO kg_claims
+         (claim_text, claim_type, subject_entity_key, confidence, attribution_source,
+          source_episode_id, rationale, recorded_at, scope)
+         VALUES (?1, 'decision', 'project:atlas', 0.9, 'transcript_speaker', ?2, ?3, ?4, 'personal')
+         RETURNING id",
+    )
+    .bind("Ship the Atlas beta behind a feature flag")
+    .bind(episode_id)
+    .bind("we can roll it back without a release")
+    .bind(&recorded_at)
+    .fetch_one(&database.pool)
+    .await
+    .expect("insert grounded decision");
+    // A screen-sourced decision without a verbatim rationale is reading, not
+    // deciding: it must not become a follow-up.
+    sqlx::query(
+        "INSERT INTO kg_claims
+         (claim_text, claim_type, subject_entity_key, confidence, attribution_source,
+          source_action_ids, recorded_at, scope)
+         VALUES ('A vendor decided to raise prices', 'decision', 'company:vendor', 0.9, 'screen',
+                 '[1]', ?1, 'personal')",
+    )
+    .bind(&recorded_at)
+    .execute(&database.pool)
+    .await
+    .expect("insert screen-only decision");
+
+    let (status, body) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let actions = body["actions"].as_array().expect("actions");
+    assert_eq!(actions.len(), 1, "{body}");
+    let follow_up = &actions[0];
+    assert_eq!(follow_up["source"], "decision-follow-up");
+    assert_eq!(
+        follow_up["title"],
+        "Follow through on: Ship the Atlas beta behind a feature flag"
+    );
+    assert!(follow_up["summary"]
+        .as_str()
+        .unwrap()
+        .contains("roll it back"));
+    let evidence = follow_up["evidence"].as_array().unwrap();
+    let claim_pointer = evidence
+        .iter()
+        .find(|item| item["destination"]["surface"] == "work-graph")
+        .expect("claim evidence");
+    assert_eq!(claim_pointer["destination"]["recordId"], decision_id);
+    let moment = evidence
+        .iter()
+        .find(|item| item["destination"]["surface"] == "timeline")
+        .expect("episode moment");
+    assert_eq!(moment["destination"]["recordId"], episode_id);
+    let moment_at =
+        DateTime::parse_from_rfc3339(moment["destination"]["timestamp"].as_str().unwrap())
+            .expect("moment timestamp is RFC 3339");
+    assert_eq!(
+        moment_at.with_timezone(&Utc),
+        DateTime::parse_from_rfc3339(&episode_started)
+            .unwrap()
+            .with_timezone(&Utc)
+    );
+
+    sqlx::query(
+        "INSERT INTO kg_claims
+         (claim_text, claim_type, subject_entity_key, confidence, attribution_source,
+          source_action_ids, recorded_at, scope)
+         VALUES ('Atlas beta is live behind the flag', 'state', 'project:atlas', 0.9, 'screen',
+                 '[2]', ?1, 'personal')",
+    )
+    .bind((now - chrono::Duration::days(1)).to_rfc3339())
+    .execute(&database.pool)
+    .await
+    .expect("insert later state");
+    let (_, after) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(after["actions"], json!([]), "a later state closes the loop");
+}
+
+#[tokio::test]
+async fn done_feedback_completes_the_user_memory_and_undo_reopens_it() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    let memory_id: i64 = sqlx::query_scalar(
+        "INSERT INTO memories
+         (content, source, source_context, tags, importance, scope, created_at, updated_at)
+         VALUES ('Prepare the weekly project brief', 'user', ?1, '[\"commitment\"]', 0.9,
+                 'personal', ?2, ?2)
+         RETURNING id",
+    )
+    .bind(json!({"projectKey": "project:atlas", "effortMinutes": 20}).to_string())
+    .bind(now.to_rfc3339())
+    .fetch_one(&database.pool)
+    .await
+    .expect("insert commitment");
+
+    let (_, first) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let action = &first["actions"][0];
+    assert_eq!(action["source"], "explicit-commitment");
+    assert_eq!(action["confidenceLabel"], "High");
+    let candidate_id = action["id"].as_str().unwrap();
+
+    // A completion pointer at a memory that is not a commitment fails closed
+    // and saves nothing.
+    let stranger: i64 = sqlx::query_scalar(
+        "INSERT INTO memories (content, source, tags, importance, scope)
+         VALUES ('An unrelated note', 'user', '[\"idea\"]', 0.5, 'personal')
+         RETURNING id",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .expect("insert unrelated memory");
+    let (rejected_status, _) = route_json(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/next-actions/feedback")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "candidateId": candidate_id,
+                    "source": "explicit-commitment",
+                    "action": "done",
+                    "completesMemoryId": stranger
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(rejected_status, StatusCode::BAD_REQUEST);
+    let saved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM next_action_feedback")
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(saved, 0);
+
+    let (status, feedback) = route_json(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/next-actions/feedback")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "candidateId": candidate_id,
+                    "source": "explicit-commitment",
+                    "action": "done",
+                    "completesMemoryId": memory_id
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{feedback}");
+    assert_eq!(feedback["memoryCompleted"], true);
+    let row_id = feedback["feedbackRowId"].as_i64().unwrap();
+    let tags: String = sqlx::query_scalar("SELECT tags FROM memories WHERE id = ?1")
+        .bind(memory_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&tags).unwrap(),
+        vec!["commitment", "done"]
+    );
+    let (_, hidden) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(hidden["actions"], json!([]));
+
+    let (undo_status, undo) = route_json(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/next-actions/feedback/{row_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(undo_status, StatusCode::OK, "{undo}");
+    assert_eq!(undo["reverted"], true);
+    assert_eq!(undo["memoryReopened"], true);
+    let tags: String = sqlx::query_scalar("SELECT tags FROM memories WHERE id = ?1")
+        .bind(memory_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(&tags).unwrap(),
+        vec!["commitment"]
+    );
+    let (_, restored) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(restored["actions"][0]["id"], candidate_id);
+
+    let (missing_status, _) = route_json(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/next-actions/feedback/{row_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        missing_status,
+        StatusCode::NOT_FOUND,
+        "undo is not idempotent by design"
+    );
+}
+
+#[tokio::test]
 async fn actual_route_meets_dedup_safety_freshness_feedback_and_latency_gates() {
     let (app, database, _directory) = setup_route().await;
     let now = Utc::now();

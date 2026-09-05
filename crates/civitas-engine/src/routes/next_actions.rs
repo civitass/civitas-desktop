@@ -5,21 +5,25 @@
 //! Pull-based, local-only “Next actions” HTTP surface.
 //!
 //! Candidates come from explicit user-authored commitments, deadlines,
-//! routines, saved-query follow-ups, recent open loops, changed blockers, or
-//! repeated personal work-graph edges. The route does not call a model, notify,
-//! or execute.
+//! routines, saved-query follow-ups, recent open loops, changed blockers,
+//! grounded decisions without recorded follow-through, artifact threads the
+//! user returned to and then left, or repeated personal work-graph edges. The
+//! route does not call a model, notify, or execute.
+//!
+//! The policy is documented in `docs/NEXT_ACTIONS.md`.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json as JsonResponse,
 };
 use chrono::{DateTime, Duration, Utc};
+use civitas_mining::{ArtifactKind, ArtifactRef};
 use oasgen::{oasgen, OaSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -55,8 +59,34 @@ const SOURCE_KINDS: &[&str] = &[
     "user-routine",
     "saved-query",
     "changed-blocker",
+    "decision-follow-up",
+    "open-thread",
     "work-graph",
 ];
+/// Sources whose durable feedback identity is a series rather than one
+/// occurrence: `never`/`wrong`/`helpful` bind to the series, `done`/`later` to
+/// the occurrence.
+const SERIES_FEEDBACK_SOURCES: &[&str] = &["user-routine", "saved-query", "open-thread"];
+
+// `open-thread`: an artifact the user returned to across several captured
+// sessions and then stopped touching. Every constant is documented in
+// docs/NEXT_ACTIONS.md §3.4.
+const OPEN_THREAD_LOOKBACK_DAYS: i64 = 7;
+const OPEN_THREAD_ROW_LIMIT: i64 = 4000;
+const OPEN_THREAD_SESSION_GAP_MINUTES: i64 = 45;
+const OPEN_THREAD_MIN_SESSIONS: usize = 2;
+const OPEN_THREAD_MIN_ACTIONS: usize = 3;
+const OPEN_THREAD_MIN_SPAN_HOURS: i64 = 2;
+const OPEN_THREAD_MIN_IDLE_HOURS: i64 = 2;
+const OPEN_THREAD_MAX_IDLE_HOURS: i64 = 72;
+const OPEN_THREAD_MIN_ARTIFACT_CONFIDENCE: f32 = 0.6;
+const OPEN_THREAD_MAX_CANDIDATES: usize = 12;
+const OPEN_THREAD_EVIDENCE_LIMIT: usize = 8;
+
+// `decision-follow-up`: a grounded decision the user was party to, with no
+// later state recorded for its subject (docs/NEXT_ACTIONS.md §3.5).
+const DECISION_FOLLOW_UP_MIN_AGE_HOURS: i64 = 20;
+const DECISION_FOLLOW_UP_MAX_AGE_DAYS: i64 = 14;
 
 type ApiError = (StatusCode, JsonResponse<Value>);
 
@@ -90,6 +120,9 @@ pub(crate) struct NextActionFeedbackRequest {
     pub feedback_id: Option<String>,
     pub source: String,
     pub action: String,
+    /// For `done` on a user-authored memory candidate: the memory row to mark
+    /// done in the same transaction, so Memories and Next Actions agree.
+    pub completes_memory_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, OaSchema)]
@@ -97,6 +130,16 @@ pub(crate) struct NextActionFeedbackRequest {
 pub(crate) struct NextActionFeedbackResponse {
     pub saved: bool,
     pub cooldown_until: Option<String>,
+    /// Row identity for a bounded undo through `DELETE /next-actions/feedback/{id}`.
+    pub feedback_row_id: i64,
+    pub memory_completed: bool,
+}
+
+#[derive(Debug, Serialize, OaSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NextActionFeedbackUndoResponse {
+    pub reverted: bool,
+    pub memory_reopened: bool,
 }
 
 #[derive(Debug, Serialize, OaSchema)]
@@ -198,6 +241,30 @@ struct SavedQueryCandidateRow {
     created_at: String,
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct ArtifactActionRow {
+    id: i64,
+    ts_start: String,
+    verb: String,
+    object: Option<String>,
+    app_name: Option<String>,
+    window_title: Option<String>,
+    artifacts: String,
+}
+
+#[derive(Debug, FromRow)]
+struct DecisionFollowUpRow {
+    id: i64,
+    claim_text: String,
+    subject_entity_key: String,
+    confidence: f64,
+    recorded_at: String,
+    rationale: Option<String>,
+    source_episode_id: Option<i64>,
+    source_action_ids: Option<String>,
+    episode_started_at: Option<String>,
+}
+
 #[derive(Debug, FromRow)]
 struct FeedbackRow {
     candidate_id: String,
@@ -268,15 +335,25 @@ pub(crate) async fn list_next_actions(
     let blocker_batch = changed_blocker_candidates(&state, now)
         .await
         .map_err(internal_error)?;
+    let decision_batch = decision_follow_up_candidates(&state, context_entity, now)
+        .await
+        .map_err(internal_error)?;
+    let thread_batch = open_thread_candidates(&state, context_entity, now)
+        .await
+        .map_err(internal_error)?;
     let mut inputs = memory_batch.candidates;
     inputs.extend(saved_query_batch.candidates);
     inputs.extend(graph_batch.candidates);
     inputs.extend(blocker_batch.candidates);
+    inputs.extend(decision_batch.candidates);
+    inputs.extend(thread_batch.candidates);
     let evaluated_count = inputs.len();
     let mut rejected_count = memory_batch.rejected_count
         + saved_query_batch.rejected_count
         + graph_batch.rejected_count
-        + blocker_batch.rejected_count;
+        + blocker_batch.rejected_count
+        + decision_batch.rejected_count
+        + thread_batch.rejected_count;
     let ranked = inputs
         .into_iter()
         .filter_map(|input| match rank_candidate(input, now) {
@@ -337,7 +414,7 @@ pub(crate) async fn list_next_actions(
         if mode == "shadow" {
             "Shadow evaluation completed locally. Ambient suggestions remain off.".to_string()
         } else {
-            "No sufficiently grounded next action right now. Add a commitment, deadline, open loop, or routine; enable a follow-up on a saved search; or keep working so Civitas can learn a repeated pattern."
+            "No sufficiently grounded next action right now. Add a commitment, deadline, open loop, or routine; enable a follow-up on a saved search; or keep working so Civitas can notice a thread you left open or a pattern you repeat."
                 .to_string()
         }
     });
@@ -374,11 +451,11 @@ pub(crate) async fn save_next_action_feedback(
     if !SOURCE_KINDS.contains(&request.source.as_str()) {
         return Err(bad_request("invalid candidate source"));
     }
-    if !matches!(request.source.as_str(), "user-routine" | "saved-query")
+    if !SERIES_FEEDBACK_SOURCES.contains(&request.source.as_str())
         && feedback_id != request.candidate_id.as_str()
     {
         return Err(bad_request(
-            "feedbackId may differ only for a recurring routine or saved-query follow-up",
+            "feedbackId may differ only for a recurring routine, saved-query follow-up, or open thread",
         ));
     }
     if !matches!(
@@ -386,6 +463,17 @@ pub(crate) async fn save_next_action_feedback(
         "helpful" | "dismiss" | "not-useful" | "wrong" | "done" | "later" | "never"
     ) {
         return Err(bad_request("invalid feedback action"));
+    }
+    if request
+        .completes_memory_id
+        .is_some_and(|memory_id| memory_id <= 0)
+    {
+        return Err(bad_request("invalid completesMemoryId"));
+    }
+    if request.completes_memory_id.is_some() && request.action != "done" {
+        return Err(bad_request(
+            "completesMemoryId is accepted only with the done action",
+        ));
     }
     let now = Utc::now();
     let cooldown_until = match request.action.as_str() {
@@ -409,16 +497,30 @@ pub(crate) async fn save_next_action_feedback(
         .begin_immediate_with_retry()
         .await
         .map_err(internal_error)?;
-    sqlx::query(
+    let mut completed_memory_id = None;
+    if let Some(memory_id) = request.completes_memory_id {
+        match complete_user_memory(tx.conn(), memory_id, &now).await {
+            Ok(MemoryCompletion::Completed) => completed_memory_id = Some(memory_id),
+            Ok(MemoryCompletion::NotACommitment) => {
+                return Err(bad_request(
+                    "completesMemoryId must reference a user-authored commitment memory",
+                ));
+            }
+            Err(error) => return Err(internal_error(error)),
+        }
+    }
+    let feedback_row_id: i64 = sqlx::query_scalar(
         "INSERT INTO next_action_feedback
-         (candidate_id, source_kind, action, cooldown_until)
-         VALUES (?1, ?2, ?3, ?4)",
+         (candidate_id, source_kind, action, cooldown_until, completed_memory_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         RETURNING id",
     )
     .bind(storage_id)
     .bind(&request.source)
     .bind(&request.action)
     .bind(cooldown_until.map(|value| value.to_rfc3339()))
-    .execute(&mut **tx.conn())
+    .bind(completed_memory_id)
+    .fetch_one(&mut **tx.conn())
     .await
     .map_err(internal_error)?;
     tx.commit().await.map_err(internal_error)?;
@@ -426,7 +528,135 @@ pub(crate) async fn save_next_action_feedback(
     Ok(JsonResponse(NextActionFeedbackResponse {
         saved: true,
         cooldown_until: cooldown_until.map(|value| value.to_rfc3339()),
+        feedback_row_id,
+        memory_completed: completed_memory_id.is_some(),
     }))
+}
+
+/// Revert exactly one local feedback row. If that row marked a user memory
+/// done, the `done` tag it added is removed in the same transaction. Nothing
+/// else about feedback is editable and there is no bulk delete.
+#[oasgen]
+pub(crate) async fn undo_next_action_feedback(
+    State(state): State<Arc<AppState>>,
+    Path(feedback_row_id): Path<i64>,
+) -> Result<JsonResponse<NextActionFeedbackUndoResponse>, ApiError> {
+    if feedback_row_id <= 0 {
+        return Err(bad_request("invalid feedback id"));
+    }
+    let now = Utc::now();
+    let mut tx = state
+        .db
+        .begin_immediate_with_retry()
+        .await
+        .map_err(internal_error)?;
+    let Some(completed_memory_id) = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT completed_memory_id FROM next_action_feedback WHERE id = ?1",
+    )
+    .bind(feedback_row_id)
+    .fetch_optional(&mut **tx.conn())
+    .await
+    .map_err(internal_error)?
+    else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            JsonResponse(json!({ "error": "feedback row not found" })),
+        ));
+    };
+    sqlx::query("DELETE FROM next_action_feedback WHERE id = ?1")
+        .bind(feedback_row_id)
+        .execute(&mut **tx.conn())
+        .await
+        .map_err(internal_error)?;
+    let mut memory_reopened = false;
+    if let Some(memory_id) = completed_memory_id {
+        memory_reopened = reopen_user_memory(tx.conn(), memory_id, &now)
+            .await
+            .map_err(internal_error)?;
+    }
+    tx.commit().await.map_err(internal_error)?;
+    Ok(JsonResponse(NextActionFeedbackUndoResponse {
+        reverted: true,
+        memory_reopened,
+    }))
+}
+
+enum MemoryCompletion {
+    Completed,
+    NotACommitment,
+}
+
+/// Append the `done` tag to a user-authored commitment memory. The caller holds
+/// the write transaction; the FTS triggers re-index tags on update.
+async fn complete_user_memory(
+    conn: &mut sqlx::SqliteConnection,
+    memory_id: i64,
+    now: &DateTime<Utc>,
+) -> anyhow::Result<MemoryCompletion> {
+    let Some((source, tags_json)) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT source, tags FROM memories WHERE id = ?1",
+    )
+    .bind(memory_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(MemoryCompletion::NotACommitment);
+    };
+    if source != "user" {
+        return Ok(MemoryCompletion::NotACommitment);
+    }
+    let mut tags = serde_json::from_str::<Vec<String>>(tags_json.as_deref().unwrap_or("[]"))
+        .unwrap_or_default();
+    let is_candidate = tags
+        .iter()
+        .any(|tag| CANDIDATE_TAGS.contains(&tag.trim().to_lowercase().as_str()));
+    if !is_candidate {
+        return Ok(MemoryCompletion::NotACommitment);
+    }
+    if !tags
+        .iter()
+        .any(|tag| tag.trim().eq_ignore_ascii_case("done"))
+    {
+        tags.push("done".to_string());
+        sqlx::query("UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(serde_json::to_string(&tags)?)
+            .bind(now.to_rfc3339())
+            .bind(memory_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(MemoryCompletion::Completed)
+}
+
+/// Remove the `done` tag that [`complete_user_memory`] added. Returns whether a
+/// tag was actually removed; a memory the user deleted in between is a no-op.
+async fn reopen_user_memory(
+    conn: &mut sqlx::SqliteConnection,
+    memory_id: i64,
+    now: &DateTime<Utc>,
+) -> anyhow::Result<bool> {
+    let Some(tags_json) =
+        sqlx::query_scalar::<_, Option<String>>("SELECT tags FROM memories WHERE id = ?1")
+            .bind(memory_id)
+            .fetch_optional(&mut *conn)
+            .await?
+    else {
+        return Ok(false);
+    };
+    let mut tags = serde_json::from_str::<Vec<String>>(tags_json.as_deref().unwrap_or("[]"))
+        .unwrap_or_default();
+    let before = tags.len();
+    tags.retain(|tag| !tag.trim().eq_ignore_ascii_case("done"));
+    if tags.len() == before {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3")
+        .bind(serde_json::to_string(&tags)?)
+        .bind(now.to_rfc3339())
+        .bind(memory_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(true)
 }
 
 /// Return content-free, local evaluation counters for the pull-based policy.
@@ -645,7 +875,9 @@ fn memory_candidate(row: MemoryCandidateRow, now: DateTime<Utc>) -> MemoryCandid
             return MemoryCandidateDecision::NotDue;
         }
         source = CandidateSource::ScheduledPreparation;
-        reference_at = parse_datetime(&row.updated_at).unwrap_or(now);
+        // Freshness follows the event, not the day the reminder was typed: a
+        // preparation saved weeks ahead is exactly as fresh as its event.
+        reference_at = time_anchored_reference(event_at, now);
         expires_at = event_at + Duration::hours(4);
         urgency = if hours_until <= 12 { 1.0 } else { 0.82 };
         why_now = format!(
@@ -658,6 +890,9 @@ fn memory_candidate(row: MemoryCandidateRow, now: DateTime<Utc>) -> MemoryCandid
             return MemoryCandidateDecision::NotDue;
         }
         source = CandidateSource::Deadline;
+        // An upcoming deadline is fresh regardless of when it was authored; an
+        // overdue one ages from its due time until it expires a week later.
+        reference_at = time_anchored_reference(due, now);
         expires_at = due + Duration::days(7);
         urgency = if hours_until <= 0 {
             1.0
@@ -1202,6 +1437,491 @@ async fn changed_blocker_candidates(
     Ok(batch)
 }
 
+/// Grounded decisions the user was party to, recorded 1–14 days ago, with no
+/// later state recorded for the same subject. The mirror image of
+/// [`changed_blocker_candidates`]: a blocker *with* a later state asks whether
+/// it is resolved; a decision *without* one asks whether it was carried out.
+async fn decision_follow_up_candidates(
+    state: &Arc<AppState>,
+    context_entity: Option<&str>,
+    now: DateTime<Utc>,
+) -> anyhow::Result<CandidateBatch> {
+    let newest = (now - Duration::hours(DECISION_FOLLOW_UP_MIN_AGE_HOURS)).to_rfc3339();
+    let oldest = (now - Duration::days(DECISION_FOLLOW_UP_MAX_AGE_DAYS)).to_rfc3339();
+    let rows = sqlx::query_as::<_, DecisionFollowUpRow>(
+        "SELECT decision.id,
+                decision.claim_text,
+                decision.subject_entity_key,
+                decision.confidence,
+                decision.recorded_at,
+                decision.rationale,
+                decision.source_episode_id,
+                decision.source_action_ids,
+                episode.started_at AS episode_started_at
+         FROM kg_claims decision
+         LEFT JOIN episodes episode ON episode.id = decision.source_episode_id
+         WHERE decision.scope = 'personal'
+           AND decision.claim_type = 'decision'
+           AND decision.subject_entity_key IS NOT NULL
+           AND decision.valid_to IS NULL
+           AND decision.invalidated_at IS NULL
+           AND decision.superseded_by IS NULL
+           AND decision.needs_review = 0
+           AND decision.confidence >= 0.72
+           AND (
+               decision.attribution_source IN ('transcript_speaker', 'transcript')
+               OR (
+                   decision.attribution_source = 'screen'
+                   AND decision.rationale IS NOT NULL
+                   AND decision.confidence >= 0.8
+               )
+           )
+           AND (decision.source_episode_id IS NOT NULL OR decision.source_action_ids IS NOT NULL)
+           AND julianday(decision.recorded_at) <= julianday(?1)
+           AND julianday(decision.recorded_at) >= julianday(?2)
+           AND NOT EXISTS (
+               SELECT 1 FROM kg_claims later
+               WHERE later.subject_entity_key = decision.subject_entity_key
+                 AND later.scope = 'personal'
+                 AND later.claim_type = 'state'
+                 AND later.valid_to IS NULL
+                 AND later.invalidated_at IS NULL
+                 AND julianday(later.recorded_at) > julianday(decision.recorded_at)
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM kg_contradictions contradiction
+               WHERE contradiction.resolved_at IS NULL
+                 AND (
+                     contradiction.claim_a_id = decision.id
+                     OR contradiction.claim_b_id = decision.id
+                 )
+           )
+         ORDER BY decision.recorded_at DESC, decision.id ASC
+         LIMIT 50",
+    )
+    .bind(newest)
+    .bind(oldest)
+    .fetch_all(&state.db.pool)
+    .await?;
+
+    let referenced_action_ids = rows
+        .iter()
+        .filter(|row| row.episode_started_at.is_none())
+        .flat_map(|row| parse_action_ids(row.source_action_ids.as_deref()))
+        .collect::<HashSet<_>>();
+    let resolvable_actions =
+        resolve_semantic_actions(&state.db.pool, &referenced_action_ids).await?;
+
+    let mut batch = CandidateBatch::default();
+    for row in rows {
+        match decision_follow_up_candidate(row, context_entity, now, &resolvable_actions) {
+            Some(candidate) => batch.candidates.push(candidate),
+            None => batch.rejected_count += 1,
+        }
+    }
+    Ok(batch)
+}
+
+fn decision_follow_up_candidate(
+    row: DecisionFollowUpRow,
+    context_entity: Option<&str>,
+    now: DateTime<Utc>,
+    resolvable_actions: &HashMap<i64, SemanticActionEvidenceRow>,
+) -> Option<CandidateInput> {
+    let recorded_at = parse_datetime(&row.recorded_at)?;
+    let mut evidence = vec![NextActionEvidence {
+        id: format!("kg-claim:{}", row.id),
+        kind: "decision".to_string(),
+        label: format!("Recorded decision: {}", row.claim_text),
+        occurred_at: Some(row.recorded_at.clone()),
+        destination: EvidenceDestination {
+            surface: EvidenceSurface::WorkGraph,
+            record_id: Some(row.id),
+            timestamp: None,
+        },
+    }];
+    // The moment the decision was captured: prefer the episode, otherwise the
+    // grounding actions. A decision whose moment cannot be reopened is not
+    // shown; the evidence contract requires a resolvable pointer.
+    match (row.source_episode_id, row.episode_started_at.as_deref()) {
+        (Some(episode_id), Some(started_at)) if parse_datetime(started_at).is_some() => {
+            evidence.push(NextActionEvidence {
+                id: format!("episode:{episode_id}"),
+                kind: "episode".to_string(),
+                label: "Captured work session where this was decided".to_string(),
+                occurred_at: Some(started_at.to_string()),
+                destination: EvidenceDestination {
+                    surface: EvidenceSurface::Timeline,
+                    record_id: Some(episode_id),
+                    timestamp: Some(started_at.to_string()),
+                },
+            });
+        }
+        _ => {
+            let mut action_ids = parse_action_ids(row.source_action_ids.as_deref());
+            action_ids.retain(|id| resolvable_actions.contains_key(id));
+            for action in action_ids
+                .iter()
+                .filter_map(|id| resolvable_actions.get(id))
+                .take(4)
+            {
+                evidence.push(semantic_action_evidence(action));
+            }
+        }
+    }
+    if evidence.len() < 2 {
+        return None;
+    }
+
+    let age_days = now.signed_duration_since(recorded_at).num_days().max(0);
+    let subject = entity_display_name(&row.subject_entity_key);
+    let summary = match row.rationale.as_deref().map(str::trim) {
+        Some(rationale) if !rationale.is_empty() => {
+            format!("Recorded rationale: “{rationale}”")
+        }
+        _ => row.claim_text.clone(),
+    };
+    let context_matches =
+        context_entity.is_some_and(|entity| entity.eq_ignore_ascii_case(&row.subject_entity_key));
+    Some(CandidateInput {
+        identity_key: row.subject_entity_key.clone(),
+        feedback_identity_key: None,
+        source: CandidateSource::DecisionFollowUp,
+        title: format!("Follow through on: {}", row.claim_text),
+        summary,
+        why_now: format!(
+            "You recorded this decision about {subject} {age_days} day(s) ago; no later state change for it has been captured since."
+        ),
+        evidence,
+        steps: vec![
+            "Reopen the decision and its recorded rationale".to_string(),
+            "Check whether the follow-through has happened".to_string(),
+            "Record the outcome, or mark this done".to_string(),
+        ],
+        strength: row.confidence,
+        explicitness: 0.6,
+        urgency: if age_days <= 3 {
+            0.58
+        } else if age_days <= 7 {
+            0.66
+        } else {
+            0.6
+        },
+        relevance: if context_matches { 1.0 } else { 0.72 },
+        effort_minutes: 15,
+        reversibility: 1.0,
+        occurrences: 1,
+        last_seen: row.recorded_at,
+        expires_at: (recorded_at + Duration::days(21)).to_rfc3339(),
+        user_authored: false,
+    })
+}
+
+/// Artifact threads the user returned to across several captured sessions and
+/// then stopped touching. Reads only structured columns the Timeline already
+/// shows — never `text_sample` — and runs the same abstention filters as every
+/// other inferred source once ranked.
+async fn open_thread_candidates(
+    state: &Arc<AppState>,
+    context_entity: Option<&str>,
+    now: DateTime<Utc>,
+) -> anyhow::Result<CandidateBatch> {
+    let cutoff = (now - Duration::days(OPEN_THREAD_LOOKBACK_DAYS)).to_rfc3339();
+    let rows = sqlx::query_as::<_, ArtifactActionRow>(
+        "SELECT id, ts_start, verb, object, app_name, window_title, artifacts
+         FROM semantic_actions
+         WHERE ts_start >= ?1
+           AND artifacts IS NOT NULL
+           AND artifacts != '[]'
+         ORDER BY ts_start DESC, id DESC
+         LIMIT ?2",
+    )
+    .bind(cutoff)
+    .bind(OPEN_THREAD_ROW_LIMIT)
+    .fetch_all(&state.db.pool)
+    .await?;
+    Ok(open_thread_candidates_from_rows(&rows, context_entity, now))
+}
+
+#[derive(Debug, Clone)]
+struct ThreadAction<'a> {
+    row: &'a ArtifactActionRow,
+    at: DateTime<Utc>,
+}
+
+fn open_thread_candidates_from_rows(
+    rows: &[ArtifactActionRow],
+    context_entity: Option<&str>,
+    now: DateTime<Utc>,
+) -> CandidateBatch {
+    // Deterministic grouping order: BTreeMap keyed on (kind, value).
+    let mut groups: BTreeMap<(String, String), (ArtifactKind, Vec<ThreadAction<'_>>)> =
+        BTreeMap::new();
+    for row in rows {
+        let Some(at) = parse_datetime(&row.ts_start) else {
+            continue;
+        };
+        let Ok(artifacts) = serde_json::from_str::<Vec<ArtifactRef>>(&row.artifacts) else {
+            continue;
+        };
+        for artifact in artifacts {
+            if artifact.confidence < OPEN_THREAD_MIN_ARTIFACT_CONFIDENCE
+                || !open_thread_kind_allowed(&artifact.kind)
+                || artifact.value.trim().is_empty()
+            {
+                continue;
+            }
+            let key = (
+                artifact_kind_key(&artifact.kind).to_string(),
+                artifact.value.trim().to_string(),
+            );
+            groups
+                .entry(key)
+                .or_insert_with(|| (artifact.kind.clone(), Vec::new()))
+                .1
+                .push(ThreadAction { row, at });
+        }
+    }
+
+    let mut batch = CandidateBatch::default();
+    let mut candidates = Vec::new();
+    for ((_, value), (kind, mut actions)) in groups {
+        actions.sort_by(|left, right| left.at.cmp(&right.at).then(left.row.id.cmp(&right.row.id)));
+        actions.dedup_by(|left, right| left.row.id == right.row.id);
+        let Some(first) = actions.first() else {
+            continue;
+        };
+        let Some(last) = actions.last() else { continue };
+        let idle_hours = now.signed_duration_since(last.at).num_hours();
+        if !(OPEN_THREAD_MIN_IDLE_HOURS..=OPEN_THREAD_MAX_IDLE_HOURS).contains(&idle_hours) {
+            continue;
+        }
+        let span_hours = last.at.signed_duration_since(first.at).num_hours();
+        let sessions = count_sessions(&actions);
+        if actions.len() < OPEN_THREAD_MIN_ACTIONS
+            || sessions < OPEN_THREAD_MIN_SESSIONS
+            || span_hours < OPEN_THREAD_MIN_SPAN_HOURS
+        {
+            continue;
+        }
+        let latest_title = last
+            .row
+            .window_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty());
+        let Some(label) = open_thread_label(&kind, &value, latest_title) else {
+            // An artifact we cannot name honestly is not a card.
+            batch.rejected_count += 1;
+            continue;
+        };
+        let app = last
+            .row
+            .app_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|app| !app.is_empty());
+        let in_app = app.map(|app| format!(" in {app}")).unwrap_or_default();
+        let idle_label = humanize_hours(idle_hours);
+        let span_label = humanize_hours(span_hours.max(1));
+        let evidence = actions
+            .iter()
+            .rev()
+            .take(OPEN_THREAD_EVIDENCE_LIMIT)
+            .map(|action| NextActionEvidence {
+                id: format!("semantic-action:{}", action.row.id),
+                kind: "semantic-action".to_string(),
+                label: action_label(
+                    &action.row.verb,
+                    action.row.object.as_deref(),
+                    action.row.app_name.as_deref(),
+                ),
+                occurred_at: Some(action.row.ts_start.clone()),
+                destination: EvidenceDestination {
+                    surface: EvidenceSurface::Timeline,
+                    record_id: Some(action.row.id),
+                    timestamp: Some(action.row.ts_start.clone()),
+                },
+            })
+            .collect::<Vec<_>>();
+        let strength = (0.72
+            + 0.06 * (sessions.saturating_sub(OPEN_THREAD_MIN_SESSIONS)) as f64
+            + 0.02 * (actions.len().saturating_sub(OPEN_THREAD_MIN_ACTIONS)).min(5) as f64)
+            .min(0.92);
+        let context_matches = context_entity.is_some_and(|entity| {
+            let entity = entity.to_lowercase();
+            let value = value.to_lowercase();
+            entity.contains(&value) || value.contains(&entity)
+        });
+        let series_key = format!("artifact:{}:{}", artifact_kind_key(&kind), value);
+        candidates.push(CandidateInput {
+            identity_key: format!("{series_key}:{}", last.at.format("%Y%m%d")),
+            feedback_identity_key: Some(series_key),
+            source: CandidateSource::OpenThread,
+            title: format!("Return to {label}"),
+            summary: format!(
+                "You worked on this across {sessions} sessions over {span_label}; the last one ended {idle_label} ago{in_app}."
+            ),
+            why_now: format!(
+                "You returned to {label} in {sessions} separate sessions this week and then stopped {idle_label} ago."
+            ),
+            evidence,
+            steps: vec![
+                format!("Reopen {label}{in_app}"),
+                "Check what was left unfinished".to_string(),
+                "Decide whether to continue or close it".to_string(),
+            ],
+            strength,
+            explicitness: 0.5,
+            urgency: if idle_hours <= 24 {
+                0.72
+            } else if idle_hours <= 48 {
+                0.62
+            } else {
+                0.52
+            },
+            relevance: if context_matches { 1.0 } else { 0.7 },
+            effort_minutes: 15,
+            reversibility: 1.0,
+            occurrences: i64::try_from(sessions).unwrap_or(i64::MAX),
+            last_seen: last.at.to_rfc3339(),
+            expires_at: (last.at + Duration::days(5)).to_rfc3339(),
+            user_authored: false,
+        });
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .strength
+            .total_cmp(&left.strength)
+            .then_with(|| right.last_seen.cmp(&left.last_seen))
+            .then_with(|| left.identity_key.cmp(&right.identity_key))
+    });
+    candidates.truncate(OPEN_THREAD_MAX_CANDIDATES);
+    batch.candidates = candidates;
+    batch
+}
+
+fn count_sessions(actions: &[ThreadAction<'_>]) -> usize {
+    let mut sessions = 0usize;
+    let mut previous: Option<DateTime<Utc>> = None;
+    for action in actions {
+        let new_session = previous.is_none_or(|earlier| {
+            action.at.signed_duration_since(earlier)
+                > Duration::minutes(OPEN_THREAD_SESSION_GAP_MINUTES)
+        });
+        if new_session {
+            sessions += 1;
+        }
+        previous = Some(action.at);
+    }
+    sessions
+}
+
+fn open_thread_kind_allowed(kind: &ArtifactKind) -> bool {
+    matches!(
+        kind,
+        ArtifactKind::PullRequest
+            | ArtifactKind::Issue
+            | ArtifactKind::Ticket
+            | ArtifactKind::Doc
+            | ArtifactKind::FilePath
+            | ArtifactKind::Branch
+    )
+}
+
+fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::Repo => "repo",
+        ArtifactKind::PullRequest => "pull-request",
+        ArtifactKind::Issue => "issue",
+        ArtifactKind::Ticket => "ticket",
+        ArtifactKind::Branch => "branch",
+        ArtifactKind::FilePath => "file",
+        ArtifactKind::Url => "url",
+        ArtifactKind::Doc => "doc",
+        ArtifactKind::Channel => "channel",
+        ArtifactKind::EmailThread => "email-thread",
+    }
+}
+
+/// Name an artifact from its structured reference. Opaque document ids fall
+/// back to the most recent window title; with neither, the thread is not shown.
+fn open_thread_label(
+    kind: &ArtifactKind,
+    value: &str,
+    latest_title: Option<&str>,
+) -> Option<String> {
+    let compact_title = latest_title.map(|title| {
+        title
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(80)
+            .collect::<String>()
+    });
+    match kind {
+        ArtifactKind::PullRequest => Some(format!("pull request {value}")),
+        ArtifactKind::Issue => Some(format!("issue {value}")),
+        ArtifactKind::Ticket => Some(format!("ticket {value}")),
+        ArtifactKind::Branch => Some(format!("branch {value}")),
+        ArtifactKind::FilePath => value
+            .rsplit(['/', '\\'])
+            .find(|segment| !segment.trim().is_empty())
+            .map(|name| format!("file {}", name.trim())),
+        ArtifactKind::Doc => compact_title
+            .filter(|title| title.chars().count() >= 3)
+            .map(|title| format!("document “{title}”")),
+        _ => None,
+    }
+}
+
+fn humanize_hours(hours: i64) -> String {
+    if hours < 1 {
+        "under an hour".to_string()
+    } else if hours < 48 {
+        format!("{hours} hour{}", if hours == 1 { "" } else { "s" })
+    } else {
+        let days = hours / 24;
+        format!("{days} day{}", if days == 1 { "" } else { "s" })
+    }
+}
+
+/// `project:atlas-launch` → `atlas launch`; keys without a kind prefix are
+/// returned unchanged apart from hyphen spacing.
+fn entity_display_name(entity_key: &str) -> String {
+    entity_key
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(entity_key)
+        .replace(['-', '_'], " ")
+        .trim()
+        .to_string()
+}
+
+fn parse_action_ids(value: Option<&str>) -> Vec<i64> {
+    let mut ids = value
+        .and_then(|raw| serde_json::from_str::<Vec<i64>>(raw).ok())
+        .unwrap_or_default();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn semantic_action_evidence(action: &SemanticActionEvidenceRow) -> NextActionEvidence {
+    NextActionEvidence {
+        id: format!("semantic-action:{}", action.id),
+        kind: "semantic-action".to_string(),
+        label: semantic_action_label(action),
+        occurred_at: Some(action.ts_start.clone()),
+        destination: EvidenceDestination {
+            surface: EvidenceSurface::Timeline,
+            record_id: Some(action.id),
+            timestamp: Some(action.ts_start.clone()),
+        },
+    }
+}
+
 fn deduplicate_ranked(candidates: Vec<RankedNextAction>) -> (Vec<RankedNextAction>, usize) {
     let mut by_id = HashMap::<String, RankedNextAction>::new();
     let mut deduplicated = 0;
@@ -1235,15 +1955,25 @@ fn deduplicate_ranked(candidates: Vec<RankedNextAction>) -> (Vec<RankedNextActio
 
 fn source_priority(source: CandidateSource) -> u8 {
     match source {
-        CandidateSource::Deadline => 8,
-        CandidateSource::ScheduledPreparation => 7,
-        CandidateSource::ExplicitCommitment => 6,
-        CandidateSource::UserRoutine => 5,
-        CandidateSource::SavedQuery => 4,
-        CandidateSource::OpenLoop => 3,
-        CandidateSource::ChangedBlocker => 2,
+        CandidateSource::Deadline => 10,
+        CandidateSource::ScheduledPreparation => 9,
+        CandidateSource::ExplicitCommitment => 8,
+        CandidateSource::UserRoutine => 7,
+        CandidateSource::SavedQuery => 6,
+        CandidateSource::OpenLoop => 5,
+        CandidateSource::ChangedBlocker => 4,
+        CandidateSource::DecisionFollowUp => 3,
+        CandidateSource::OpenThread => 2,
         CandidateSource::WorkGraph => 1,
     }
+}
+
+/// `last_seen` for a signal that is anchored to a moment in time (a deadline,
+/// an event to prepare for). Before the anchor the signal is as fresh as now;
+/// after it, it ages from the anchor. Using the authoring time instead made a
+/// deadline saved more than 45 days ahead permanently "stale".
+fn time_anchored_reference(anchor: DateTime<Utc>, now: DateTime<Utc>) -> DateTime<Utc> {
+    anchor.min(now)
 }
 
 async fn latest_feedback(state: &Arc<AppState>) -> anyhow::Result<HashMap<String, FeedbackRow>> {
@@ -1354,13 +2084,22 @@ fn routine_occurrence(
 }
 
 fn semantic_action_label(action: &SemanticActionEvidenceRow) -> String {
-    let object = action.object.as_deref().map(str::trim).unwrap_or("");
-    let app = action.app_name.as_deref().map(str::trim).unwrap_or("");
+    action_label(
+        &action.verb,
+        action.object.as_deref(),
+        action.app_name.as_deref(),
+    )
+}
+
+fn action_label(verb: &str, object: Option<&str>, app: Option<&str>) -> String {
+    let verb = verb.replace('_', " ");
+    let object = object.map(str::trim).unwrap_or("");
+    let app = app.map(str::trim).unwrap_or("");
     match (object.is_empty(), app.is_empty()) {
-        (false, false) => format!("{} {} in {}", action.verb, object, app),
-        (false, true) => format!("{} {}", action.verb, object),
-        (true, false) => format!("{} in {}", action.verb, app),
-        (true, true) => action.verb.clone(),
+        (false, false) => format!("{verb} {object} in {app}"),
+        (false, true) => format!("{verb} {object}"),
+        (true, false) => format!("{verb} in {app}"),
+        (true, true) => verb,
     }
 }
 
@@ -1504,6 +2243,276 @@ mod tests {
             memory_candidate(malformed, now),
             MemoryCandidateDecision::Rejected
         ));
+    }
+
+    #[test]
+    fn time_anchored_signals_saved_far_ahead_stay_fresh_until_their_anchor() {
+        let now = parse_datetime("2026-07-26T12:00:00Z").unwrap();
+        // Authored 50 days ago, due tomorrow: the 45-day staleness gate used to
+        // reject this exactly when it mattered.
+        let mut deadline = memory(&["commitment"], "Prepare the release notes");
+        deadline.created_at = "2026-06-06T12:00:00Z".to_string();
+        deadline.updated_at = "2026-06-06T12:00:00Z".to_string();
+        deadline.source_context = Some(r#"{"dueAt":"2026-07-27T12:00:00Z"}"#.to_string());
+        let MemoryCandidateDecision::Candidate(deadline) = memory_candidate(deadline, now) else {
+            panic!("deadline should be due");
+        };
+        assert_eq!(deadline.source, CandidateSource::Deadline);
+        assert_eq!(deadline.last_seen, now.to_rfc3339());
+        let ranked = rank_candidate(deadline, now).expect("fresh deadline ranks");
+        assert_eq!(ranked.rank_factors.recency, 1.0);
+
+        // Overdue by two days: ages from the due time, not from authoring.
+        let mut overdue = memory(&["commitment"], "Prepare the release notes");
+        overdue.updated_at = "2026-06-06T12:00:00Z".to_string();
+        overdue.source_context = Some(r#"{"dueAt":"2026-07-24T12:00:00Z"}"#.to_string());
+        let MemoryCandidateDecision::Candidate(overdue) = memory_candidate(overdue, now) else {
+            panic!("overdue deadline should still be due");
+        };
+        assert_eq!(overdue.last_seen, "2026-07-24T12:00:00+00:00");
+
+        let mut preparation = memory(&["meeting-prep"], "Prepare the design review");
+        preparation.updated_at = "2026-06-01T12:00:00Z".to_string();
+        preparation.source_context =
+            Some(r#"{"scheduledAt":"2026-07-28T09:00:00Z","prepared":false}"#.to_string());
+        let MemoryCandidateDecision::Candidate(preparation) = memory_candidate(preparation, now)
+        else {
+            panic!("preparation should be due");
+        };
+        assert_eq!(preparation.last_seen, now.to_rfc3339());
+        rank_candidate(preparation, now).expect("fresh preparation ranks");
+    }
+
+    fn artifact_row(
+        id: i64,
+        ts_start: &str,
+        app: &str,
+        title: Option<&str>,
+        artifacts: &str,
+    ) -> ArtifactActionRow {
+        ArtifactActionRow {
+            id,
+            ts_start: ts_start.to_string(),
+            verb: "clicked".to_string(),
+            object: Some("Files changed".to_string()),
+            app_name: Some(app.to_string()),
+            window_title: title.map(ToOwned::to_owned),
+            artifacts: artifacts.to_string(),
+        }
+    }
+
+    #[test]
+    fn open_threads_need_return_visits_and_an_idle_gap() {
+        let now = parse_datetime("2026-07-28T12:00:00Z").unwrap();
+        let pr = r#"[{"kind":"pull_request","value":"acme/api#123","confidence":0.95},{"kind":"repo","value":"acme/api","confidence":0.95}]"#;
+        let rows = vec![
+            // Session 1: yesterday morning, two actions.
+            artifact_row(
+                1,
+                "2026-07-27T09:00:00Z",
+                "Arc",
+                Some("PR #123 · acme/api"),
+                pr,
+            ),
+            artifact_row(
+                2,
+                "2026-07-27T09:20:00Z",
+                "Arc",
+                Some("PR #123 · acme/api"),
+                pr,
+            ),
+            // Session 2: this morning, ended six hours ago.
+            artifact_row(
+                3,
+                "2026-07-28T05:40:00Z",
+                "Arc",
+                Some("PR #123 · acme/api"),
+                pr,
+            ),
+            artifact_row(
+                4,
+                "2026-07-28T06:00:00Z",
+                "Arc",
+                Some("PR #123 · acme/api"),
+                pr,
+            ),
+            // A ticket seen in one session only: not a thread.
+            artifact_row(
+                5,
+                "2026-07-28T06:05:00Z",
+                "Linear",
+                None,
+                r#"[{"kind":"ticket","value":"ENG-42","confidence":0.68}]"#,
+            ),
+            artifact_row(
+                6,
+                "2026-07-28T06:10:00Z",
+                "Linear",
+                None,
+                r#"[{"kind":"ticket","value":"ENG-42","confidence":0.68}]"#,
+            ),
+            artifact_row(
+                7,
+                "2026-07-28T06:15:00Z",
+                "Linear",
+                None,
+                r#"[{"kind":"ticket","value":"ENG-42","confidence":0.68}]"#,
+            ),
+            // A low-confidence branch guess is ignored entirely.
+            artifact_row(
+                8,
+                "2026-07-27T10:00:00Z",
+                "Ghostty",
+                None,
+                r#"[{"kind":"branch","value":"main","confidence":0.48}]"#,
+            ),
+        ];
+        let batch = open_thread_candidates_from_rows(&rows, None, now);
+        assert_eq!(batch.candidates.len(), 1, "{:?}", batch.candidates);
+        let thread = &batch.candidates[0];
+        assert_eq!(thread.source, CandidateSource::OpenThread);
+        assert_eq!(thread.title, "Return to pull request acme/api#123");
+        assert_eq!(thread.occurrences, 2);
+        assert_eq!(thread.evidence.len(), 4);
+        assert_eq!(
+            thread.feedback_identity_key.as_deref(),
+            Some("artifact:pull-request:acme/api#123")
+        );
+        assert!(thread.identity_key.ends_with(":20260728"));
+        assert!(thread
+            .evidence
+            .iter()
+            .all(|item| item.destination.surface == EvidenceSurface::Timeline));
+        assert!(thread.summary.contains("2 sessions"));
+        let ranked = rank_candidate(thread.clone(), now).expect("thread ranks");
+        assert_ne!(ranked.id, ranked.feedback_id);
+
+        // Still active an hour ago: not "where you left off" yet.
+        let active_now = parse_datetime("2026-07-28T07:00:00Z").unwrap();
+        assert!(open_thread_candidates_from_rows(&rows, None, active_now)
+            .candidates
+            .is_empty());
+        // Four days idle: no longer a fresh thread.
+        let long_ago = parse_datetime("2026-08-01T12:00:00Z").unwrap();
+        assert!(open_thread_candidates_from_rows(&rows, None, long_ago)
+            .candidates
+            .is_empty());
+    }
+
+    #[test]
+    fn open_thread_labels_are_structured_or_from_the_latest_title() {
+        assert_eq!(
+            open_thread_label(&ArtifactKind::Ticket, "ENG-42", None).as_deref(),
+            Some("ticket ENG-42")
+        );
+        assert_eq!(
+            open_thread_label(&ArtifactKind::FilePath, "/Users/me/notes/plan.md", None).as_deref(),
+            Some("file plan.md")
+        );
+        assert_eq!(
+            open_thread_label(
+                &ArtifactKind::Doc,
+                "gdoc:1AbC",
+                Some("  Launch   plan - Google Docs ")
+            )
+            .as_deref(),
+            Some("document “Launch plan - Google Docs”")
+        );
+        assert_eq!(
+            open_thread_label(&ArtifactKind::Doc, "gdoc:1AbC", None),
+            None
+        );
+        assert_eq!(
+            open_thread_label(&ArtifactKind::Url, "https://x", None),
+            None
+        );
+
+        let now = parse_datetime("2026-07-28T12:00:00Z").unwrap();
+        let doc = r#"[{"kind":"doc","value":"gdoc:1AbC","confidence":0.95}]"#;
+        let untitled = vec![
+            artifact_row(1, "2026-07-27T09:00:00Z", "Arc", None, doc),
+            artifact_row(2, "2026-07-27T09:10:00Z", "Arc", None, doc),
+            artifact_row(3, "2026-07-28T06:00:00Z", "Arc", None, doc),
+        ];
+        let batch = open_thread_candidates_from_rows(&untitled, None, now);
+        assert!(batch.candidates.is_empty());
+        assert_eq!(
+            batch.rejected_count, 1,
+            "an unnameable thread is rejected, not guessed"
+        );
+    }
+
+    #[test]
+    fn decision_follow_up_uses_the_episode_moment_or_grounding_actions() {
+        let now = parse_datetime("2026-07-28T12:00:00Z").unwrap();
+        let row = || DecisionFollowUpRow {
+            id: 31,
+            claim_text: "Ship the Atlas beta behind a flag".to_string(),
+            subject_entity_key: "project:atlas-launch".to_string(),
+            confidence: 0.9,
+            recorded_at: "2026-07-25T12:00:00Z".to_string(),
+            rationale: Some("we can roll it back without a release".to_string()),
+            source_episode_id: Some(5),
+            source_action_ids: Some("[7]".to_string()),
+            episode_started_at: Some("2026-07-25T11:30:00Z".to_string()),
+        };
+        let candidate = decision_follow_up_candidate(row(), None, now, &HashMap::new())
+            .expect("episode-grounded decision");
+        assert_eq!(candidate.source, CandidateSource::DecisionFollowUp);
+        assert_eq!(candidate.identity_key, "project:atlas-launch");
+        assert!(candidate.why_now.contains("atlas launch"));
+        assert!(candidate.summary.starts_with("Recorded rationale"));
+        assert_eq!(
+            candidate.evidence[1].destination.surface,
+            EvidenceSurface::Timeline
+        );
+        assert_eq!(candidate.evidence[1].destination.record_id, Some(5));
+        rank_candidate(candidate, now).expect("decision ranks");
+
+        let mut without_episode = row();
+        without_episode.source_episode_id = None;
+        without_episode.episode_started_at = None;
+        assert!(
+            decision_follow_up_candidate(without_episode, None, now, &HashMap::new()).is_none(),
+            "an unresolvable moment must reject the candidate"
+        );
+
+        let mut without_episode = row();
+        without_episode.source_episode_id = None;
+        without_episode.episode_started_at = None;
+        let actions = HashMap::from([(
+            7,
+            SemanticActionEvidenceRow {
+                id: 7,
+                ts_start: "2026-07-25T11:45:00Z".to_string(),
+                verb: "typed".to_string(),
+                object: None,
+                app_name: Some("Notes".to_string()),
+            },
+        )]);
+        let grounded = decision_follow_up_candidate(
+            without_episode,
+            Some("project:atlas-launch"),
+            now,
+            &actions,
+        )
+        .expect("action-grounded decision");
+        assert_eq!(grounded.relevance, 1.0);
+        assert_eq!(grounded.evidence[1].id, "semantic-action:7");
+    }
+
+    #[test]
+    fn helper_text_is_human_and_deterministic() {
+        assert_eq!(entity_display_name("project:atlas-launch"), "atlas launch");
+        assert_eq!(entity_display_name("atlas"), "atlas");
+        assert_eq!(humanize_hours(0), "under an hour");
+        assert_eq!(humanize_hours(1), "1 hour");
+        assert_eq!(humanize_hours(30), "30 hours");
+        assert_eq!(humanize_hours(50), "2 days");
+        assert_eq!(
+            action_label("switched_to", None, Some("Arc")),
+            "switched to in Arc"
+        );
     }
 
     #[test]

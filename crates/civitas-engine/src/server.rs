@@ -727,6 +727,10 @@ impl SCServer {
                 "/next-actions/feedback",
                 crate::routes::next_actions::save_next_action_feedback,
             )
+            .delete(
+                "/next-actions/feedback/:id",
+                crate::routes::next_actions::undo_next_action_feedback,
+            )
             .get(
                 "/next-actions/quality",
                 crate::routes::next_actions::next_action_quality,

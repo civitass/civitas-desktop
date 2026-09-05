@@ -144,13 +144,19 @@ request metadata—not prompt content—in the local audit table.
 The earlier predictive-action concept was recovered from repository history and
 adapted to the current local architecture as a pull-based feature.
 
-Candidates come from grounded local signals such as explicit commitments,
-unresolved blockers, owner-enabled saved-search follow-ups, decision
-follow-ups, recent task-like evidence, and stale open loops. Saved-search
-follow-ups are opt-in, interval-bounded, and reopen the exact local query and
-filters. The ranker considers evidence strength, recency, confidence,
-duplication, feedback, cooldowns, and ambiguity. It suppresses expired,
-unsupported, sensitive, or high-risk candidates.
+Candidates come from grounded local signals: explicit commitments, deadlines,
+routines, and open loops you typed; owner-enabled saved-search follow-ups;
+blockers whose subject later changed state; decisions you were party to that
+show no recorded follow-through; artifacts such as pull requests, tickets, and
+documents you returned to across several captured sessions and then left; and
+repeated work-graph transitions. Every source is deterministic and local. No
+model runs while candidates are generated or ranked, and the two behavioural
+sources work without any AI provider configured. Saved-search follow-ups are
+opt-in, interval-bounded, and reopen the exact local query and filters. The
+ranker considers evidence strength, recency, confidence, duplication, feedback,
+cooldowns, and ambiguity. It suppresses expired, unsupported, sensitive, or
+high-risk candidates. The full policy is documented in
+[Next Actions](docs/NEXT_ACTIONS.md).
 
 Every visible card can show:
 
@@ -158,10 +164,11 @@ Every visible card can show:
 - the local evidence and its age;
 - confidence and uncertainty;
 - safety/approval state;
-- Done, Not now, and Dismiss feedback.
+- Done, Later, Helpful, and Dismiss feedback, each with a bounded Undo.
 
-No suggestion sends a message, edits a file, opens a browser, or invokes an
-integration automatically.
+Marking a commitment done also marks the memory you wrote done, so Memories
+and Next Actions never disagree. No suggestion sends a message, edits a file,
+opens a browser, or invokes an integration automatically.
 
 ## Choose where AI runs
 
@@ -354,6 +361,7 @@ explicit integration boundaries.
 - [Model and capability catalog](docs/MODEL_CATALOG.md)
 - [Local multilingual OCR](docs/OCR.md)
 - [Local search and saved queries](docs/SEARCH.md)
+- [Next Actions policy and design](docs/NEXT_ACTIONS.md)
 - [Knowledge quality and performance evaluation](docs/QUALITY_EVALUATION.md)
 - [Roadmap](ROADMAP.md)
 - [Governance](GOVERNANCE.md)

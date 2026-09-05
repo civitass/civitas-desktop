@@ -141,6 +141,16 @@ queries in the background or send their terms to an AI provider. Reopening the
 evidence restores the saved local filters and advances only that enabled
 cadence.
 
+The two behavioural Next Actions sources are equally local. Open threads are
+computed from the structured artifact references (pull request, issue, ticket,
+document, file, branch) and timestamps already stored beside captured actions;
+they never read typed-text samples, run a model, or leave SQLite. Decision
+follow-ups read only grounded knowledge-graph decision claims and the captured
+moment they point at. Both run the same secret-material and sensitive-domain
+abstention as every other inferred candidate, and a `done` rating that closes a
+commitment updates only the memory row the owner wrote. The policy is
+documented in [Next Actions](NEXT_ACTIONS.md).
+
 When a remote profile is used, the provider necessarily receives the request:
 system instructions, the user's prompt, and the selected evidence or media.
 The setup UI displays the exact destination and requires a versioned

@@ -28,6 +28,12 @@ pub enum CandidateSource {
     UserRoutine,
     SavedQuery,
     ChangedBlocker,
+    /// A grounded decision claim the user was party to, with no later state
+    /// change recorded for the same subject.
+    DecisionFollowUp,
+    /// An artifact (pull request, ticket, document, file) the user returned to
+    /// across several captured sessions and then stopped touching.
+    OpenThread,
     WorkGraph,
 }
 
@@ -226,12 +232,21 @@ pub fn rank_candidate(
                 return Err(RejectionReason::InsufficientEvidence);
             }
         }
-        CandidateSource::WorkGraph | CandidateSource::ChangedBlocker => {
+        CandidateSource::WorkGraph
+        | CandidateSource::ChangedBlocker
+        | CandidateSource::OpenThread => {
             if input.occurrences < MIN_GRAPH_OCCURRENCES
                 || input.strength < MIN_GRAPH_CONFIDENCE
                 || input.evidence.len() < 2
                 || (input.source == CandidateSource::WorkGraph && input.steps.len() < 2)
             {
+                return Err(RejectionReason::InsufficientEvidence);
+            }
+        }
+        CandidateSource::DecisionFollowUp => {
+            // One grounded decision is enough to ask "did this happen?", but it
+            // must be well supported and point at both the claim and the moment.
+            if input.strength < MIN_GRAPH_CONFIDENCE || input.evidence.len() < 2 {
                 return Err(RejectionReason::InsufficientEvidence);
             }
         }
@@ -294,9 +309,10 @@ pub fn rank_candidate(
 
     let confidence_label = if sensitive {
         "Review"
-    } else if score >= 0.82
-        && (input.source == CandidateSource::ExplicitCommitment || input.evidence.len() >= 3)
-    {
+    } else if score >= 0.82 && (input.user_authored || input.evidence.len() >= 3) {
+        // A signal the owner typed (commitment, deadline, routine, saved query)
+        // is the most explicit thing the system has; an inferred signal needs
+        // three independent evidence pointers to earn the same label.
         "High"
     } else if score >= 0.64 {
         "Supported"
@@ -321,6 +337,12 @@ pub fn rank_candidate(
         }
         CandidateSource::ChangedBlocker => {
             "A later grounded state may affect this blocker; it does not prove the blocker is resolved."
+        }
+        CandidateSource::DecisionFollowUp => {
+            "You were party to this recorded decision. Civitas cannot see whether the follow-through happened outside the captured context."
+        }
+        CandidateSource::OpenThread => {
+            "You returned to this several times and then stopped. Civitas cannot know whether you finished it elsewhere or moved on."
         }
         CandidateSource::WorkGraph => {
             "This is a repeated local pattern, not a promise that the same step is right now."
@@ -838,6 +860,92 @@ mod tests {
         assert_eq!(
             rank_candidate(candidate, Utc::now()),
             Err(RejectionReason::SecretMaterial)
+        );
+    }
+
+    #[test]
+    fn user_authored_signal_earns_high_label_from_one_evidence_row() {
+        let now = DateTime::parse_from_rfc3339("2026-07-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut candidate = graph_candidate();
+        candidate.source = CandidateSource::Deadline;
+        candidate.evidence = vec![NextActionEvidence {
+            id: "memory:7".to_string(),
+            kind: "user-memory".to_string(),
+            label: "User-authored deadline".to_string(),
+            occurred_at: Some("2026-07-25T12:00:00Z".to_string()),
+            destination: EvidenceDestination {
+                surface: EvidenceSurface::Memories,
+                record_id: Some(7),
+                timestamp: None,
+            },
+        }];
+        candidate.steps.clear();
+        candidate.occurrences = 1;
+        candidate.user_authored = true;
+        candidate.strength = 0.95;
+        candidate.explicitness = 1.0;
+        candidate.urgency = 0.95;
+        candidate.effort_minutes = 15;
+        let ranked = rank_candidate(candidate.clone(), now).expect("deadline ranks");
+        assert!(
+            ranked.score >= 0.82,
+            "score {} should clear High",
+            ranked.score
+        );
+        assert_eq!(ranked.confidence_label, "High");
+
+        // The same strength from an inferred single-evidence source is not High.
+        let mut inferred = candidate;
+        inferred.source = CandidateSource::DecisionFollowUp;
+        inferred.user_authored = false;
+        inferred.evidence.push(NextActionEvidence {
+            id: "episode:3".to_string(),
+            kind: "episode".to_string(),
+            label: "Captured session".to_string(),
+            occurred_at: Some("2026-07-25T12:00:00Z".to_string()),
+            destination: EvidenceDestination {
+                surface: EvidenceSurface::Timeline,
+                record_id: Some(3),
+                timestamp: Some("2026-07-25T12:00:00Z".to_string()),
+            },
+        });
+        let ranked = rank_candidate(inferred, now).expect("decision ranks");
+        assert_ne!(ranked.confidence_label, "High");
+        assert!(ranked
+            .uncertainty
+            .contains("party to this recorded decision"));
+    }
+
+    #[test]
+    fn open_thread_needs_two_sessions_and_two_moments() {
+        let now = DateTime::parse_from_rfc3339("2026-07-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut candidate = graph_candidate();
+        candidate.source = CandidateSource::OpenThread;
+        candidate.title = "Return to pull request acme/api#123".to_string();
+        candidate.steps = vec!["Reopen pull request acme/api#123".to_string()];
+        candidate.occurrences = 2;
+        candidate.strength = 0.78;
+        candidate.explicitness = 0.5;
+        let ranked = rank_candidate(candidate.clone(), now).expect("thread ranks");
+        assert_eq!(ranked.source, CandidateSource::OpenThread);
+        assert!(ranked
+            .uncertainty
+            .contains("returned to this several times"));
+
+        candidate.occurrences = 1;
+        assert_eq!(
+            rank_candidate(candidate.clone(), now),
+            Err(RejectionReason::InsufficientEvidence)
+        );
+        candidate.occurrences = 2;
+        candidate.evidence.truncate(1);
+        assert_eq!(
+            rank_candidate(candidate, now),
+            Err(RejectionReason::InsufficientEvidence)
         );
     }
 
