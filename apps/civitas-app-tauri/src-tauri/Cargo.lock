@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "civitas-app"
-version = "2.6.2"
+version = "2.7.0"
 dependencies = [
  "anyhow",
  "arboard",
