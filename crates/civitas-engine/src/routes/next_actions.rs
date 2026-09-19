@@ -68,20 +68,70 @@ const SOURCE_KINDS: &[&str] = &[
 /// the occurrence.
 const SERIES_FEEDBACK_SOURCES: &[&str] = &["user-routine", "saved-query", "open-thread"];
 
-// `open-thread`: an artifact the user returned to across several captured
-// sessions and then stopped touching. Every constant is documented in
-// docs/NEXT_ACTIONS.md §3.4.
-const OPEN_THREAD_LOOKBACK_DAYS: i64 = 7;
-const OPEN_THREAD_ROW_LIMIT: i64 = 4000;
+// `open-thread`: a piece of work the owner returned to across several captured
+// sessions and then stopped touching. Contexts come from structured columns
+// only (artifact references, the document path, the window title with its app
+// suffix stripped). Every constant is documented in docs/NEXT_ACTIONS.md §3.4.
+const OPEN_THREAD_LOOKBACK_DAYS: i64 = 10;
+/// Newest rows read per pull. ~4,000 actions/day is a typical dense capture
+/// day, so this covers the full lookback for most people and at least a few
+/// days for the heaviest; the previous 4,000-row budget covered one day.
+const OPEN_THREAD_ROW_LIMIT: i64 = 60_000;
 const OPEN_THREAD_SESSION_GAP_MINUTES: i64 = 45;
+const OPEN_THREAD_SUBSTANTIAL_SESSION_SECS: i64 = 30;
 const OPEN_THREAD_MIN_SESSIONS: usize = 2;
 const OPEN_THREAD_MIN_ACTIONS: usize = 3;
 const OPEN_THREAD_MIN_SPAN_HOURS: i64 = 2;
 const OPEN_THREAD_MIN_IDLE_HOURS: i64 = 2;
-const OPEN_THREAD_MAX_IDLE_HOURS: i64 = 72;
+/// Four days: a thread left on Friday is still "where you left off" on
+/// Tuesday; beyond that it reads as abandoned rather than interrupted.
+const OPEN_THREAD_MAX_IDLE_HOURS: i64 = 96;
 const OPEN_THREAD_MIN_ARTIFACT_CONFIDENCE: f32 = 0.6;
 const OPEN_THREAD_MAX_CANDIDATES: usize = 12;
 const OPEN_THREAD_EVIDENCE_LIMIT: usize = 8;
+const OPEN_THREAD_TITLE_MIN_CHARS: usize = 6;
+const OPEN_THREAD_TITLE_MAX_CHARS: usize = 100;
+/// Window titles that name a place rather than a piece of work. Matched on
+/// the normalized, lower-cased title as a whole word prefix.
+const GENERIC_WINDOW_TITLES: &[&str] = &[
+    "inbox",
+    "收件箱",
+    "home",
+    "new tab",
+    "untitled",
+    "loading",
+    "sign in",
+    "log in",
+    "login",
+    "settings",
+    "preferences",
+    "系统设置",
+    "general",
+    "downloads",
+    "desktop",
+    "documents",
+    "图片和视频",
+    "notifications",
+    "通知",
+    "activity",
+    "search",
+    "搜索",
+    "chats",
+    "messages",
+    "calendar",
+    "日历",
+    "start page",
+    "welcome",
+];
+/// Owner feedback on a source class starts moving its scores once this many
+/// of its cards have been rated; the prior is Beta(2, 2) and the effect is
+/// bounded to ±0.08 so no class can be silenced or forced by feedback alone.
+const FEEDBACK_PRIOR_MIN_RATED: i64 = 3;
+const FEEDBACK_PRIOR_MAX_SHIFT: f64 = 0.08;
+/// Two or more shared significant tokens tie a typed commitment to captured
+/// work; a single shared reference is enough when it is an identifier such as
+/// a ticket key or a file name.
+const CORROBORATION_MIN_SHARED_TOKENS: usize = 2;
 
 // `decision-follow-up`: a grounded decision the user was party to, with no
 // later state recorded for its subject (docs/NEXT_ACTIONS.md §3.5).
@@ -176,6 +226,20 @@ pub(crate) struct NextActionQualityResponse {
     pub candidates_deduplicated: i64,
     pub feedback_suppressed: i64,
     pub by_source: Vec<NextActionSourceQuality>,
+    /// How often cards with each confidence label were later kept (helpful or
+    /// done) versus rejected. Measured from the content-free shown ledger, one
+    /// row per candidate; `later` is neutral and not counted as rated.
+    pub calibration: Vec<NextActionCalibrationBucket>,
+}
+
+#[derive(Debug, Serialize, OaSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NextActionCalibrationBucket {
+    pub label: String,
+    pub shown: i64,
+    pub rated: i64,
+    pub kept: i64,
+    pub kept_rate: Option<f64>,
 }
 
 #[derive(Debug, FromRow)]
@@ -242,14 +306,30 @@ struct SavedQueryCandidateRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
-struct ArtifactActionRow {
+struct ThreadActionRow {
     id: i64,
     ts_start: String,
     verb: String,
     object: Option<String>,
     app_name: Option<String>,
     window_title: Option<String>,
+    document_path: Option<String>,
     artifacts: String,
+}
+
+#[derive(Debug, FromRow)]
+struct SourcePriorRow {
+    source_kind: String,
+    positive: i64,
+    negative: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct CalibrationRow {
+    confidence_label: String,
+    shown: i64,
+    rated: i64,
+    kept: i64,
 }
 
 #[derive(Debug, FromRow)]
@@ -338,7 +418,7 @@ pub(crate) async fn list_next_actions(
     let decision_batch = decision_follow_up_candidates(&state, context_entity, now)
         .await
         .map_err(internal_error)?;
-    let thread_batch = open_thread_candidates(&state, context_entity, now)
+    let (thread_batch, thread_index) = open_thread_candidates(&state, context_entity, now)
         .await
         .map_err(internal_error)?;
     let mut inputs = memory_batch.candidates;
@@ -347,6 +427,9 @@ pub(crate) async fn list_next_actions(
     inputs.extend(blocker_batch.candidates);
     inputs.extend(decision_batch.candidates);
     inputs.extend(thread_batch.candidates);
+    // Typed commitments gain the captured work that matches them; a matching
+    // thread card folds into the commitment instead of competing with it.
+    corroborate_with_threads(&mut inputs, &thread_index, now);
     let evaluated_count = inputs.len();
     let mut rejected_count = memory_batch.rejected_count
         + saved_query_batch.rejected_count
@@ -389,6 +472,13 @@ pub(crate) async fn list_next_actions(
         }
         true
     });
+    // Owner feedback on each source class, as a bounded Bayesian prior.
+    let priors = source_feedback_priors(&state)
+        .await
+        .map_err(internal_error)?;
+    for candidate in &mut ranked {
+        apply_source_prior(candidate, priors.get(source_kind(candidate.source)));
+    }
     ranked.sort_by(|left, right| {
         right
             .score
@@ -402,13 +492,14 @@ pub(crate) async fn list_next_actions(
         &state,
         mode,
         context_entity.is_some(),
-        shown_count,
+        if mode == "shadow" { &[] } else { &ranked },
         rejected_count,
         deduplicated_count,
         feedback_suppressed_count,
     )
     .await
     .map_err(internal_error)?;
+    let _ = shown_count;
     let actions = if mode == "shadow" { Vec::new() } else { ranked };
     let empty_state_reason = actions.is_empty().then(|| {
         if mode == "shadow" {
@@ -742,6 +833,46 @@ pub(crate) async fn next_action_quality(
     .await
     .map_err(internal_error)?;
 
+    let calibration = sqlx::query_as::<_, CalibrationRow>(
+        "WITH latest AS (
+             SELECT candidate_id, action,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY candidate_id
+                        ORDER BY created_at DESC, id DESC
+                    ) AS row_number
+             FROM next_action_feedback
+         ),
+         shown AS (
+             SELECT candidate_id, confidence_label
+             FROM next_action_shown
+             GROUP BY candidate_id, confidence_label
+         )
+         SELECT shown.confidence_label,
+                COUNT(*) AS shown,
+                SUM(CASE WHEN latest.action IN (
+                    'helpful', 'done', 'dismiss', 'not-useful', 'wrong', 'never'
+                ) THEN 1 ELSE 0 END) AS rated,
+                SUM(CASE WHEN latest.action IN ('helpful', 'done') THEN 1 ELSE 0 END) AS kept
+         FROM shown
+         LEFT JOIN latest
+           ON latest.candidate_id = shown.candidate_id AND latest.row_number = 1
+         GROUP BY shown.confidence_label
+         ORDER BY CASE shown.confidence_label
+             WHEN 'High' THEN 0 WHEN 'Supported' THEN 1 ELSE 2 END",
+    )
+    .fetch_all(&state.db.pool)
+    .await
+    .map_err(internal_error)?
+    .into_iter()
+    .map(|row| NextActionCalibrationBucket {
+        kept_rate: ratio(row.kept, row.rated),
+        label: row.confidence_label,
+        shown: row.shown,
+        rated: row.rated,
+        kept: row.kept,
+    })
+    .collect::<Vec<_>>();
+
     let helpfulness_rate = ratio(helpful_count, rated_count);
     let gate_status = if rated_count < MIN_RATED_SAMPLE {
         "insufficient-data"
@@ -771,6 +902,7 @@ pub(crate) async fn next_action_quality(
         candidates_deduplicated,
         feedback_suppressed,
         by_source,
+        calibration,
     }))
 }
 
@@ -1617,22 +1749,59 @@ fn decision_follow_up_candidate(
     })
 }
 
-/// Artifact threads the user returned to across several captured sessions and
-/// then stopped touching. Reads only structured columns the Timeline already
-/// shows — never `text_sample` — and runs the same abstention filters as every
-/// other inferred source once ranked.
+// ─── Open threads ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ThreadContextKind {
+    Artifact,
+    File,
+    Title,
+}
+
+#[derive(Debug, Clone)]
+struct ThreadContext {
+    key: String,
+    kind: ThreadContextKind,
+    /// Human label without the app; the group adds "in <app>".
+    label: String,
+}
+
+#[derive(Debug, Clone)]
+struct ThreadAction<'a> {
+    row: &'a ThreadActionRow,
+    at: DateTime<Utc>,
+}
+
+/// One captured thread with its sessionised activity in the lookback window,
+/// kept even when it does not qualify as a card so typed commitments can be
+/// corroborated by it.
+#[derive(Debug, Clone)]
+pub(crate) struct ThreadSummary {
+    key: String,
+    label: String,
+    tokens: HashSet<String>,
+    sessions: usize,
+    days: usize,
+    last_seen: DateTime<Utc>,
+    evidence: Vec<NextActionEvidence>,
+}
+
+/// Work the owner returned to across several captured sessions and then
+/// stopped touching. Reads only structured columns the Timeline already shows
+/// (never `text_sample`) and runs the same abstention filters as every other
+/// inferred source once ranked.
 async fn open_thread_candidates(
     state: &Arc<AppState>,
     context_entity: Option<&str>,
     now: DateTime<Utc>,
-) -> anyhow::Result<CandidateBatch> {
+) -> anyhow::Result<(CandidateBatch, Vec<ThreadSummary>)> {
     let cutoff = (now - Duration::days(OPEN_THREAD_LOOKBACK_DAYS)).to_rfc3339();
-    let rows = sqlx::query_as::<_, ArtifactActionRow>(
-        "SELECT id, ts_start, verb, object, app_name, window_title, artifacts
+    let rows = sqlx::query_as::<_, ThreadActionRow>(
+        "SELECT id, ts_start, verb, object, app_name, window_title, document_path, artifacts
          FROM semantic_actions
          WHERE ts_start >= ?1
-           AND artifacts IS NOT NULL
-           AND artifacts != '[]'
+           AND app_name IS NOT NULL
+           AND app_name != ''
          ORDER BY ts_start DESC, id DESC
          LIMIT ?2",
     )
@@ -1643,127 +1812,142 @@ async fn open_thread_candidates(
     Ok(open_thread_candidates_from_rows(&rows, context_entity, now))
 }
 
-#[derive(Debug, Clone)]
-struct ThreadAction<'a> {
-    row: &'a ArtifactActionRow,
-    at: DateTime<Utc>,
-}
-
 fn open_thread_candidates_from_rows(
-    rows: &[ArtifactActionRow],
+    rows: &[ThreadActionRow],
     context_entity: Option<&str>,
     now: DateTime<Utc>,
-) -> CandidateBatch {
-    // Deterministic grouping order: BTreeMap keyed on (kind, value).
-    let mut groups: BTreeMap<(String, String), (ArtifactKind, Vec<ThreadAction<'_>>)> =
-        BTreeMap::new();
+) -> (CandidateBatch, Vec<ThreadSummary>) {
+    struct Group<'a> {
+        context: ThreadContext,
+        actions: Vec<ThreadAction<'a>>,
+        apps: BTreeMap<String, usize>,
+        latest_title: Option<String>,
+    }
+    // Deterministic grouping order: BTreeMap keyed on the context key.
+    let mut groups: BTreeMap<String, Group<'_>> = BTreeMap::new();
     for row in rows {
         let Some(at) = parse_datetime(&row.ts_start) else {
             continue;
         };
-        let Ok(artifacts) = serde_json::from_str::<Vec<ArtifactRef>>(&row.artifacts) else {
+        let Some(context) = thread_context(row) else {
             continue;
         };
-        for artifact in artifacts {
-            if artifact.confidence < OPEN_THREAD_MIN_ARTIFACT_CONFIDENCE
-                || !open_thread_kind_allowed(&artifact.kind)
-                || artifact.value.trim().is_empty()
-            {
-                continue;
-            }
-            let key = (
-                artifact_kind_key(&artifact.kind).to_string(),
-                artifact.value.trim().to_string(),
-            );
-            groups
-                .entry(key)
-                .or_insert_with(|| (artifact.kind.clone(), Vec::new()))
-                .1
-                .push(ThreadAction { row, at });
+        let app = row.app_name.as_deref().unwrap_or("").trim().to_string();
+        let group = groups.entry(context.key.clone()).or_insert_with(|| Group {
+            context,
+            actions: Vec::new(),
+            apps: BTreeMap::new(),
+            latest_title: None,
+        });
+        *group.apps.entry(app).or_insert(0) += 1;
+        if group.latest_title.is_none() {
+            // Rows arrive newest first, so the first title seen is the latest.
+            group.latest_title = row
+                .window_title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(ToOwned::to_owned);
         }
+        group.actions.push(ThreadAction { row, at });
     }
 
     let mut batch = CandidateBatch::default();
     let mut candidates = Vec::new();
-    for ((_, value), (kind, mut actions)) in groups {
-        actions.sort_by(|left, right| left.at.cmp(&right.at).then(left.row.id.cmp(&right.row.id)));
-        actions.dedup_by(|left, right| left.row.id == right.row.id);
-        let Some(first) = actions.first() else {
-            continue;
-        };
-        let Some(last) = actions.last() else { continue };
-        let idle_hours = now.signed_duration_since(last.at).num_hours();
-        if !(OPEN_THREAD_MIN_IDLE_HOURS..=OPEN_THREAD_MAX_IDLE_HOURS).contains(&idle_hours) {
-            continue;
-        }
-        let span_hours = last.at.signed_duration_since(first.at).num_hours();
-        let sessions = count_sessions(&actions);
-        if actions.len() < OPEN_THREAD_MIN_ACTIONS
-            || sessions < OPEN_THREAD_MIN_SESSIONS
-            || span_hours < OPEN_THREAD_MIN_SPAN_HOURS
-        {
+    let mut summaries = Vec::new();
+    for (key, mut group) in groups {
+        group
+            .actions
+            .sort_by(|left, right| left.at.cmp(&right.at).then(left.row.id.cmp(&right.row.id)));
+        group
+            .actions
+            .dedup_by(|left, right| left.row.id == right.row.id);
+        let sessions = substantial_sessions(&group.actions);
+        if sessions.is_empty() {
             continue;
         }
-        let latest_title = last
-            .row
-            .window_title
-            .as_deref()
-            .map(str::trim)
-            .filter(|title| !title.is_empty());
-        let Some(label) = open_thread_label(&kind, &value, latest_title) else {
-            // An artifact we cannot name honestly is not a card.
+        let actions: Vec<&ThreadAction<'_>> = sessions.iter().flatten().copied().collect();
+        let first = actions[0].at;
+        let last = actions[actions.len() - 1].at;
+        let days = actions
+            .iter()
+            .map(|action| action.at.date_naive())
+            .collect::<HashSet<_>>()
+            .len();
+        let apps = top_apps(&group.apps);
+        let Some(label) =
+            resolve_thread_label(&group.context, group.latest_title.as_deref(), &apps)
+        else {
+            // A thread we cannot name honestly is not a card.
             batch.rejected_count += 1;
             continue;
         };
-        let app = last
-            .row
-            .app_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|app| !app.is_empty());
-        let in_app = app.map(|app| format!(" in {app}")).unwrap_or_default();
-        let idle_label = humanize_hours(idle_hours);
-        let span_label = humanize_hours(span_hours.max(1));
         let evidence = actions
             .iter()
             .rev()
             .take(OPEN_THREAD_EVIDENCE_LIMIT)
-            .map(|action| NextActionEvidence {
-                id: format!("semantic-action:{}", action.row.id),
-                kind: "semantic-action".to_string(),
-                label: action_label(
-                    &action.row.verb,
-                    action.row.object.as_deref(),
-                    action.row.app_name.as_deref(),
-                ),
-                occurred_at: Some(action.row.ts_start.clone()),
-                destination: EvidenceDestination {
-                    surface: EvidenceSurface::Timeline,
-                    record_id: Some(action.row.id),
-                    timestamp: Some(action.row.ts_start.clone()),
-                },
-            })
+            .map(|action| semantic_action_evidence_from_row(action.row))
             .collect::<Vec<_>>();
+        summaries.push(ThreadSummary {
+            key: key.clone(),
+            label: label.clone(),
+            tokens: significant_tokens(&format!(
+                "{} {}",
+                group.context.label,
+                group.latest_title.as_deref().unwrap_or("")
+            )),
+            sessions: sessions.len(),
+            days,
+            last_seen: last,
+            evidence: evidence.iter().take(3).cloned().collect(),
+        });
+
+        let idle_hours = now.signed_duration_since(last).num_hours();
+        if !(OPEN_THREAD_MIN_IDLE_HOURS..=OPEN_THREAD_MAX_IDLE_HOURS).contains(&idle_hours) {
+            continue;
+        }
+        let span_hours = last.signed_duration_since(first).num_hours();
+        if actions.len() < OPEN_THREAD_MIN_ACTIONS
+            || sessions.len() < OPEN_THREAD_MIN_SESSIONS
+            || span_hours < OPEN_THREAD_MIN_SPAN_HOURS
+            || days < 2
+        {
+            continue;
+        }
+        let in_app = if apps.is_empty() {
+            String::new()
+        } else {
+            format!(" in {}", apps.join(" and "))
+        };
+        let idle_label = humanize_hours(idle_hours);
+        let span_label = humanize_hours(span_hours.max(1));
+        let structured_bonus = match group.context.kind {
+            ThreadContextKind::Artifact | ThreadContextKind::File => 0.02,
+            ThreadContextKind::Title => 0.0,
+        };
         let strength = (0.72
-            + 0.06 * (sessions.saturating_sub(OPEN_THREAD_MIN_SESSIONS)) as f64
+            + structured_bonus
+            + 0.06 * (sessions.len().saturating_sub(OPEN_THREAD_MIN_SESSIONS)) as f64
             + 0.02 * (actions.len().saturating_sub(OPEN_THREAD_MIN_ACTIONS)).min(5) as f64)
             .min(0.92);
         let context_matches = context_entity.is_some_and(|entity| {
             let entity = entity.to_lowercase();
-            let value = value.to_lowercase();
-            entity.contains(&value) || value.contains(&entity)
+            let lowered = key.to_lowercase();
+            entity.contains(&lowered) || lowered.contains(&entity)
         });
-        let series_key = format!("artifact:{}:{}", artifact_kind_key(&kind), value);
         candidates.push(CandidateInput {
-            identity_key: format!("{series_key}:{}", last.at.format("%Y%m%d")),
-            feedback_identity_key: Some(series_key),
+            identity_key: format!("{key}:{}", last.format("%Y%m%d")),
+            feedback_identity_key: Some(key.clone()),
             source: CandidateSource::OpenThread,
             title: format!("Return to {label}"),
             summary: format!(
-                "You worked on this across {sessions} sessions over {span_label}; the last one ended {idle_label} ago{in_app}."
+                "You worked on this across {} sessions on {} days over {span_label}; the last one ended {idle_label} ago{in_app}.",
+                sessions.len(),
+                days
             ),
             why_now: format!(
-                "You returned to {label} in {sessions} separate sessions this week and then stopped {idle_label} ago."
+                "You returned to {label} in {} separate sessions recently and then stopped {idle_label} ago.",
+                sessions.len()
             ),
             evidence,
             steps: vec![
@@ -1783,9 +1967,9 @@ fn open_thread_candidates_from_rows(
             relevance: if context_matches { 1.0 } else { 0.7 },
             effort_minutes: 15,
             reversibility: 1.0,
-            occurrences: i64::try_from(sessions).unwrap_or(i64::MAX),
-            last_seen: last.at.to_rfc3339(),
-            expires_at: (last.at + Duration::days(5)).to_rfc3339(),
+            occurrences: i64::try_from(sessions.len()).unwrap_or(i64::MAX),
+            last_seen: last.to_rfc3339(),
+            expires_at: (last + Duration::days(5)).to_rfc3339(),
             user_authored: false,
         });
     }
@@ -1798,34 +1982,202 @@ fn open_thread_candidates_from_rows(
     });
     candidates.truncate(OPEN_THREAD_MAX_CANDIDATES);
     batch.candidates = candidates;
-    batch
+    (batch, summaries)
 }
 
-fn count_sessions(actions: &[ThreadAction<'_>]) -> usize {
-    let mut sessions = 0usize;
-    let mut previous: Option<DateTime<Utc>> = None;
+/// Split time-ordered actions into sessions at idle gaps, keeping only
+/// sessions with at least two actions or thirty seconds of activity so a
+/// single stray click cannot manufacture a "return visit".
+fn substantial_sessions<'a, 'b>(actions: &'b [ThreadAction<'a>]) -> Vec<Vec<&'b ThreadAction<'a>>> {
+    let mut sessions: Vec<Vec<&ThreadAction<'a>>> = Vec::new();
     for action in actions {
-        let new_session = previous.is_none_or(|earlier| {
-            action.at.signed_duration_since(earlier)
-                > Duration::minutes(OPEN_THREAD_SESSION_GAP_MINUTES)
+        let continues = sessions.last().is_some_and(|session| {
+            session.last().is_some_and(|previous| {
+                action.at.signed_duration_since(previous.at)
+                    <= Duration::minutes(OPEN_THREAD_SESSION_GAP_MINUTES)
+            })
         });
-        if new_session {
-            sessions += 1;
+        if continues {
+            sessions.last_mut().expect("session exists").push(action);
+        } else {
+            sessions.push(vec![action]);
         }
-        previous = Some(action.at);
     }
+    sessions.retain(|session| {
+        session.len() >= 2
+            || session
+                .last()
+                .zip(session.first())
+                .is_some_and(|(last, first)| {
+                    last.at.signed_duration_since(first.at)
+                        >= Duration::seconds(OPEN_THREAD_SUBSTANTIAL_SESSION_SECS)
+                })
+    });
     sessions
+}
+
+/// Derive the thread context of one action from structured fields only.
+fn thread_context(row: &ThreadActionRow) -> Option<ThreadContext> {
+    let app = row.app_name.as_deref().map(str::trim).unwrap_or("");
+    if app.is_empty() || app.to_lowercase().contains("civitas") {
+        return None;
+    }
+    if let Ok(artifacts) = serde_json::from_str::<Vec<ArtifactRef>>(&row.artifacts) {
+        for artifact in artifacts {
+            if artifact.confidence < OPEN_THREAD_MIN_ARTIFACT_CONFIDENCE
+                || !open_thread_kind_allowed(&artifact.kind)
+                || artifact.value.trim().is_empty()
+            {
+                continue;
+            }
+            let value = artifact.value.trim();
+            if let Some(label) = open_thread_label(
+                &artifact.kind,
+                value,
+                row.window_title.as_deref().map(str::trim),
+            ) {
+                return Some(ThreadContext {
+                    key: format!("artifact:{}:{}", artifact_kind_key(&artifact.kind), value),
+                    kind: ThreadContextKind::Artifact,
+                    label,
+                });
+            }
+        }
+    }
+    if let Some(name) = row
+        .document_path
+        .as_deref()
+        .and_then(|path| {
+            path.rsplit(['/', '\\'])
+                .find(|segment| !segment.trim().is_empty())
+        })
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !is_digit_heavy(name))
+    {
+        return Some(ThreadContext {
+            key: format!("file:{}", name.to_lowercase()),
+            kind: ThreadContextKind::File,
+            label: format!("file {name}"),
+        });
+    }
+    let title = normalize_window_title(row.window_title.as_deref().unwrap_or(""), app)?;
+    Some(ThreadContext {
+        key: format!("title:{}", title.to_lowercase()),
+        kind: ThreadContextKind::Title,
+        label: format!("“{title}”"),
+    })
+}
+
+/// Reduce a window title to the piece of work it names: collapse whitespace,
+/// strip up to two trailing " — App"-style segments, then reject titles that
+/// are too short, equal to the app name, generic places, or mostly digits
+/// (phone numbers, ids). Returns the display form; callers lower-case for keys.
+fn normalize_window_title(title: &str, app: &str) -> Option<String> {
+    let mut text = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    for _ in 0..2 {
+        match strip_trailing_segment(&text) {
+            Some(stripped) if stripped != text => text = stripped,
+            _ => break,
+        }
+    }
+    let text = text
+        .trim_matches(|character: char| character.is_whitespace() || "-—–•|·:".contains(character))
+        .to_string();
+    let chars = text.chars().count();
+    if chars < OPEN_THREAD_TITLE_MIN_CHARS {
+        return None;
+    }
+    let lowered = text.to_lowercase();
+    if lowered == app.to_lowercase() || is_generic_title(&lowered) || is_digit_heavy(&text) {
+        return None;
+    }
+    if text.contains('@') && !text.contains(' ') {
+        return None;
+    }
+    Some(if chars > OPEN_THREAD_TITLE_MAX_CHARS {
+        text.chars().take(OPEN_THREAD_TITLE_MAX_CHARS).collect()
+    } else {
+        text
+    })
+}
+
+/// Drop a trailing " — Folder" / " - App" / " | Site" segment of 1–48 chars.
+fn strip_trailing_segment(text: &str) -> Option<String> {
+    const SEPARATORS: &[&str] = &[" — ", " – ", " - ", " | ", " • ", " · "];
+    let (position, separator) = SEPARATORS
+        .iter()
+        .filter_map(|separator| text.rfind(separator).map(|position| (position, *separator)))
+        .max_by_key(|(position, _)| *position)?;
+    let head = text[..position].trim_end();
+    let tail = text[position + separator.len()..].trim();
+    let tail_chars = tail.chars().count();
+    if head.is_empty() || tail_chars == 0 || tail_chars > 48 {
+        return None;
+    }
+    Some(head.to_string())
+}
+
+fn is_generic_title(lowered: &str) -> bool {
+    GENERIC_WINDOW_TITLES.iter().any(|generic| {
+        lowered == *generic
+            || lowered
+                .strip_prefix(generic)
+                .is_some_and(|rest| !rest.starts_with(char::is_alphanumeric))
+    })
+}
+
+/// Half or more of the alphanumeric characters are digits: a phone number, an
+/// id, a timestamp. Such a title never names work and often names a person.
+fn is_digit_heavy(text: &str) -> bool {
+    let alphanumeric = text.chars().filter(char::is_ascii_alphanumeric).count();
+    let digits = text.chars().filter(char::is_ascii_digit).count();
+    alphanumeric > 0 && digits * 2 >= alphanumeric
+}
+
+fn top_apps(apps: &BTreeMap<String, usize>) -> Vec<String> {
+    let mut ranked = apps
+        .iter()
+        .filter(|(app, _)| !app.is_empty())
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
+    ranked
+        .into_iter()
+        .take(2)
+        .map(|(app, _)| app.clone())
+        .collect()
+}
+
+fn resolve_thread_label(
+    context: &ThreadContext,
+    latest_title: Option<&str>,
+    apps: &[String],
+) -> Option<String> {
+    let _ = latest_title;
+    let _ = apps;
+    if context.label.trim().is_empty() {
+        return None;
+    }
+    Some(context.label.clone())
+}
+
+fn semantic_action_evidence_from_row(row: &ThreadActionRow) -> NextActionEvidence {
+    NextActionEvidence {
+        id: format!("semantic-action:{}", row.id),
+        kind: "semantic-action".to_string(),
+        label: action_label(&row.verb, row.object.as_deref(), row.app_name.as_deref()),
+        occurred_at: Some(row.ts_start.clone()),
+        destination: EvidenceDestination {
+            surface: EvidenceSurface::Timeline,
+            record_id: Some(row.id),
+            timestamp: Some(row.ts_start.clone()),
+        },
+    }
 }
 
 fn open_thread_kind_allowed(kind: &ArtifactKind) -> bool {
     matches!(
         kind,
-        ArtifactKind::PullRequest
-            | ArtifactKind::Issue
-            | ArtifactKind::Ticket
-            | ArtifactKind::Doc
-            | ArtifactKind::FilePath
-            | ArtifactKind::Branch
+        ArtifactKind::PullRequest | ArtifactKind::Issue | ArtifactKind::Ticket | ArtifactKind::Doc
     )
 }
 
@@ -1874,6 +2226,154 @@ fn open_thread_label(
             .map(|title| format!("document “{title}”")),
         _ => None,
     }
+}
+
+// ─── Corroboration: typed commitments × captured work ────────────────────────
+
+/// Attach the captured work that matches a user-authored commitment, and fold
+/// the matching thread card into the commitment so they never compete. Matching
+/// is deterministic: two shared significant tokens, or one shared identifier.
+fn corroborate_with_threads(
+    inputs: &mut [CandidateInput],
+    threads: &[ThreadSummary],
+    now: DateTime<Utc>,
+) {
+    if threads.is_empty() {
+        return;
+    }
+    let mut folded: Vec<(String, String, String)> = Vec::new(); // (thread key, identity, title)
+    for candidate in inputs.iter_mut() {
+        if !candidate.user_authored
+            || !matches!(
+                candidate.source,
+                CandidateSource::ExplicitCommitment
+                    | CandidateSource::Deadline
+                    | CandidateSource::ScheduledPreparation
+                    | CandidateSource::OpenLoop
+            )
+        {
+            continue;
+        }
+        let tokens = significant_tokens(&format!("{} {}", candidate.title, candidate.summary));
+        let Some(thread) = threads
+            .iter()
+            .filter(|thread| tokens_corroborate(&tokens, &thread.tokens))
+            .max_by(|left, right| {
+                left.sessions
+                    .cmp(&right.sessions)
+                    .then_with(|| left.last_seen.cmp(&right.last_seen))
+            })
+        else {
+            continue;
+        };
+        let idle_hours = now
+            .signed_duration_since(thread.last_seen)
+            .num_hours()
+            .max(0);
+        candidate.why_now.push_str(&format!(
+            " Captured work matching this: {} session{} on {} day{} recently, last {} ago ({}).",
+            thread.sessions,
+            if thread.sessions == 1 { "" } else { "s" },
+            thread.days,
+            if thread.days == 1 { "" } else { "s" },
+            humanize_hours(idle_hours),
+            thread.label
+        ));
+        for item in &thread.evidence {
+            let mut item = item.clone();
+            item.kind = "captured-work".to_string();
+            item.label = format!("Captured work: {}", item.label);
+            candidate.evidence.push(item);
+        }
+        candidate.relevance = 1.0;
+        candidate.strength = (candidate.strength + 0.05).min(1.0);
+        folded.push((
+            thread.key.clone(),
+            candidate.identity_key.clone(),
+            candidate.title.clone(),
+        ));
+    }
+    // The matched thread card takes the commitment's identity and title so the
+    // deduplicator merges the two into one card with both supporting sources.
+    for candidate in inputs.iter_mut() {
+        if candidate.source != CandidateSource::OpenThread {
+            continue;
+        }
+        let Some(series) = candidate.feedback_identity_key.as_deref() else {
+            continue;
+        };
+        if let Some((_, identity, title)) = folded.iter().find(|(key, _, _)| key == series) {
+            candidate.identity_key = identity.clone();
+            candidate.title = title.clone();
+            candidate.feedback_identity_key = None;
+        }
+    }
+}
+
+const TOKEN_STOPWORDS: &[&str] = &[
+    "the", "and", "for", "with", "this", "that", "from", "into", "about", "after", "before",
+    "your", "their", "there", "then", "than", "them", "they", "have", "will", "when", "what",
+    "prepare", "draft", "review", "finish", "write", "update", "send", "make", "create", "start",
+    "resume", "continue", "return", "check", "open", "close", "next", "today", "tomorrow", "week",
+    "weekly", "daily", "notes", "note", "file", "document", "work",
+];
+
+/// Lower-cased content tokens: ASCII words of four or more characters that are
+/// not stopwords, plus overlapping bigrams of CJK runs so unspaced scripts can
+/// match too.
+fn significant_tokens(text: &str) -> HashSet<String> {
+    let mut tokens = HashSet::new();
+    let mut cjk_run = String::new();
+    let flush_cjk = |run: &mut String, tokens: &mut HashSet<String>| {
+        let chars: Vec<char> = run.chars().collect();
+        if chars.len() >= 2 {
+            for pair in chars.windows(2) {
+                tokens.insert(pair.iter().collect());
+            }
+        }
+        run.clear();
+    };
+    for character in text.chars() {
+        if is_cjk(character) {
+            cjk_run.push(character);
+        } else {
+            flush_cjk(&mut cjk_run, &mut tokens);
+        }
+    }
+    flush_cjk(&mut cjk_run, &mut tokens);
+    for word in text.to_lowercase().split(|character: char| {
+        !(character.is_ascii_alphanumeric() || character == '-' || character == '_')
+    }) {
+        let word = word.trim_matches(|character: char| character == '-' || character == '_');
+        if word.chars().count() >= 4 && !TOKEN_STOPWORDS.contains(&word) {
+            tokens.insert(word.to_string());
+        }
+    }
+    tokens
+}
+
+fn is_cjk(character: char) -> bool {
+    matches!(character as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
+}
+
+fn tokens_corroborate(left: &HashSet<String>, right: &HashSet<String>) -> bool {
+    let shared = left.intersection(right).collect::<Vec<_>>();
+    if shared.len() >= CORROBORATION_MIN_SHARED_TOKENS {
+        return true;
+    }
+    shared.iter().any(|token| looks_like_identifier(token))
+}
+
+/// A ticket key (`eng-42`), a file name (`plan.md`), or any token that mixes
+/// letters and digits and is at least six characters long.
+fn looks_like_identifier(token: &str) -> bool {
+    let has_digit = token.chars().any(|character| character.is_ascii_digit());
+    let has_alpha = token
+        .chars()
+        .any(|character| character.is_ascii_alphabetic());
+    token.contains('.') && has_alpha
+        || (has_digit && has_alpha && (token.contains('-') || token.chars().count() >= 6))
 }
 
 fn humanize_hours(hours: i64) -> String {
@@ -1996,11 +2496,12 @@ async fn record_run(
     state: &Arc<AppState>,
     mode: &str,
     context_provided: bool,
-    candidates_shown: usize,
+    shown: &[RankedNextAction],
     candidates_rejected: usize,
     candidates_deduplicated: usize,
     feedback_suppressed: usize,
 ) -> anyhow::Result<()> {
+    let run_id = Uuid::new_v4().to_string();
     let mut tx = state.db.begin_immediate_with_retry().await?;
     sqlx::query(
         "INSERT INTO next_action_runs
@@ -2008,17 +2509,97 @@ async fn record_run(
           candidates_deduplicated, feedback_suppressed)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
-    .bind(Uuid::new_v4().to_string())
+    .bind(&run_id)
     .bind(mode)
     .bind(context_provided)
-    .bind(i64::try_from(candidates_shown).unwrap_or(i64::MAX))
+    .bind(i64::try_from(shown.len()).unwrap_or(i64::MAX))
     .bind(i64::try_from(candidates_rejected).unwrap_or(i64::MAX))
     .bind(i64::try_from(candidates_deduplicated).unwrap_or(i64::MAX))
     .bind(i64::try_from(feedback_suppressed).unwrap_or(i64::MAX))
     .execute(&mut **tx.conn())
     .await?;
+    // Content-free ledger of what was shown, so calibration can be measured
+    // against later ratings without storing a single title.
+    for (index, candidate) in shown.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO next_action_shown
+             (run_id, candidate_id, source_kind, confidence_label, score, rank)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(&run_id)
+        .bind(&candidate.id)
+        .bind(source_kind(candidate.source))
+        .bind(&candidate.confidence_label)
+        .bind(candidate.score.clamp(0.0, 1.0))
+        .bind(i64::try_from(index + 1).unwrap_or(i64::MAX))
+        .execute(&mut **tx.conn())
+        .await?;
+    }
     tx.commit().await?;
     Ok(())
+}
+
+fn source_kind(source: CandidateSource) -> &'static str {
+    match source {
+        CandidateSource::ExplicitCommitment => "explicit-commitment",
+        CandidateSource::Deadline => "deadline",
+        CandidateSource::ScheduledPreparation => "scheduled-preparation",
+        CandidateSource::OpenLoop => "open-loop",
+        CandidateSource::UserRoutine => "user-routine",
+        CandidateSource::SavedQuery => "saved-query",
+        CandidateSource::ChangedBlocker => "changed-blocker",
+        CandidateSource::DecisionFollowUp => "decision-follow-up",
+        CandidateSource::OpenThread => "open-thread",
+        CandidateSource::WorkGraph => "work-graph",
+    }
+}
+
+/// Latest rating per candidate, aggregated per source class. Positive is
+/// `helpful` or `done`; negative is any dismissal. `later` is neutral.
+async fn source_feedback_priors(
+    state: &Arc<AppState>,
+) -> anyhow::Result<HashMap<String, SourcePriorRow>> {
+    let rows = sqlx::query_as::<_, SourcePriorRow>(
+        "WITH latest AS (
+             SELECT source_kind, action,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY candidate_id
+                        ORDER BY created_at DESC, id DESC
+                    ) AS row_number
+             FROM next_action_feedback
+         )
+         SELECT source_kind,
+                SUM(CASE WHEN action IN ('helpful', 'done') THEN 1 ELSE 0 END) AS positive,
+                SUM(CASE WHEN action IN ('dismiss', 'not-useful', 'wrong', 'never') THEN 1 ELSE 0 END) AS negative
+         FROM latest
+         WHERE row_number = 1
+         GROUP BY source_kind",
+    )
+    .fetch_all(&state.db.pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.source_kind.clone(), row))
+        .collect())
+}
+
+/// Shift a candidate's score by the owner's track record with its source
+/// class: Beta(2, 2) prior on the kept rate, centred at 0.5, bounded to
+/// ±`FEEDBACK_PRIOR_MAX_SHIFT`. Transparent in the rank explanation.
+fn apply_source_prior(candidate: &mut RankedNextAction, prior: Option<&SourcePriorRow>) {
+    let Some(prior) = prior else { return };
+    let rated = prior.positive + prior.negative;
+    if rated < FEEDBACK_PRIOR_MIN_RATED {
+        return;
+    }
+    let kept_rate = (prior.positive as f64 + 2.0) / (rated as f64 + 4.0);
+    let shift = ((kept_rate - 0.5) * 2.0 * FEEDBACK_PRIOR_MAX_SHIFT)
+        .clamp(-FEEDBACK_PRIOR_MAX_SHIFT, FEEDBACK_PRIOR_MAX_SHIFT);
+    candidate.score = (candidate.score + shift).clamp(0.0, 1.0);
+    candidate.rank_explanation.push_str(&format!(
+        " · your feedback on this kind: kept {} of {}",
+        prior.positive, rated
+    ));
 }
 
 fn parse_tags(value: Option<&str>) -> Option<Vec<String>> {
@@ -2289,15 +2870,29 @@ mod tests {
         app: &str,
         title: Option<&str>,
         artifacts: &str,
-    ) -> ArtifactActionRow {
-        ArtifactActionRow {
+    ) -> ThreadActionRow {
+        ThreadActionRow {
             id,
             ts_start: ts_start.to_string(),
             verb: "clicked".to_string(),
             object: Some("Files changed".to_string()),
             app_name: Some(app.to_string()),
             window_title: title.map(ToOwned::to_owned),
+            document_path: None,
             artifacts: artifacts.to_string(),
+        }
+    }
+
+    fn title_row(id: i64, ts_start: &str, app: &str, title: &str) -> ThreadActionRow {
+        ThreadActionRow {
+            id,
+            ts_start: ts_start.to_string(),
+            verb: "clicked".to_string(),
+            object: None,
+            app_name: Some(app.to_string()),
+            window_title: Some(title.to_string()),
+            document_path: None,
+            artifacts: "[]".to_string(),
         }
     }
 
@@ -2367,7 +2962,7 @@ mod tests {
                 r#"[{"kind":"branch","value":"main","confidence":0.48}]"#,
             ),
         ];
-        let batch = open_thread_candidates_from_rows(&rows, None, now);
+        let (batch, _) = open_thread_candidates_from_rows(&rows, None, now);
         assert_eq!(batch.candidates.len(), 1, "{:?}", batch.candidates);
         let thread = &batch.candidates[0];
         assert_eq!(thread.source, CandidateSource::OpenThread);
@@ -2390,11 +2985,13 @@ mod tests {
         // Still active an hour ago: not "where you left off" yet.
         let active_now = parse_datetime("2026-07-28T07:00:00Z").unwrap();
         assert!(open_thread_candidates_from_rows(&rows, None, active_now)
+            .0
             .candidates
             .is_empty());
-        // Four days idle: no longer a fresh thread.
-        let long_ago = parse_datetime("2026-08-01T12:00:00Z").unwrap();
+        // Five days idle: no longer a fresh thread.
+        let long_ago = parse_datetime("2026-08-02T12:00:00Z").unwrap();
         assert!(open_thread_candidates_from_rows(&rows, None, long_ago)
+            .0
             .candidates
             .is_empty());
     }
@@ -2434,11 +3031,15 @@ mod tests {
             artifact_row(2, "2026-07-27T09:10:00Z", "Arc", None, doc),
             artifact_row(3, "2026-07-28T06:00:00Z", "Arc", None, doc),
         ];
-        let batch = open_thread_candidates_from_rows(&untitled, None, now);
-        assert!(batch.candidates.is_empty());
-        assert_eq!(
-            batch.rejected_count, 1,
-            "an unnameable thread is rejected, not guessed"
+        let (batch, summaries) = open_thread_candidates_from_rows(&untitled, None, now);
+        assert!(
+            batch.candidates.is_empty(),
+            "an opaque document id with no title cannot be named: {:?}",
+            batch.candidates
+        );
+        assert!(
+            summaries.is_empty(),
+            "nor does it become a corroboration thread"
         );
     }
 
@@ -2512,6 +3113,257 @@ mod tests {
         assert_eq!(
             action_label("switched_to", None, Some("Arc")),
             "switched to in Arc"
+        );
+    }
+
+    #[test]
+    fn window_titles_normalize_to_the_work_they_name() {
+        assert_eq!(
+            normalize_window_title("main_body.pdf — decode-attention-traffic-law", "Code")
+                .as_deref(),
+            Some("main_body.pdf")
+        );
+        assert_eq!(
+            normalize_window_title(
+                "  Launch   plan - Google Docs - Microsoft Edge ",
+                "Microsoft Edge"
+            )
+            .as_deref(),
+            Some("Launch plan")
+        );
+        assert_eq!(
+            normalize_window_title("Jiaheng Lu（私信） - PennNetworks", "Slack").as_deref(),
+            Some("Jiaheng Lu（私信）")
+        );
+        // Places, app names, digits, and addresses are not work.
+        assert_eq!(
+            normalize_window_title("收件箱 • me@example.com", "Outlook"),
+            None
+        );
+        assert_eq!(normalize_window_title("Inbox (12)", "Mail"), None);
+        assert_eq!(normalize_window_title("Claude", "Claude"), None);
+        assert_eq!(normalize_window_title("10686571240085", "Messages"), None);
+        assert_eq!(normalize_window_title("me@example.com", "Mail"), None);
+        assert_eq!(normalize_window_title("Short", "Code"), None);
+        // A long file path keeps its own name, not the folder.
+        assert!(is_digit_heavy("2026-07-28 14:08"));
+        assert!(!is_digit_heavy("ENG-42 login fix"));
+    }
+
+    #[test]
+    fn title_threads_merge_across_apps_and_ignore_civitas_itself() {
+        let now = parse_datetime("2026-07-28T12:00:00Z").unwrap();
+        let rows = vec![
+            // Day 1: a note edited in Code, then previewed.
+            title_row(1, "2026-07-27T09:00:00Z", "Code", "main.pdf — thesis"),
+            title_row(2, "2026-07-27T09:15:00Z", "Code", "main.pdf — thesis"),
+            title_row(3, "2026-07-27T09:40:00Z", "Preview", "main.pdf"),
+            // Day 2: back to it this morning, last touch six hours ago.
+            title_row(4, "2026-07-28T05:30:00Z", "Code", "main.pdf — thesis"),
+            title_row(5, "2026-07-28T06:00:00Z", "Code", "main.pdf — thesis"),
+            // Civitas' own window never becomes a thread.
+            title_row(
+                6,
+                "2026-07-27T10:00:00Z",
+                "Civitas Desktop",
+                "Next actions — Civitas",
+            ),
+            title_row(
+                7,
+                "2026-07-28T06:05:00Z",
+                "Civitas Desktop",
+                "Next actions — Civitas",
+            ),
+            title_row(
+                8,
+                "2026-07-27T11:00:00Z",
+                "Civitas Desktop",
+                "Next actions — Civitas",
+            ),
+            // A single-day burst is activity, not an interrupted thread.
+            title_row(9, "2026-07-28T05:00:00Z", "Slack", "#eng-reviews - Acme"),
+            title_row(10, "2026-07-28T05:10:00Z", "Slack", "#eng-reviews - Acme"),
+            title_row(11, "2026-07-28T05:20:00Z", "Slack", "#eng-reviews - Acme"),
+        ];
+        let (batch, summaries) = open_thread_candidates_from_rows(&rows, None, now);
+        assert_eq!(batch.candidates.len(), 1, "{:?}", batch.candidates);
+        let thread = &batch.candidates[0];
+        assert_eq!(thread.title, "Return to “main.pdf”");
+        assert!(
+            thread.summary.contains("in Code and Preview"),
+            "{}",
+            thread.summary
+        );
+        assert_eq!(thread.occurrences, 2);
+        assert_eq!(
+            thread.feedback_identity_key.as_deref(),
+            Some("title:main.pdf")
+        );
+        assert!(summaries
+            .iter()
+            .all(|summary| !summary.key.contains("civitas")));
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.key == "title:#eng-reviews"));
+    }
+
+    #[test]
+    fn typed_commitments_are_corroborated_by_matching_captured_work() {
+        let now = parse_datetime("2026-07-28T12:00:00Z").unwrap();
+        let rows = vec![
+            title_row(
+                1,
+                "2026-07-27T09:00:00Z",
+                "Code",
+                "atlas launch brief.md — atlas",
+            ),
+            title_row(
+                2,
+                "2026-07-27T09:20:00Z",
+                "Code",
+                "atlas launch brief.md — atlas",
+            ),
+            title_row(
+                3,
+                "2026-07-28T05:30:00Z",
+                "Code",
+                "atlas launch brief.md — atlas",
+            ),
+            title_row(
+                4,
+                "2026-07-28T06:00:00Z",
+                "Code",
+                "atlas launch brief.md — atlas",
+            ),
+        ];
+        let (batch, summaries) = open_thread_candidates_from_rows(&rows, None, now);
+        assert_eq!(batch.candidates.len(), 1);
+
+        let mut commitment = memory(&["commitment"], "Finish the Atlas launch brief");
+        commitment.source_context = Some(r#"{"projectKey":"project:atlas"}"#.to_string());
+        let MemoryCandidateDecision::Candidate(commitment) = memory_candidate(commitment, now)
+        else {
+            panic!("commitment");
+        };
+        let mut unrelated = memory(&["commitment"], "Renew the office parking permit");
+        unrelated.id = 8;
+        let MemoryCandidateDecision::Candidate(unrelated) = memory_candidate(unrelated, now) else {
+            panic!("unrelated");
+        };
+        let mut inputs = vec![commitment, unrelated];
+        inputs.extend(batch.candidates);
+        corroborate_with_threads(&mut inputs, &summaries, now);
+
+        let commitment = &inputs[0];
+        assert_eq!(commitment.relevance, 1.0);
+        assert!(
+            commitment.why_now.contains("Captured work matching this"),
+            "{}",
+            commitment.why_now
+        );
+        assert!(commitment
+            .evidence
+            .iter()
+            .any(|item| item.kind == "captured-work"));
+        let unrelated = &inputs[1];
+        assert!(!unrelated.why_now.contains("Captured work"));
+        assert_eq!(unrelated.evidence.len(), 1);
+        // The thread card took the commitment's identity, so ranking merges them.
+        let thread = &inputs[2];
+        assert_eq!(thread.identity_key, commitment.identity_key);
+        assert_eq!(thread.title, commitment.title);
+        let ranked = inputs
+            .into_iter()
+            .map(|input| rank_candidate(input, now).expect("ranks"))
+            .collect::<Vec<_>>();
+        let (deduplicated, merged) = deduplicate_ranked(ranked);
+        assert_eq!(merged, 1);
+        let card = deduplicated
+            .iter()
+            .find(|card| card.title == "Finish the Atlas launch brief")
+            .expect("merged card");
+        assert_eq!(card.supporting_sources.len(), 2);
+    }
+
+    #[test]
+    fn shared_identifiers_and_cjk_bigrams_count_as_corroboration() {
+        let a = significant_tokens("Fix ENG-42 before the demo");
+        let b = significant_tokens("ENG-42 login regression — Linear");
+        assert!(
+            tokens_corroborate(&a, &b),
+            "one shared ticket key is enough"
+        );
+        let c = significant_tokens("Prepare the weekly brief");
+        let d = significant_tokens("Weekly standup notes");
+        assert!(
+            !tokens_corroborate(&c, &d),
+            "generic words do not corroborate"
+        );
+        let e = significant_tokens("分析page size对latency的影响");
+        let f = significant_tokens("分析page size — notes");
+        assert!(tokens_corroborate(&e, &f));
+    }
+
+    #[test]
+    fn source_prior_is_bounded_transparent_and_needs_a_sample() {
+        let now = parse_datetime("2026-07-26T12:00:00Z").unwrap();
+        let mut first = memory(&["commitment"], "Prepare the weekly brief");
+        first.source_context = Some(r#"{"projectKey":"project:atlas"}"#.to_string());
+        let MemoryCandidateDecision::Candidate(first) = memory_candidate(first, now) else {
+            panic!("candidate");
+        };
+        let ranked = rank_candidate(first, now).unwrap();
+        let base = ranked.score;
+
+        let mut too_few = ranked.clone();
+        apply_source_prior(
+            &mut too_few,
+            Some(&SourcePriorRow {
+                source_kind: "explicit-commitment".into(),
+                positive: 2,
+                negative: 0,
+            }),
+        );
+        assert_eq!(too_few.score, base, "two ratings are not a sample");
+
+        let mut liked = ranked.clone();
+        apply_source_prior(
+            &mut liked,
+            Some(&SourcePriorRow {
+                source_kind: "explicit-commitment".into(),
+                positive: 30,
+                negative: 0,
+            }),
+        );
+        // Beta(2, 2): 30 of 30 kept gives (32 / 34 − 0.5) × 0.16 ≈ +0.0706,
+        // approaching but never reaching the ±0.08 bound.
+        let expected_lift = ((32.0 / 34.0) - 0.5) * 2.0 * FEEDBACK_PRIOR_MAX_SHIFT;
+        assert!((liked.score - (base + expected_lift).min(1.0)).abs() < 1e-9);
+        assert!(liked.rank_explanation.contains("kept 30 of 30"));
+
+        let mut disliked = ranked.clone();
+        apply_source_prior(
+            &mut disliked,
+            Some(&SourcePriorRow {
+                source_kind: "explicit-commitment".into(),
+                positive: 0,
+                negative: 30,
+            }),
+        );
+        assert!((disliked.score - (base - expected_lift).max(0.0)).abs() < 1e-9);
+
+        let mut mixed = ranked.clone();
+        apply_source_prior(
+            &mut mixed,
+            Some(&SourcePriorRow {
+                source_kind: "explicit-commitment".into(),
+                positive: 3,
+                negative: 3,
+            }),
+        );
+        assert!(
+            (mixed.score - base).abs() < 1e-9,
+            "an even record leaves the score alone"
         );
     }
 

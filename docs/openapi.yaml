@@ -4615,6 +4615,26 @@ components:
       - label
       - aliases
       type: object
+    NextActionCalibrationBucket:
+      properties:
+        kept:
+          type: integer
+        keptRate:
+          nullable: true
+          type: number
+        label:
+          type: string
+        rated:
+          type: integer
+        shown:
+          type: integer
+      required:
+      - label
+      - shown
+      - rated
+      - kept
+      - keptRate
+      type: object
     NextActionEvidence:
       properties:
         destination:
@@ -4707,6 +4727,10 @@ components:
           items:
             $ref: '#/components/schemas/NextActionSourceQuality'
           type: array
+        calibration:
+          items:
+            $ref: '#/components/schemas/NextActionCalibrationBucket'
+          type: array
         candidatesDeduplicated:
           type: integer
         candidatesRejected:
@@ -4762,6 +4786,7 @@ components:
       - candidatesDeduplicated
       - feedbackSuppressed
       - bySource
+      - calibration
       type: object
     NextActionSourceQuality:
       properties:

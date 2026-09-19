@@ -147,14 +147,17 @@ adapted to the current local architecture as a pull-based feature.
 Candidates come from grounded local signals: explicit commitments, deadlines,
 routines, and open loops you typed; owner-enabled saved-search follow-ups;
 blockers whose subject later changed state; decisions you were party to that
-show no recorded follow-through; artifacts such as pull requests, tickets, and
-documents you returned to across several captured sessions and then left; and
-repeated work-graph transitions. Every source is deterministic and local. No
-model runs while candidates are generated or ranked, and the two behavioural
-sources work without any AI provider configured. Saved-search follow-ups are
-opt-in, interval-bounded, and reopen the exact local query and filters. The
-ranker considers evidence strength, recency, confidence, duplication, feedback,
-cooldowns, and ambiguity. It suppresses expired, unsupported, sensitive, or
+show no recorded follow-through; work you returned to across several captured
+sessions and then left, named by the pull request, ticket, file, or window
+title it was done in; and repeated work-graph transitions. A commitment you
+typed that matches captured work shows that work as evidence on the same card.
+Every source is deterministic and local. No model runs while candidates are
+generated or ranked, and the two behavioural sources work without any AI
+provider configured. Saved-search follow-ups are opt-in, interval-bounded, and
+reopen the exact local query and filters. The ranker considers evidence
+strength, recency, confidence, duplication, feedback, cooldowns, and ambiguity,
+and after a few ratings it learns, within a bounded and explained margin, which
+kinds of suggestion you keep. It suppresses expired, unsupported, sensitive, or
 high-risk candidates. The full policy is documented in
 [Next Actions](docs/NEXT_ACTIONS.md).
 

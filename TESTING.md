@@ -269,9 +269,23 @@ Use the synthetic evaluation corpus and adversarial fixtures.
   with no AI provider configured.
 - [ ] A deadline or preparation saved more than 45 days ahead surfaces when it
   becomes due (freshness follows the anchor, not the authoring time).
-- [ ] Open threads require at least two captured sessions, three actions, a
-  two-hour span, and a last touch between 2 and 72 hours ago; an artifact
-  without an honest label is rejected, not guessed.
+- [ ] Open threads require at least two substantial captured sessions on two
+  distinct days, three actions, a two-hour span, and a last touch between 2
+  and 96 hours ago; a context without an honest label is rejected, not
+  guessed.
+- [ ] Open threads are named from artifacts, then file names, then normalised
+  window titles: the same document seen in two apps is one thread naming both
+  apps; Civitas' own windows, generic places (`Inbox`, `New tab`, `Settings`),
+  digit-heavy titles, and address-like titles never become threads.
+- [ ] A typed commitment whose words match captured work gains a "Captured
+  work matching this" sentence and `captured-work` evidence that opens the
+  Timeline, and merges with the matching open thread into one card listing
+  both supporting sources; unrelated commitments are untouched.
+- [ ] After at least three ratings on a source class, later cards of that
+  class shift by at most ±0.08 and the rank explanation shows "your feedback
+  on this kind: kept N of M"; below three ratings nothing changes.
+- [ ] Every non-shadow pull writes one `next_action_shown` row per returned
+  card (id, source, label, score, rank only); shadow pulls write none.
 - [ ] Decision follow-ups require a transcript-attributed decision (or a
   screen-sourced one with a verbatim rationale), a resolvable moment, and no
   later state for the subject; a later state removes the card.
@@ -306,6 +320,9 @@ Use the synthetic evaluation corpus and adversarial fixtures.
   deduplicates repeated ratings to the latest rating per candidate, reports
   `insufficient-data` below 20 ratings, and reports `passes` only at or above
   80% helpfulness.
+- [ ] `GET /next-actions/quality` returns `calibration[]` with shown, rated,
+  kept, and `keptRate` per confidence label, joined to the latest rating per
+  candidate.
 - [ ] The quality response never includes candidate IDs, titles, evidence,
   prompts, or captured content, and ambient delivery remains disabled even
   when the pull-based helpfulness gate passes.

@@ -272,10 +272,13 @@ pub fn rank_candidate(
         0.42
     };
     let ambiguity_penalty = ambiguity_penalty(&normalized);
+    // A guarded action (one that names sending, editing, publishing…) already
+    // pays through `interruption_cost`; the risk term is kept small so the
+    // same signal is not charged twice. Civitas never executes either way.
     let risk_penalty = if sensitive {
         0.30
     } else if guarded {
-        0.12
+        0.06
     } else {
         0.0
     };
@@ -724,12 +727,21 @@ mod tests {
         assert!(first.rank_explanation.contains("evidence"));
     }
 
+    /// Fixture-relative clock: the fixtures are dated July 2026, and ranking
+    /// against the real clock made these tests fail on staleness once 45 days
+    /// had passed, before reaching the behaviour they exist to check.
+    fn fixture_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-07-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[test]
     fn one_signal_graph_guess_is_rejected() {
         let mut candidate = graph_candidate();
         candidate.evidence = evidence(1);
         candidate.occurrences = 1;
-        let now = Utc::now();
+        let now = fixture_now();
         assert_eq!(
             rank_candidate(candidate, now),
             Err(RejectionReason::InsufficientEvidence)
@@ -741,7 +753,7 @@ mod tests {
         let mut candidate = graph_candidate();
         candidate.title = "Submit the medical diagnosis".to_string();
         assert_eq!(
-            rank_candidate(candidate, Utc::now()),
+            rank_candidate(candidate, fixture_now()),
             Err(RejectionReason::SensitiveDomain)
         );
     }
@@ -751,7 +763,7 @@ mod tests {
         let mut candidate = graph_candidate();
         candidate.evidence[0].label = "Reviewed the medical diagnosis".to_string();
         assert_eq!(
-            rank_candidate(candidate, Utc::now()),
+            rank_candidate(candidate, fixture_now()),
             Err(RejectionReason::SensitiveDomain)
         );
     }
@@ -780,7 +792,7 @@ mod tests {
             let mut candidate = graph_candidate();
             candidate.title = title.to_string();
             assert_eq!(
-                rank_candidate(candidate, Utc::now()),
+                rank_candidate(candidate, fixture_now()),
                 Err(expected_reason),
                 "expected a safety abstention for {title}"
             );
@@ -796,7 +808,7 @@ mod tests {
         candidate.explicitness = 1.0;
         candidate.urgency = 1.0;
         candidate.strength = 1.0;
-        let ranked = rank_candidate(candidate, Utc::now()).unwrap();
+        let ranked = rank_candidate(candidate, fixture_now()).unwrap();
         assert_eq!(ranked.risk, "high-impact");
         assert_eq!(ranked.safety_state, "explicit-review");
         assert_eq!(ranked.confidence_label, "Review");
@@ -858,7 +870,7 @@ mod tests {
         candidate.title = "Rotate the production API key".to_string();
         candidate.user_authored = true;
         assert_eq!(
-            rank_candidate(candidate, Utc::now()),
+            rank_candidate(candidate, fixture_now()),
             Err(RejectionReason::SecretMaterial)
         );
     }
@@ -967,7 +979,7 @@ mod tests {
         let mut candidate = graph_candidate();
         candidate.last_seen = "2020-01-01T00:00:00Z".to_string();
         assert_eq!(
-            rank_candidate(candidate, Utc::now()),
+            rank_candidate(candidate, fixture_now()),
             Err(RejectionReason::Stale)
         );
     }

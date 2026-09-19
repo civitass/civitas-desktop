@@ -847,6 +847,264 @@ async fn actual_route_surfaces_an_interrupted_artifact_thread_from_captured_acti
     assert_eq!(after["feedbackSuppressedCount"], 1);
 }
 
+async fn insert_title_action(
+    database: &DatabaseManager,
+    at: DateTime<Utc>,
+    app: &str,
+    title: &str,
+) {
+    sqlx::query(
+        "INSERT INTO semantic_actions
+         (ts_start, ts_end, verb, app_name, window_title, artifacts, event_count, mining_version)
+         VALUES (?1, ?1, 'clicked', ?2, ?3, '[]', 1, 1)",
+    )
+    .bind(at.to_rfc3339())
+    .bind(app)
+    .bind(title)
+    .execute(&database.pool)
+    .await
+    .expect("insert synthetic title action");
+}
+
+/// Real capture rarely carries URLs; window titles carry most threads. A
+/// document worked on in two apps across two days, left six hours ago, must
+/// surface as one thread named after the document, without any artifact.
+#[tokio::test]
+async fn actual_route_surfaces_a_title_thread_across_apps_without_artifacts() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    let yesterday = now - chrono::Duration::hours(27);
+    for (offset_minutes, application, title) in [
+        (0, "Code", "main.pdf — thesis"),
+        (12, "Code", "main.pdf — thesis"),
+        (30, "Preview", "main.pdf"),
+    ] {
+        insert_title_action(
+            &database,
+            yesterday + chrono::Duration::minutes(offset_minutes),
+            application,
+            title,
+        )
+        .await;
+    }
+    for offset_minutes in [0, 20] {
+        insert_title_action(
+            &database,
+            now - chrono::Duration::hours(6) - chrono::Duration::minutes(offset_minutes),
+            "Code",
+            "main.pdf — thesis",
+        )
+        .await;
+    }
+    // Civitas' own window and a generic inbox never become threads.
+    for offset_hours in [26, 5] {
+        insert_title_action(
+            &database,
+            now - chrono::Duration::hours(offset_hours),
+            "Civitas Desktop",
+            "Next actions — Civitas",
+        )
+        .await;
+        insert_title_action(
+            &database,
+            now - chrono::Duration::hours(offset_hours),
+            "Mail",
+            "Inbox (3)",
+        )
+        .await;
+    }
+
+    let (status, body) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let actions = body["actions"].as_array().expect("actions");
+    assert_eq!(actions.len(), 1, "{body}");
+    let thread = &actions[0];
+    assert_eq!(thread["source"], "open-thread");
+    assert_eq!(thread["title"], "Return to “main.pdf”");
+    assert!(thread["summary"]
+        .as_str()
+        .unwrap()
+        .contains("in Code and Preview"));
+    assert_eq!(thread["evidence"].as_array().unwrap().len(), 5);
+    assert!(!body.to_string().contains("Inbox"));
+}
+
+/// A typed commitment and the captured work that matches it become one card
+/// with both sources, carrying the captured moments as evidence.
+#[tokio::test]
+async fn actual_route_corroborates_a_commitment_with_matching_captured_work() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO memories
+         (content, source, source_context, tags, importance, scope, created_at, updated_at)
+         VALUES ('Finish the Atlas launch brief', 'user', ?1, '[\"commitment\"]', 0.9,
+                 'personal', ?2, ?2)",
+    )
+    .bind(json!({"projectKey": "project:atlas"}).to_string())
+    .bind(now.to_rfc3339())
+    .execute(&database.pool)
+    .await
+    .expect("insert commitment");
+    for (hours_ago, minutes) in [(30, 0), (30, 15), (6, 0), (6, 20)] {
+        insert_title_action(
+            &database,
+            now - chrono::Duration::hours(hours_ago) - chrono::Duration::minutes(minutes),
+            "Code",
+            "atlas launch brief.md — atlas",
+        )
+        .await;
+    }
+
+    let (_, body) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let actions = body["actions"].as_array().expect("actions");
+    assert_eq!(actions.len(), 1, "commitment and thread must merge: {body}");
+    let card = &actions[0];
+    assert_eq!(card["title"], "Finish the Atlas launch brief");
+    assert_eq!(body["deduplicatedCount"], 1);
+    let supporting = card["supportingSources"].as_array().unwrap();
+    assert!(supporting
+        .iter()
+        .any(|source| source == "explicit-commitment"));
+    assert!(supporting.iter().any(|source| source == "open-thread"));
+    assert!(card["whyNow"]
+        .as_str()
+        .unwrap()
+        .contains("Captured work matching this"));
+    assert!(card["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(
+            |item| item["kind"] == "captured-work" && item["destination"]["surface"] == "timeline"
+        ));
+    assert_eq!(card["rankFactors"]["contextRelevance"], 1.0);
+}
+
+/// Owner feedback on a source class moves later scores of that class, is
+/// transparent in the explanation, and the quality report measures how often
+/// each confidence label was kept.
+#[tokio::test]
+async fn feedback_prior_and_calibration_learn_from_the_owners_ratings() {
+    let (app, database, _directory) = setup_route().await;
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO memories
+         (content, source, source_context, tags, importance, scope, created_at, updated_at)
+         VALUES ('Prepare the weekly project brief', 'user', ?1, '[\"commitment\"]', 0.9,
+                 'personal', ?2, ?2)",
+    )
+    .bind(json!({"projectKey": "project:atlas"}).to_string())
+    .bind(now.to_rfc3339())
+    .execute(&database.pool)
+    .await
+    .expect("insert commitment");
+
+    let (_, first) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let base = first["actions"][0]["score"].as_f64().unwrap();
+    let shown: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM next_action_shown")
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(shown, 1, "each shown card is logged content-free");
+    let logged_title: Option<String> =
+        sqlx::query_scalar("SELECT candidate_id FROM next_action_shown LIMIT 1")
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert!(logged_title.is_some_and(|value| value.starts_with("next-")));
+
+    // Three other commitment cards were dismissed earlier: the class prior
+    // turns negative and the visible card's score drops, with the reason shown.
+    for index in 0..3 {
+        sqlx::query(
+            "INSERT INTO next_action_feedback (candidate_id, source_kind, action)
+             VALUES (?1, 'explicit-commitment', 'dismiss')",
+        )
+        .bind(format!("next-{index:024x}"))
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    }
+    let (_, after) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions?limit=6&mode=pull")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let card = &after["actions"][0];
+    let shifted = card["score"].as_f64().unwrap();
+    assert!(shifted < base, "negative class record must lower the score");
+    assert!(base - shifted <= 0.08 + 1e-9);
+    assert!(card["rankExplanation"]
+        .as_str()
+        .unwrap()
+        .contains("your feedback on this kind: kept 0 of 3"));
+
+    // Rate the shown card itself as done: calibration counts it as kept.
+    let candidate_id = card["id"].as_str().unwrap();
+    let (feedback_status, _) = route_json(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/next-actions/feedback")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "candidateId": candidate_id,
+                    "source": "explicit-commitment",
+                    "action": "done"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(feedback_status, StatusCode::OK);
+    let (_, quality) = route_json(
+        &app,
+        Request::builder()
+            .uri("/next-actions/quality")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let calibration = quality["calibration"].as_array().expect("calibration");
+    assert_eq!(calibration.len(), 1, "{quality}");
+    assert_eq!(calibration[0]["label"], "High");
+    assert_eq!(calibration[0]["shown"], 1);
+    assert_eq!(calibration[0]["rated"], 1);
+    assert_eq!(calibration[0]["kept"], 1);
+    assert_eq!(calibration[0]["keptRate"], 1.0);
+    assert!(
+        !quality.to_string().contains(candidate_id),
+        "aggregate response must never disclose candidate IDs"
+    );
+}
+
 #[tokio::test]
 async fn actual_route_surfaces_a_decision_follow_up_until_a_later_state_is_recorded() {
     let (app, database, _directory) = setup_route().await;

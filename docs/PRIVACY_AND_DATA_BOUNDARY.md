@@ -143,13 +143,19 @@ cadence.
 
 The two behavioural Next Actions sources are equally local. Open threads are
 computed from the structured artifact references (pull request, issue, ticket,
-document, file, branch) and timestamps already stored beside captured actions;
-they never read typed-text samples, run a model, or leave SQLite. Decision
-follow-ups read only grounded knowledge-graph decision claims and the captured
-moment they point at. Both run the same secret-material and sensitive-domain
-abstention as every other inferred candidate, and a `done` rating that closes a
-commitment updates only the memory row the owner wrote. The policy is
-documented in [Next Actions](NEXT_ACTIONS.md).
+document), file names, window titles, app names, and timestamps already stored
+beside captured actions and already shown on the Timeline; they never read
+typed-text samples, run a model, or leave SQLite. Window titles that are
+generic, mostly digits, or address-like are dropped before they can name a
+person, and Civitas' own windows are ignored. Decision follow-ups read only
+grounded knowledge-graph decision claims and the captured moment they point at.
+Both run the same secret-material and sensitive-domain abstention as every
+other inferred candidate, and a `done` rating that closes a commitment updates
+only the memory row the owner wrote. Each pull also records which candidate ids
+it showed, with their source, confidence label, score, and rank, so the local
+quality report can measure calibration; that ledger holds no titles, evidence,
+or captured content and is deleted with the rest of the local database. The
+policy is documented in [Next Actions](NEXT_ACTIONS.md).
 
 When a remote profile is used, the provider necessarily receives the request:
 system instructions, the user's prompt, and the selected evidence or media.
