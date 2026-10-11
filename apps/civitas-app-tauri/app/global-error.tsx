@@ -137,8 +137,8 @@ export default function GlobalError({
                 opacity: 0.68,
               }}
             >
-              Try again or reload Civitas. This recovery screen does not send
-              your work or error details to a remote service.
+              Your work remains on this Mac. A diagnostic was saved only to your
+              local Civitas log.
             </p>
             <div style={buttonRowStyle}>
               <button onClick={reset} style={primaryButtonStyle} type="button">

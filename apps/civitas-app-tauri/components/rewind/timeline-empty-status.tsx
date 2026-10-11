@@ -16,16 +16,13 @@ export function TimelineEmptyStatus({
   relaunchRequired = false,
 }: TimelineEmptyStatusProps) {
   const isCaptureDisabled = frameStatus === "disabled";
-  const isRecording = frameStatus === "ok";
   const captureState = relaunchRequired
     ? "relaunch-required"
     : permissionRequired
       ? "permission-required"
       : isCaptureDisabled
         ? "disabled"
-        : isRecording
-          ? "recording"
-          : "unavailable";
+        : "recording";
 
   return (
     <div
@@ -50,15 +47,10 @@ export function TimelineEmptyStatus({
           <MonitorOff className="size-3.5 shrink-0" aria-hidden="true" />
           <span>Screen recording is off</span>
         </>
-      ) : !isRecording ? (
-        <>
-          <MonitorOff className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>Screen capture status is unavailable</span>
-        </>
       ) : (
         <>
           <span className="relative flex size-2 shrink-0" aria-hidden="true">
-            <span className="absolute inline-flex size-full motion-safe:animate-ping rounded-full bg-success opacity-75" />
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-75" />
             <span className="relative inline-flex size-2 rounded-full bg-success" />
           </span>
           <span>Recording… Timeline will appear soon</span>

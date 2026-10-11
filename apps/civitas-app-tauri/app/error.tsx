@@ -5,49 +5,71 @@
 "use client";
 
 import { useEffect } from "react";
-import { AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { commands } from "@/lib/utils/tauri";
 import { useFeedbackStore } from "@/lib/stores/feedback-store";
 
-export default function RouteError({
+export default function GlobalError({
   error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const openFeedback = useFeedbackStore((state) => state.openFeedback);
+  const openFeedback = useFeedbackStore((s) => s.openFeedback);
 
   useEffect(() => {
-    // Error messages and stacks can contain captured text or credentials. Use
-    // the same content-free diagnostic contract as the root error boundary.
+    // Explicitly extract Error fields — JSON.stringify(error) returns `{}` because
+    // `message`, `stack`, `name` are non-enumerable, so the Tauri log bridge
+    // was dropping every useful detail into the void.
+    const serialized = {
+      name: error?.name,
+      message: error?.message,
+      digest: error?.digest,
+      stack: error?.stack,
+    };
     console.error("Civitas route error boundary activated.");
-    void commands.writeBrowserLogs([
+    // Also bypass the buffered console interceptor and write straight to the
+    // Rust log — the buffer flush may never fire if the error boundary
+    // unmounts Providers before the 2s flush timer. In that failure mode,
+    // error.tsx logs but the entry
+    // never reached ~/.civitas/civitas-app.<date>.log).
+    commands.writeBrowserLogs([
       {
         level: "error",
-        message: "ui_error_boundary category=route_render_failure details_redacted=true",
+        message: "Civitas route error boundary activated.",
       },
     ]).catch(() => {});
   }, [error]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
-      <section aria-labelledby="route-error-title" className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <AlertCircle aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
-        </div>
-        <h1 id="route-error-title" className="text-2xl font-semibold">This view needs to recover</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Try opening it again. Reload Civitas if the problem continues.
-          Error details are kept out of support messages unless you choose to share them.
+    <div className="flex items-center justify-center h-screen bg-neutral-950 text-white">
+      <div className="flex flex-col items-center space-y-4 p-8">
+        <img src="/128x128.png" alt="Civitas" className="w-16 h-16 opacity-60" />
+        <h2 className="text-lg font-medium">Something went wrong</h2>
+        <p className="text-sm text-neutral-400 text-center max-w-sm">
+          {error.message || "An unexpected error occurred"}
         </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <Button type="button" onClick={reset}>Try again</Button>
-          <Button type="button" variant="outline" onClick={() => window.location.reload()}>Reload Civitas</Button>
-          <Button type="button" variant="outline" onClick={() => openFeedback("A view stopped working. Describe what you were doing before it happened.")}>Report problem</Button>
+        <div className="flex gap-3">
+          <button
+            onClick={reset}
+            className="px-4 py-2 bg-white text-black rounded-md text-sm font-medium hover:bg-neutral-200 transition-colors"
+          >
+            Try again
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-neutral-800 text-white rounded-md text-sm font-medium hover:bg-neutral-700 transition-colors"
+          >
+            Reload
+          </button>
+          <button
+            onClick={() => openFeedback(`App crashed: ${error.message || "unknown error"}`)}
+            className="px-4 py-2 bg-neutral-800 text-white rounded-md text-sm font-medium hover:bg-neutral-700 transition-colors"
+          >
+            Report crash
+          </button>
         </div>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }

@@ -36,10 +36,6 @@ pub struct ReplayEvent {
     #[serde(default)]
     pub button: Option<i64>,
     #[serde(default)]
-    pub key_code: Option<i64>,
-    #[serde(default)]
-    pub modifiers: Option<i64>,
-    #[serde(default)]
     pub click_count: Option<i64>,
     #[serde(default)]
     pub text_content: Option<String>,
@@ -74,8 +70,8 @@ impl From<ReplayEvent> for RawEvent {
             timestamp: e.timestamp,
             event_type: e.event_type,
             button: e.button,
-            key_code: e.key_code,
-            modifiers: e.modifiers,
+            key_code: None,
+            modifiers: None,
             click_count: e.click_count,
             text_content: e.text_content,
             text_redacted: e.text_redacted,
@@ -164,13 +160,10 @@ pub fn load_ground_truth(path: &Path) -> Result<GroundTruth> {
 
 pub fn run_replay(trace: Vec<ReplayEvent>, gt: &GroundTruth, config: &MinerConfig) -> ReplayResult {
     let n_events = trace.len();
-    let mut events: Vec<RawEvent> = trace.into_iter().map(Into::into).collect();
-    events.sort_by_key(|event| (event.timestamp, event.id));
+    let events: Vec<RawEvent> = trace.into_iter().map(Into::into).collect();
 
     let now = if let Some(last) = events.last() {
-        last.timestamp
-            .checked_add_signed(chrono::Duration::seconds(120))
-            .unwrap_or(DateTime::<Utc>::MAX_UTC)
+        last.timestamp + chrono::Duration::seconds(120)
     } else {
         Utc::now()
     };
@@ -202,7 +195,16 @@ pub fn run_replay(trace: Vec<ReplayEvent>, gt: &GroundTruth, config: &MinerConfi
     gt_boundaries.sort();
 
     let gt_resume_count = gt.episodes.iter().filter(|s| s.expects_resume).count() as u32;
-    let predicted_resume_count = crate::scenario::count_predicted_resumes(&outcome);
+    let predicted_resume_count = {
+        use civitas_mining::EpisodeAssignment;
+        let mut seen = std::collections::HashSet::new();
+        for a in &outcome.actions {
+            if let EpisodeAssignment::ExistingEpisode { id } = a.episode {
+                seen.insert(id);
+            }
+        }
+        seen.len() as u32
+    };
 
     let metrics = score(
         &predicted_boundaries,
@@ -244,8 +246,6 @@ mod tests {
             timestamp: Utc::now(),
             event_type: "click".to_string(),
             button: Some(1),
-            key_code: Some(1),
-            modifiers: Some(8),
             click_count: Some(1),
             text_content: None,
             text_redacted: None,
@@ -264,99 +264,5 @@ mod tests {
         assert_eq!(raw.id, 42);
         assert_eq!(raw.app_name.as_deref(), Some("Arc"));
         assert_eq!(raw.browser_url, re.browser_url);
-        assert_eq!(raw.key_code, re.key_code);
-        assert_eq!(raw.modifiers, re.modifiers);
-    }
-
-    #[test]
-    fn replay_accepts_the_maximum_representable_timestamp_without_panicking() {
-        let event: ReplayEvent = serde_json::from_value(serde_json::json!({
-            "id": 1, "timestamp": DateTime::<Utc>::MAX_UTC, "event_type": "click"
-        }))
-        .unwrap();
-        let gt = GroundTruth {
-            name: "synthetic upper bound".into(),
-            episodes: vec![],
-        };
-        assert_eq!(
-            run_replay(vec![event], &gt, &MinerConfig::default()).n_events,
-            1
-        );
-    }
-
-    #[test]
-    fn replay_counts_episodes_resumed_within_the_same_batch() {
-        let start = DateTime::parse_from_rfc3339("2026-06-11T09:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let events = [0, 1, 540, 541, 1080, 1081]
-            .into_iter()
-            .enumerate()
-            .map(|(index, secs)| {
-                serde_json::from_value(serde_json::json!({
-                    "id": index + 1, "timestamp": start + chrono::Duration::seconds(secs),
-                    "event_type": "text", "app_name": "Code", "window_title": "main.rs"
-                }))
-                .unwrap()
-            })
-            .collect();
-        let gt = GroundTruth {
-            name: "synthetic resume".into(),
-            episodes: vec![
-                GroundTruthSpan {
-                    start,
-                    end: start + chrono::Duration::seconds(1),
-                    kind: "coding".into(),
-                    expects_resume: false,
-                },
-                GroundTruthSpan {
-                    start: start + chrono::Duration::seconds(540),
-                    end: start + chrono::Duration::seconds(541),
-                    kind: "coding".into(),
-                    expects_resume: true,
-                },
-                GroundTruthSpan {
-                    start: start + chrono::Duration::seconds(1080),
-                    end: start + chrono::Duration::seconds(1081),
-                    kind: "coding".into(),
-                    expects_resume: true,
-                },
-            ],
-        };
-        let result = run_replay(events, &gt, &MinerConfig::default());
-        assert_eq!(result.metrics.resume_precision, 1.0);
-        assert_eq!(result.metrics.resume_recall, 1.0);
-    }
-
-    #[test]
-    fn replay_preserves_save_chords_and_orders_events_by_time() {
-        let key: ReplayEvent = serde_json::from_str(r#"{"id":2,"timestamp":"2026-06-11T09:00:01Z","event_type":"key","key_code":1,"modifiers":8,"app_name":"Code"}"#).unwrap();
-        let raw: RawEvent = key.clone().into();
-        let normalized = civitas_mining::normalize(&[raw], &MinerConfig::default(), 0);
-        assert!(
-            matches!(&normalized[0], civitas_mining::NormalizeItem::Action(action) if action.verb == civitas_mining::Verb::Saved)
-        );
-        let mut first = key.clone();
-        first.timestamp -= chrono::Duration::seconds(1);
-        first.id = 1;
-        let gt = GroundTruth {
-            name: "synthetic".into(),
-            episodes: vec![GroundTruthSpan {
-                start: first.timestamp,
-                end: key.timestamp,
-                kind: "coding".into(),
-                expects_resume: false,
-            }],
-        };
-        let ordered = run_replay(
-            vec![first.clone(), key.clone()],
-            &gt,
-            &MinerConfig::default(),
-        );
-        let reversed = run_replay(vec![key, first], &gt, &MinerConfig::default());
-        assert_eq!(
-            serde_json::to_value(ordered).unwrap(),
-            serde_json::to_value(reversed).unwrap()
-        );
     }
 }

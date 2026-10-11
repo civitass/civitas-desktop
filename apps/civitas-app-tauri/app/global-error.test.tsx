@@ -44,7 +44,7 @@ describe("GlobalError", () => {
     expect(
       screen.queryByText(/private captured window title/i),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/does not send your work or error details/i)).toBeVisible();
+    expect(screen.getByText(/your work remains on this Mac/i)).toBeVisible();
 
     await waitFor(() => {
       expect(mocks.writeBrowserLogs).toHaveBeenCalledOnce();

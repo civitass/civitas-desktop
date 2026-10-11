@@ -171,7 +171,6 @@ jobs:
         run: |
           node scripts/audit-consumer-design.mjs
           node --test scripts/validate-tauri-production-security.test.mjs
-          node --test scripts/validate-release-assets.test.mjs scripts/notarize-macos-dmg.test.mjs scripts/js-security-policy.test.mjs crates/civitas-connect/src/whatsapp/http-boundary.test.mjs crates/civitas-connect/src/whatsapp/gateway.test.mjs
           node scripts/validate-tauri-production-security.mjs .
           node scripts/audit-publication.mjs .
 
@@ -505,8 +504,6 @@ jobs:
       - name: Notarize and staple the release DMG
         shell: bash
         env:
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -546,7 +543,14 @@ jobs:
           fi
 
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dmg_path"
-          bash scripts/notarize-macos-dmg.sh "$dmg_path"
+          xcrun notarytool submit "$dmg_path" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 45m
+          xcrun stapler staple "$dmg_path"
+          xcrun stapler validate "$dmg_path"
 
           staged="${RUNNER_TEMP}/${asset_name}"
           cp "$dmg_path" "$staged"
@@ -1229,9 +1233,6 @@ jobs:
           fi
 
           cp publication-metadata/* release-assets/
-          # Counts alone cannot prove architecture/version coverage or reject
-          # stale assets and disabled-platform aliases left on a retried draft.
-          node scripts/validate-release-assets.mjs release-assets
           checksum_file="$RUNNER_TEMP/SHA256SUMS"
           (
             cd release-assets

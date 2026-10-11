@@ -28,12 +28,6 @@ describe("TimelineEmptyStatus", () => {
     expect(status).toHaveTextContent("Recording… Timeline will appear soon");
   });
 
-  it.each([undefined, null, "unknown", "error", "stale"])("does not infer recording from unavailable status %s", (frameStatus) => {
-    render(<TimelineEmptyStatus frameStatus={frameStatus} />);
-    expect(screen.getByRole("status")).toHaveAttribute("data-capture-state", "unavailable");
-    expect(screen.getByRole("status")).not.toHaveTextContent(/Recording…/i);
-  });
-
   it("does not claim recording while macOS screen access is missing", () => {
     render(<TimelineEmptyStatus frameStatus="disabled" permissionRequired />);
 

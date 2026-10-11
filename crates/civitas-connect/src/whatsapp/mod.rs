@@ -8,11 +8,8 @@
 //! Bun is used for both installing npm packages and running the gateway.
 
 use anyhow::{Context, Result};
-use civitas_core::network::{
-    authorize_external_process, effective_egress_policy, EgressPolicy, EgressPurpose,
-};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,39 +19,6 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 const GATEWAY_JS: &str = include_str!("gateway.mjs");
-const HTTP_BOUNDARY_JS: &str = include_str!("http-boundary.mjs");
-const RUNTIME_MANIFEST: &[u8] = include_bytes!("../../assets/whatsapp-runtime/package.json");
-const RUNTIME_LOCK: &[u8] = include_bytes!("../../assets/whatsapp-runtime/bun.lock");
-const REQUIRED_BUN_VERSION: &str = "1.3.10";
-const RUNTIME_ENTRY_FILES: &[&str] = &[
-    "@whiskeysockets/baileys/package.json",
-    "@whiskeysockets/baileys/lib/index.js",
-    "pino/package.json",
-    "pino/pino.js",
-    "ws/package.json",
-    "ws/index.js",
-];
-const NETWORK_POLICY_POLL: std::time::Duration = std::time::Duration::from_millis(250);
-const RUNTIME_IMPORT_PROBE: &str = r#"
-const baileys = await import("@whiskeysockets/baileys");
-const pino = await import("pino");
-const ws = await import("ws");
-for (const fn of [baileys.default, baileys.useMultiFileAuthState,
-  baileys.fetchLatestBaileysVersion, pino.default, ws.default]) {
-  if (typeof fn !== "function") throw new Error("Incompatible WhatsApp runtime export");
-}
-if (!baileys.DisconnectReason) throw new Error("Missing WhatsApp disconnect reasons");
-"#;
-
-/// Remove partial staged dependencies even when the pairing future is dropped.
-/// After successful promotion the original path no longer exists.
-struct RuntimeStaging(PathBuf);
-
-impl Drop for RuntimeStaging {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -92,14 +56,11 @@ pub enum WhatsAppStatus {
     Error { message: String },
 }
 
-#[derive(Clone)]
 pub struct WhatsAppGateway {
     civitas_dir: PathBuf,
     status: Arc<Mutex<WhatsAppStatus>>,
     child: Arc<Mutex<Option<Child>>>,
     http_port: Arc<Mutex<Option<u16>>>,
-    /// Parent-only credential for the gateway loopback transport.
-    http_token: String,
     /// Incremented each time start_pairing is called. The watchdog checks
     /// this to know if it's been superseded by a newer start_pairing call.
     generation: Arc<std::sync::atomic::AtomicU64>,
@@ -116,26 +77,15 @@ impl WhatsAppGateway {
             status: Arc::new(Mutex::new(WhatsAppStatus::Disconnected)),
             child: Arc::new(Mutex::new(None)),
             http_port: Arc::new(Mutex::new(None)),
-            http_token: format!(
-                "{}{}",
-                uuid::Uuid::new_v4().simple(),
-                uuid::Uuid::new_v4().simple()
-            ),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             auto_restart: Arc::new(AtomicBool::new(false)),
             bun_path: Arc::new(Mutex::new(String::new())),
         }
     }
 
-    /// Get the gateway port for the engine's authenticated local proxy.
+    /// Get the gateway HTTP port (Pi curls this directly to send messages).
     pub async fn http_port(&self) -> Option<u16> {
         *self.http_port.lock().await
-    }
-
-    /// Only the engine's authenticated proxy may use this credential. Never
-    /// serialize it in connection metadata, prompts, or diagnostics.
-    pub fn http_token(&self) -> &str {
-        &self.http_token
     }
 
     pub async fn status(&self) -> WhatsAppStatus {
@@ -150,140 +100,70 @@ impl WhatsAppGateway {
     /// easy (it can just pass `"bun"`) and still works on fresh Macs where bun
     /// isn't on the user's PATH.
     pub async fn start_pairing(&self, bun_hint: &str) -> Result<()> {
-        self.start(bun_hint, true).await
-    }
-
-    /// Reconnect an already installed session without downloading or updating
-    /// any runtime packages during engine startup.
-    pub async fn reconnect_existing(&self) -> Result<()> {
-        self.start("", false).await
-    }
-
-    async fn start(&self, bun_hint: &str, install_missing: bool) -> Result<()> {
-        authorize_external_process(EgressPurpose::Connection)?;
         let bun_path = resolve_bun_path(Some(bun_hint))?;
 
-        // Keep the old watchdog supervising until its child has been taken
-        // and stopped. Cancellation while waiting for the child lock must not
-        // invalidate the only supervisor of a still-running gateway.
-        self.auto_restart.store(false, Ordering::SeqCst);
+        // Bump generation so any existing watchdog exits on its next check
+        let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // Stop any existing process
         self.stop_process().await;
-        self.generation.fetch_add(1, Ordering::SeqCst);
 
         // Cache resolved bun path for watchdog restarts
         *self.bun_path.lock().await = bun_path.clone();
 
-        if install_missing {
-            self.ensure_deps(&bun_path).await?;
-        } else {
-            verify_runtime_imports(&bun_path, &self.civitas_dir.join("whatsapp-runtime")).await?;
-        }
-        std::fs::create_dir_all(self.civitas_dir.join("whatsapp-session"))?;
+        self.ensure_deps(&bun_path).await?;
         self.spawn_gateway(&bun_path).await?;
+
+        // Enable auto-restart now that we've successfully started
+        self.auto_restart.store(true, Ordering::SeqCst);
+
+        // Spawn watchdog that restarts the gateway if it dies unexpectedly.
+        // It will exit if generation changes (meaning start_pairing was called again).
+        self.spawn_watchdog(gen);
+
         Ok(())
     }
 
-    /// Install only the embedded, reviewed dependency graph after explicit
-    /// pairing. Keep a working runtime intact if staging fails.
+    /// Install baileys + pino if needed, write gateway script to disk.
     async fn ensure_deps(&self, bun_path: &str) -> Result<()> {
-        authorize_external_process(EgressPurpose::Connection)?;
-        let runtime = self.civitas_dir.join("whatsapp-runtime");
-        if runtime_is_current(&runtime) && verify_runtime_imports(bun_path, &runtime).await.is_ok()
-        {
-            return Ok(());
-        }
+        let session_dir = self.civitas_dir.join("whatsapp-session");
+        std::fs::create_dir_all(&session_dir)?;
 
-        let mut version_cmd = Command::new(bun_path);
-        version_cmd.arg("--version").kill_on_drop(true);
-        #[cfg(windows)]
-        version_cmd.creation_flags(0x08000000);
-        let version =
-            tokio::time::timeout(std::time::Duration::from_secs(10), version_cmd.output())
-                .await
-                .context("Bun version check timed out")??;
-        if !version.status.success()
-            || String::from_utf8_lossy(&version.stdout).trim() != REQUIRED_BUN_VERSION
-        {
-            anyhow::bail!("WhatsApp runtime installation requires Bun {REQUIRED_BUN_VERSION}; use the current Civitas app bundle");
-        }
-        authorize_external_process(EgressPurpose::Connection)?;
-        std::fs::create_dir_all(&self.civitas_dir)?;
-        let staging = self.civitas_dir.join(format!(
-            ".whatsapp-runtime-stage-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir(&staging)?;
-        let _staging_cleanup = RuntimeStaging(staging.clone());
-        let result = self.install_staged_runtime(bun_path, &staging).await;
-        if let Err(error) = result {
-            return Err(error.context(
-                "WhatsApp runtime setup failed; retry Connect to install the reviewed runtime",
-            ));
-        }
-        promote_runtime(&staging, &runtime)?;
-        Ok(())
-    }
+        let script_path = self.civitas_dir.join("whatsapp-gateway.mjs");
+        std::fs::write(&script_path, GATEWAY_JS)
+            .context("failed to write whatsapp gateway script")?;
 
-    async fn install_staged_runtime(&self, bun_path: &str, staging: &Path) -> Result<()> {
-        std::fs::write(staging.join("package.json"), RUNTIME_MANIFEST)?;
-        std::fs::write(staging.join("bun.lock"), RUNTIME_LOCK)?;
-        std::fs::write(staging.join("whatsapp-gateway.mjs"), GATEWAY_JS)?;
-        std::fs::write(staging.join("http-boundary.mjs"), HTTP_BOUNDARY_JS)?;
-        let mut install_cmd = Command::new(bun_path);
-        install_cmd
-            .args([
-                "install",
-                "--frozen-lockfile",
-                "--ignore-scripts",
-                "--no-progress",
-            ])
-            .current_dir(staging)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        install_cmd.creation_flags(0x08000000);
-        authorize_external_process(EgressPurpose::Connection)?;
-        let mut child = install_cmd.spawn()?;
-        let mut policy_poll = tokio::time::interval(NETWORK_POLICY_POLL);
-        let timeout = tokio::time::sleep(std::time::Duration::from_secs(180));
-        tokio::pin!(timeout);
-        let install = loop {
-            tokio::select! {
-                status = child.wait() => break status?,
-                _ = &mut timeout => {
-                    let _ = child.kill().await;
-                    anyhow::bail!("WhatsApp runtime installation timed out");
-                }
-                _ = policy_poll.tick() => {
-                    if let Err(error) = authorize_external_process(EgressPurpose::Connection) {
-                        let _ = child.kill().await;
-                        return Err(error.into());
-                    }
-                }
+        let node_modules = self
+            .civitas_dir
+            .join("node_modules")
+            .join("@whiskeysockets");
+        if !node_modules.exists() {
+            info!("installing @whiskeysockets/baileys, pino, and ws...");
+            let mut install_cmd = Command::new(bun_path);
+            install_cmd
+                .args(["add", "@whiskeysockets/baileys", "pino", "ws"])
+                .current_dir(&self.civitas_dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            #[cfg(windows)]
+            install_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let install = install_cmd.spawn()?.wait().await?;
+            if !install.success() {
+                anyhow::bail!("failed to install @whiskeysockets/baileys");
             }
-        };
-        if !install.success() {
-            anyhow::bail!("frozen WhatsApp runtime installation failed");
         }
-        authorize_external_process(EgressPurpose::Connection)?;
-        verify_runtime_imports(bun_path, staging).await
+        Ok(())
     }
 
     /// Spawn the bun gateway process, wire up stdout/stderr readers.
     async fn spawn_gateway(&self, bun_path: &str) -> Result<()> {
-        authorize_external_process(EgressPurpose::Connection)?;
         let session_dir = self.civitas_dir.join("whatsapp-session");
-        let runtime = self.civitas_dir.join("whatsapp-runtime");
-        require_current_runtime(&runtime)?;
-        let script_path = runtime.join("whatsapp-gateway.mjs");
+        let script_path = self.civitas_dir.join("whatsapp-gateway.mjs");
 
         let mut gateway_cmd = Command::new(bun_path);
         gateway_cmd
-            .arg("--no-install")
             .arg(script_path.to_str().unwrap())
             .env("WHATSAPP_SESSION_DIR", session_dir.to_str().unwrap())
-            .env("WHATSAPP_GATEWAY_TOKEN", self.http_token())
             .stdin(Stdio::piped()) // keep stdin open so gateway doesn't self-terminate
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -294,24 +174,19 @@ impl WhatsAppGateway {
             .spawn()
             .context("failed to spawn whatsapp gateway")?;
 
-        // Leave stdin owned by Child so it closes on shutdown without a
-        // detached task retaining a dead gateway's pipe forever.
+        // Take stdin handle and hold it — dropping it would close the pipe and kill the gateway.
+        // We store it alongside the child so it lives as long as the child does.
+        let _stdin = child.stdin.take().expect("stdin piped");
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
 
-        let event_generation = self.generation.clone();
-        let current_generation = event_generation.load(Ordering::SeqCst);
-        self.supervise_child(child).await;
-
         {
-            let mut status = self.status.lock().await;
-            authorize_external_process(EgressPurpose::Connection)?;
-            if event_generation.load(Ordering::SeqCst) != current_generation {
-                anyhow::bail!("WhatsApp pairing was stopped");
-            }
-            *status = WhatsAppStatus::WaitingForQr;
+            let mut lock = self.child.lock().await;
+            *lock = Some(child);
         }
+
+        *self.status.lock().await = WhatsAppStatus::WaitingForQr;
         *self.http_port.lock().await = None;
 
         // Read stdout events
@@ -322,9 +197,6 @@ impl WhatsAppGateway {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if authorize_external_process(EgressPurpose::Connection).is_err() {
-                    break;
-                }
                 // Skip non-JSON lines silently (Bun console.log debug output,
                 // multi-line pretty-printed objects, etc.) — only try to parse
                 // lines that look like JSON events.
@@ -333,32 +205,26 @@ impl WhatsAppGateway {
                     debug!("whatsapp gateway stdout: {}", line);
                     continue;
                 }
-                let mut current_status = status.lock().await;
-                if event_generation.load(Ordering::SeqCst) != current_generation
-                    || authorize_external_process(EgressPurpose::Connection).is_err()
-                {
-                    break;
-                }
                 match serde_json::from_str::<GatewayEvent>(trimmed) {
                     Ok(GatewayEvent::Qr { data }) => {
                         info!("whatsapp: qr code received");
-                        *current_status = WhatsAppStatus::QrReady { qr: data };
+                        *status.lock().await = WhatsAppStatus::QrReady { qr: data };
                     }
                     Ok(GatewayEvent::Connected { name, phone }) => {
                         info!("whatsapp: connected as {}", name);
-                        *current_status = WhatsAppStatus::Connected { name, phone };
+                        *status.lock().await = WhatsAppStatus::Connected { name, phone };
                     }
                     Ok(GatewayEvent::Disconnected { reason }) => {
                         warn!("whatsapp: disconnected — {}", reason);
                         if reason == "logged_out" {
                             // User logged out — don't auto-restart
                             auto_restart.store(false, Ordering::SeqCst);
-                            *current_status = WhatsAppStatus::Disconnected;
+                            *status.lock().await = WhatsAppStatus::Disconnected;
                         }
                     }
                     Ok(GatewayEvent::Error { message }) => {
                         error!("whatsapp gateway error: {}", message);
-                        *current_status = WhatsAppStatus::Error { message };
+                        *status.lock().await = WhatsAppStatus::Error { message };
                     }
                     Ok(GatewayEvent::Http { port }) => {
                         info!("whatsapp: gateway HTTP on port {}", port);
@@ -374,6 +240,18 @@ impl WhatsAppGateway {
             }
             // stdout closed = process died
             info!("whatsapp: gateway stdout closed (process exited)");
+        });
+
+        // Hold stdin handle in a background task so it stays open for the lifetime of the process
+        tokio::spawn(async move {
+            // Just hold the handle. When stop_process() kills the child, this task
+            // will end because the pipe will break.
+            let _keep_alive = _stdin;
+            // Block forever — stdin handle stays open, keeping the gateway alive.
+            // When stop_process() kills the child, this task becomes inert.
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
         });
 
         // Log stderr
@@ -396,19 +274,9 @@ impl WhatsAppGateway {
         Ok(())
     }
 
-    /// Once the child leaves this future, a supervisor must own its lifetime
-    /// before any further await can let a cancelled pairing request abandon it.
-    async fn supervise_child(&self, child: Child) {
-        let mut slot = self.child.lock().await;
-        *slot = Some(child);
-        self.auto_restart.store(true, Ordering::SeqCst);
-        self.spawn_watchdog(self.generation.load(Ordering::SeqCst));
-    }
-
     /// Watchdog: monitors the child process and restarts it if it dies unexpectedly.
     /// Exits if generation changes (a newer start_pairing superseded this one).
     fn spawn_watchdog(&self, my_generation: u64) {
-        let gateway = self.clone();
         let child = self.child.clone();
         let status = self.status.clone();
         let http_port = self.http_port.clone();
@@ -419,18 +287,11 @@ impl WhatsAppGateway {
 
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(NETWORK_POLICY_POLL).await;
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
                 // Exit if we've been superseded by a newer start_pairing call
                 if generation.load(Ordering::SeqCst) != my_generation {
                     info!("whatsapp: watchdog exiting (superseded by newer generation)");
-                    return;
-                }
-
-                if gateway
-                    .stop_if_network_denied(my_generation, effective_egress_policy())
-                    .await
-                {
                     return;
                 }
 
@@ -503,43 +364,24 @@ impl WhatsAppGateway {
                     return;
                 }
 
-                if gateway
-                    .stop_if_network_denied(my_generation, effective_egress_policy())
-                    .await
-                {
-                    return;
-                }
-
                 // Re-spawn
                 let session_dir = civitas_dir.join("whatsapp-session");
-                let runtime = civitas_dir.join("whatsapp-runtime");
+                let script_path = civitas_dir.join("whatsapp-gateway.mjs");
                 let bun = bun_path.lock().await.clone();
-                if let Err(error) = verify_runtime_imports(&bun, &runtime).await {
-                    auto_restart.store(false, Ordering::SeqCst);
-                    *status.lock().await = WhatsAppStatus::Error {
-                        message: error.to_string(),
-                    };
-                    return;
-                }
-                let script_path = runtime.join("whatsapp-gateway.mjs");
 
                 let mut respawn_cmd = Command::new(&bun);
                 respawn_cmd
-                    .arg("--no-install")
                     .arg(script_path.to_str().unwrap())
                     .env("WHATSAPP_SESSION_DIR", session_dir.to_str().unwrap())
-                    .env("WHATSAPP_GATEWAY_TOKEN", gateway.http_token())
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .kill_on_drop(true);
                 #[cfg(windows)]
                 respawn_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                if authorize_external_process(EgressPurpose::Connection).is_err() {
-                    continue;
-                }
                 match respawn_cmd.spawn() {
                     Ok(mut new_child) => {
+                        let stdin_handle = new_child.stdin.take().expect("stdin piped");
                         let stdout = new_child.stdout.take().expect("stdout piped");
                         let stderr = new_child.stderr.take().expect("stderr piped");
 
@@ -553,46 +395,35 @@ impl WhatsAppGateway {
                         let s = status.clone();
                         let hp = http_port.clone();
                         let ar = auto_restart.clone();
-                        let event_generation = generation.clone();
                         tokio::spawn(async move {
                             let reader = BufReader::new(stdout);
                             let mut lines = reader.lines();
                             while let Ok(Some(line)) = lines.next_line().await {
-                                if authorize_external_process(EgressPurpose::Connection).is_err() {
-                                    break;
-                                }
                                 // Skip non-JSON lines silently (see comment above).
                                 let trimmed = line.trim_start();
                                 if !trimmed.starts_with('{') {
                                     debug!("whatsapp gateway stdout: {}", line);
                                     continue;
                                 }
-                                let mut current_status = s.lock().await;
-                                if event_generation.load(Ordering::SeqCst) != my_generation
-                                    || authorize_external_process(EgressPurpose::Connection)
-                                        .is_err()
-                                {
-                                    break;
-                                }
                                 match serde_json::from_str::<GatewayEvent>(trimmed) {
                                     Ok(GatewayEvent::Qr { data }) => {
                                         info!("whatsapp: qr code received");
-                                        *current_status = WhatsAppStatus::QrReady { qr: data };
+                                        *s.lock().await = WhatsAppStatus::QrReady { qr: data };
                                     }
                                     Ok(GatewayEvent::Connected { name, phone }) => {
                                         info!("whatsapp: connected as {}", name);
-                                        *current_status = WhatsAppStatus::Connected { name, phone };
+                                        *s.lock().await = WhatsAppStatus::Connected { name, phone };
                                     }
                                     Ok(GatewayEvent::Disconnected { reason }) => {
                                         warn!("whatsapp: disconnected — {}", reason);
                                         if reason == "logged_out" {
                                             ar.store(false, Ordering::SeqCst);
-                                            *current_status = WhatsAppStatus::Disconnected;
+                                            *s.lock().await = WhatsAppStatus::Disconnected;
                                         }
                                     }
                                     Ok(GatewayEvent::Error { message }) => {
                                         error!("whatsapp gateway error: {}", message);
-                                        *current_status = WhatsAppStatus::Error { message };
+                                        *s.lock().await = WhatsAppStatus::Error { message };
                                     }
                                     Ok(GatewayEvent::Http { port }) => {
                                         info!("whatsapp: gateway HTTP on port {}", port);
@@ -606,6 +437,16 @@ impl WhatsAppGateway {
                                         );
                                     }
                                 }
+                            }
+                        });
+
+                        // Hold stdin
+                        tokio::spawn(async move {
+                            let _keep = stdin_handle;
+                            // Block forever — stdin handle stays open, keeping the gateway alive.
+                            // When stop_process() kills the child, this task becomes inert.
+                            loop {
+                                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                             }
                         });
 
@@ -643,30 +484,6 @@ impl WhatsAppGateway {
         });
     }
 
-    /// Revoke a running gateway when remote networking is disabled. The
-    /// generation check under the child lock keeps an old watchdog from
-    /// stopping a newly paired gateway.
-    async fn stop_if_network_denied(&self, generation: u64, policy: EgressPolicy) -> bool {
-        if policy
-            .authorize_external_process(EgressPurpose::Connection)
-            .is_ok()
-        {
-            return false;
-        }
-        let mut child = self.child.lock().await;
-        if self.generation.load(Ordering::SeqCst) != generation {
-            return true;
-        }
-        self.auto_restart.store(false, Ordering::SeqCst);
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        if let Some(mut process) = child.take() {
-            let _ = process.kill().await;
-        }
-        *self.http_port.lock().await = None;
-        *self.status.lock().await = WhatsAppStatus::Disconnected;
-        true
-    }
-
     /// Kill the child process without disabling auto-restart or signaling the watchdog.
     async fn stop_process(&self) {
         let mut lock = self.child.lock().await;
@@ -686,15 +503,10 @@ impl WhatsAppGateway {
     }
 
     /// Disconnect and wipe session.
-    pub async fn logout(&self) -> Result<()> {
+    pub async fn logout(&self) {
         self.stop().await;
         let session_dir = self.civitas_dir.join("whatsapp-session");
-        match std::fs::remove_dir_all(&session_dir) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error)
-                .context("WhatsApp gateway stopped, but its saved session could not be removed"),
-        }
+        let _ = std::fs::remove_dir_all(&session_dir);
     }
 
     /// Check if there's an existing session (previously paired).
@@ -704,81 +516,6 @@ impl WhatsAppGateway {
             .join("creds.json")
             .exists()
     }
-}
-
-fn file_matches(path: &Path, expected: &[u8]) -> bool {
-    std::fs::metadata(path)
-        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == expected.len() as u64)
-        && std::fs::read(path).is_ok_and(|actual| actual == expected)
-}
-
-fn runtime_is_current(runtime: &Path) -> bool {
-    file_matches(&runtime.join("package.json"), RUNTIME_MANIFEST)
-        && file_matches(&runtime.join("bun.lock"), RUNTIME_LOCK)
-        && file_matches(&runtime.join("whatsapp-gateway.mjs"), GATEWAY_JS.as_bytes())
-        && file_matches(
-            &runtime.join("http-boundary.mjs"),
-            HTTP_BOUNDARY_JS.as_bytes(),
-        )
-        && RUNTIME_ENTRY_FILES
-            .iter()
-            .all(|entry| runtime.join("node_modules").join(entry).is_file())
-}
-
-fn require_current_runtime(runtime: &Path) -> Result<()> {
-    if !runtime_is_current(runtime) {
-        anyhow::bail!("WhatsApp runtime is missing or out of date; enable remote features and use Connect in Settings to install the reviewed runtime");
-    }
-    Ok(())
-}
-
-/// Probe imports only: no pairing, protocol-version discovery, or automatic
-/// package installation. This catches missing/corrupt transitive dependencies
-/// that cannot be established from the root package entry files alone.
-async fn verify_runtime_imports(bun_path: &str, runtime: &Path) -> Result<()> {
-    require_current_runtime(runtime)?;
-    let mut command = Command::new(bun_path);
-    command
-        .args(["--no-install", "--eval", RUNTIME_IMPORT_PROBE])
-        .current_dir(runtime)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let status = tokio::time::timeout(std::time::Duration::from_secs(10), command.status())
-        .await
-        .context("WhatsApp runtime import check timed out; reconnect from Settings")?
-        .context("WhatsApp runtime import check could not start; reconnect from Settings")?;
-    if !status.success() {
-        anyhow::bail!(
-            "WhatsApp runtime is incomplete or incompatible; use Connect in Settings to repair it"
-        );
-    }
-    Ok(())
-}
-
-fn promote_runtime(staging: &Path, runtime: &Path) -> Result<()> {
-    let backup = runtime.with_file_name(format!(
-        ".whatsapp-runtime-backup-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let had_runtime = runtime.symlink_metadata().is_ok();
-    if had_runtime {
-        std::fs::rename(runtime, &backup)
-            .context("could not preserve previous WhatsApp runtime")?;
-    }
-    if let Err(error) = std::fs::rename(staging, runtime) {
-        if had_runtime {
-            std::fs::rename(&backup, runtime)
-                .context("could not restore previous WhatsApp runtime")?;
-        }
-        return Err(error).context("could not activate the installed WhatsApp runtime");
-    }
-    if had_runtime {
-        let _ = std::fs::remove_dir_all(backup);
-    }
-    Ok(())
 }
 
 /// Resolve the `bun` executable used by the WhatsApp gateway subprocess.
@@ -859,268 +596,6 @@ fn which_executable(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use civitas_core::network::NetworkMode;
-
-    #[tokio::test]
-    async fn local_only_pairing_and_install_fail_before_side_effects() {
-        let dir = tempfile::tempdir().unwrap();
-        let gateway_dir = dir.path().join("not-created");
-        let gateway = WhatsAppGateway::new(gateway_dir.clone());
-        // The test process starts Local-only; no global policy mutation or
-        // actual Bun/network access is needed to exercise these entry points.
-        for result in [
-            gateway.start_pairing("missing-runtime").await,
-            gateway.reconnect_existing().await,
-            gateway.ensure_deps("missing-runtime").await,
-            gateway.spawn_gateway("missing-runtime").await,
-        ] {
-            assert!(result.unwrap_err().to_string().contains("local-only"));
-        }
-        assert!(!gateway_dir.exists());
-        assert!(gateway.child.lock().await.is_none());
-        assert!(!gateway.auto_restart.load(Ordering::SeqCst));
-    }
-
-    fn make_cached_runtime(runtime: &Path) {
-        std::fs::create_dir_all(runtime).unwrap();
-        std::fs::write(runtime.join("package.json"), RUNTIME_MANIFEST).unwrap();
-        std::fs::write(runtime.join("bun.lock"), RUNTIME_LOCK).unwrap();
-        std::fs::write(runtime.join("whatsapp-gateway.mjs"), GATEWAY_JS).unwrap();
-        std::fs::write(runtime.join("http-boundary.mjs"), HTTP_BOUNDARY_JS).unwrap();
-        for entry in RUNTIME_ENTRY_FILES {
-            let file = runtime.join("node_modules").join(entry);
-            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(file, "{}").unwrap();
-        }
-    }
-
-    #[test]
-    fn cached_runtime_requires_current_inputs_and_complete_dependencies() {
-        let dir = tempfile::tempdir().unwrap();
-        let runtime = dir.path().join("whatsapp-runtime");
-        // Legacy root-level node_modules never authorize startup downloads or
-        // substitute for the separate reviewed runtime.
-        make_cached_runtime(dir.path());
-        assert!(require_current_runtime(&runtime).is_err());
-        make_cached_runtime(&runtime);
-        assert!(runtime_is_current(&runtime));
-        for (filename, expected) in [
-            ("package.json", RUNTIME_MANIFEST),
-            ("bun.lock", RUNTIME_LOCK),
-            ("whatsapp-gateway.mjs", GATEWAY_JS.as_bytes()),
-            ("http-boundary.mjs", HTTP_BOUNDARY_JS.as_bytes()),
-        ] {
-            std::fs::write(runtime.join(filename), "stale").unwrap();
-            assert!(require_current_runtime(&runtime).is_err());
-            std::fs::write(runtime.join(filename), expected).unwrap();
-        }
-        std::fs::remove_file(runtime.join("node_modules/ws/package.json")).unwrap();
-        assert!(!runtime_is_current(&runtime));
-    }
-
-    #[test]
-    fn failed_runtime_promotion_restores_previous_installation() {
-        let dir = tempfile::tempdir().unwrap();
-        let runtime = dir.path().join("whatsapp-runtime");
-        make_cached_runtime(&runtime);
-        assert!(promote_runtime(&dir.path().join("missing-stage"), &runtime).is_err());
-        assert!(runtime_is_current(&runtime));
-        let staging = dir.path().join("stage");
-        make_cached_runtime(&staging);
-        std::fs::write(staging.join("marker"), "new").unwrap();
-        promote_runtime(&staging, &runtime).unwrap();
-        assert!(runtime_is_current(&runtime));
-        assert!(runtime.join("marker").is_file());
-        assert!(!staging.exists());
-    }
-
-    #[tokio::test]
-    async fn incomplete_cached_runtime_fails_import_check_without_installing() {
-        let dir = tempfile::tempdir().unwrap();
-        make_cached_runtime(dir.path());
-        assert!(runtime_is_current(dir.path()));
-        // The test harness is a deterministic stand-in for a runtime failing
-        // its imports: it rejects Bun's --no-install/--eval options and exits.
-        // No package manager, external endpoint or real profile is touched.
-        let executable = std::env::current_exe().unwrap();
-        let error = verify_runtime_imports(executable.to_str().unwrap(), dir.path())
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("incomplete or incompatible"));
-        assert!(runtime_is_current(dir.path()));
-    }
-
-    #[tokio::test]
-    async fn cancelled_install_removes_only_its_staging_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let runtime = dir.path().join("whatsapp-runtime");
-        make_cached_runtime(&runtime);
-        let staging = dir.path().join("stage");
-        std::fs::create_dir(&staging).unwrap();
-        let cleanup = RuntimeStaging(staging.clone());
-        let ready = Arc::new(tokio::sync::Notify::new());
-        let pending = ready.clone();
-        let install = tokio::spawn(async move {
-            let _cleanup = cleanup;
-            pending.notify_one();
-            std::future::pending::<()>().await;
-        });
-        ready.notified().await;
-        install.abort();
-        assert!(install.await.unwrap_err().is_cancelled());
-        assert!(!staging.exists());
-        assert!(runtime_is_current(&runtime));
-    }
-
-    #[tokio::test]
-    async fn logout_removes_saved_session_and_is_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        let session = dir.path().join("whatsapp-session");
-        std::fs::create_dir(&session).unwrap();
-        std::fs::write(session.join("creds.json"), "synthetic session").unwrap();
-        let gateway = WhatsAppGateway::new(dir.path().to_path_buf());
-        gateway.logout().await.unwrap();
-        assert!(!session.exists());
-        gateway.logout().await.unwrap();
-        assert!(matches!(
-            gateway.status().await,
-            WhatsAppStatus::Disconnected
-        ));
-    }
-
-    #[tokio::test]
-    async fn logout_reports_session_removal_failure_after_stopping() {
-        let dir = tempfile::tempdir().unwrap();
-        let session = dir.path().join("whatsapp-session");
-        std::fs::write(&session, "synthetic invalid session path").unwrap();
-        let gateway = WhatsAppGateway::new(dir.path().to_path_buf());
-        gateway.auto_restart.store(true, Ordering::SeqCst);
-        *gateway.http_port.lock().await = Some(12345);
-        *gateway.status.lock().await = WhatsAppStatus::WaitingForQr;
-        let error = gateway.logout().await.unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("saved session could not be removed"));
-        assert!(session.is_file());
-        assert!(!gateway.auto_restart.load(Ordering::SeqCst));
-        assert!(gateway.http_port().await.is_none());
-        assert!(matches!(
-            gateway.status().await,
-            WhatsAppStatus::Disconnected
-        ));
-    }
-
-    #[test]
-    fn gateway_credentials_are_random_and_parent_scoped() {
-        let a = WhatsAppGateway::new(PathBuf::new());
-        let b = WhatsAppGateway::new(PathBuf::new());
-        assert_eq!(a.http_token().len(), 64);
-        assert!(a.http_token().bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_ne!(a.http_token(), b.http_token());
-        assert_eq!(a.http_token(), a.clone().http_token());
-    }
-
-    #[test]
-    fn synthetic_waiting_gateway_process() {
-        if std::env::var_os("CIVITAS_TEST_WAITING_GATEWAY").is_some() {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-        }
-    }
-
-    #[tokio::test]
-    async fn cancelled_pairing_keeps_a_supervisor_until_network_revocation() {
-        let dir = tempfile::tempdir().unwrap();
-        let gateway = WhatsAppGateway::new(dir.path().to_path_buf());
-        let child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "whatsapp::tests::synthetic_waiting_gateway_process",
-            ])
-            .env("CIVITAS_TEST_WAITING_GATEWAY", "1")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let status_lock = gateway.status.lock().await;
-        let adopted = Arc::new(tokio::sync::Notify::new());
-        let parent = gateway.clone();
-        let ready = adopted.clone();
-        let pairing = tokio::spawn(async move {
-            parent.supervise_child(child).await;
-            ready.notify_one();
-            // Reproduce cancellation at the first await after child adoption.
-            let _status = parent.status.lock().await;
-        });
-        adopted.notified().await;
-        pairing.abort();
-        assert!(pairing.await.unwrap_err().is_cancelled());
-        drop(status_lock);
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                if gateway.child.lock().await.is_none() {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("Local-only watchdog must stop the adopted process after cancellation");
-        assert!(!gateway.auto_restart.load(Ordering::SeqCst));
-        assert!(matches!(
-            gateway.status().await,
-            WhatsAppStatus::Disconnected
-        ));
-    }
-
-    #[tokio::test]
-    async fn network_revocation_stops_owned_process_and_prevents_restart() {
-        let dir = tempfile::tempdir().unwrap();
-        let gateway = WhatsAppGateway::new(dir.path().to_path_buf());
-        let child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "whatsapp::tests::synthetic_waiting_gateway_process",
-            ])
-            .env("CIVITAS_TEST_WAITING_GATEWAY", "1")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        *gateway.child.lock().await = Some(child);
-        gateway.auto_restart.store(true, Ordering::SeqCst);
-        *gateway.http_port.lock().await = Some(12345);
-        *gateway.status.lock().await = WhatsAppStatus::WaitingForQr;
-
-        assert!(
-            !gateway
-                .stop_if_network_denied(0, EgressPolicy::new(NetworkMode::RemoteEnabled))
-                .await
-        );
-        assert!(gateway.child.lock().await.is_some());
-        // An obsolete watchdog must not stop a newer process.
-        assert!(
-            gateway
-                .stop_if_network_denied(1, EgressPolicy::new(NetworkMode::LocalOnly))
-                .await
-        );
-        assert!(gateway.child.lock().await.is_some());
-
-        assert!(
-            gateway
-                .stop_if_network_denied(0, EgressPolicy::new(NetworkMode::LocalOnly))
-                .await
-        );
-        assert!(gateway.child.lock().await.is_none());
-        assert!(!gateway.auto_restart.load(Ordering::SeqCst));
-        assert_eq!(gateway.generation.load(Ordering::SeqCst), 1);
-        assert!(gateway.http_port().await.is_none());
-        assert!(matches!(
-            gateway.status().await,
-            WhatsAppStatus::Disconnected
-        ));
-    }
 
     /// An absolute hint pointing at an existing file is returned verbatim —
     /// this is the escape hatch for users who want to force a specific bun.

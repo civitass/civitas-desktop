@@ -43,7 +43,6 @@ before the in-process transports that Civitas controls:
 | Batch and live transcription | Remote denied; local Whisper and loopback-compatible transcription remain available |
 | Connection tests, ICS feeds, and workflow connection proxy | Remote denied; filesystem connections and exact loopback endpoints remain available |
 | External MCP | Remote HTTP denied; loopback HTTP allowed; stdio MCP denied because a user-supplied subprocess can open arbitrary sockets |
-| Personal WhatsApp gateway | Pairing, runtime installation, and reconnect denied; active gateway processes are stopped when the mode changes to Local-only |
 | Product analytics and updater | Disabled, even when their individual opt-in remains stored |
 | Assistant-runtime and model downloads | Missing downloads denied; already verified local artifacts remain usable |
 
@@ -65,7 +64,6 @@ features.
 | `127.0.0.1:11435` | Desktop app only | Focus, notifications, app icons, installed-app metadata | Loopback only; route-specific authentication and Host/Origin controls |
 | `127.0.0.1:11434` | External/local provider | Default Ollama-compatible endpoint | Not started by Civitas; profile accepts loopback hosts only |
 | `127.0.0.1:5273` | Optional developer helper | Apple Foundation Models compatibility server | Loopback only; not required for the standard desktop path |
-| `127.0.0.1:3035` or a free fallback port | Optional personal WhatsApp gateway | Internal parent-to-gateway transport | Per-process bearer, exact Host checks, and no browser Origin; callers use scoped engine connection routes |
 
 The consumer application has no LAN-bind setting and no mDNS peer
 advertisement. A stored `listenOnLan` value from an older build is ignored by
@@ -163,7 +161,6 @@ identity paths before Civitas uses the profile.
 | Product analytics | Versioned analytics consent is enabled | PostHog; valid event names plus allowlisted booleans, numeric metrics, and bounded client-protocol metadata |
 | Local crash diagnostics | A native panic occurs | Local log file only; no automatic network request |
 | Optional assistant runtime | User reviews the disclosure in **Settings → AI** and presses **Install runtime** | Integrity-locked packages from `registry.npmjs.org`; ordinary request metadata only, with no capture, prompt, credential, database, or conversation content |
-| Personal WhatsApp | User explicitly pairs in **Settings → Connections**; later reconnection uses only an installed current runtime | Frozen gateway packages from `registry.npmjs.org`; protocol compatibility checks at `raw.githubusercontent.com`; account, contact, message, and media traffic to WhatsApp service hosts under that service's terms |
 | Local model download | User accepts the model disclosure and selects a local feature whose reviewed model is absent | Revision-pinned `huggingface.co`, `github.com`, and their bounded file-delivery redirects; model filename/request metadata only |
 | Deepgram transcription | User enters a Deepgram key and selects it | Audio selected for transcription |
 | Compatible transcription | User explicitly configures the endpoint | Audio selected for transcription |
@@ -177,34 +174,6 @@ Connection credentials stay in the encrypted local secret store. Workflows call
 an authenticated local proxy; the proxy injects a credential after verifying
 the workflow's declared method/path/host scope. A workflow does not receive the
 secret value.
-
-External MCP HTTP requests, notifications, OAuth discovery, and token requests
-do not follow HTTP redirects. Configure the final endpoint URL; a redirect
-cannot authorize a different destination or replay credentials and tool data.
-The browser's explicit OAuth sign-in and its callback remain a separate flow.
-
-Personal WhatsApp pairing starts an external gateway only while remote
-features are enabled. Pairing, dependency installation, and every gateway
-restart check that policy. A running installation or gateway is stopped when
-Local-only is observed by the 250 ms policy check; the saved session remains
-available for a later explicit reconnect. This is not an OS firewall and
-cannot retract bytes sent before revocation is observed.
-
-The gateway's loopback port is private to the engine and requires a fresh
-process bearer; it rejects browser Origins and mismatched Hosts. Clients use
-the engine's authenticated routes under `/connections/whatsapp/`:
-`contacts`, `chats`, `messages`, and `send`. Read access follows the declared connection
-scope; sending requires an explicit matching mutation permission or the
-owner credential. Tokens and private gateway ports are never returned in
-connection listings. Requests and responses are bounded, and the engine
-does not follow redirects to another destination.
-
-Pairing installs the reviewed frozen runtime with lifecycle scripts disabled
-under `whatsapp-runtime/`; account session data remains in
-`whatsapp-session/`. Reconnection on startup requires a complete current
-runtime and cannot install or upgrade packages. A missing or changed runtime
-requires the owner to pair again in Settings. Disconnect stops the gateway
-and removes the session; installed code can remain for later pairing.
 
 ### Credential-injecting connection proxy
 

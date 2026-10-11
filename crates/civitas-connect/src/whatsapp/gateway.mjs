@@ -11,7 +11,7 @@
 //   { "type": "error", "message": "..." }
 //   { "type": "http", "port": 3035 }
 //
-// Parent-only HTTP API (requires the per-process Bearer credential):
+// HTTP API (Pi curls this directly):
 //   POST /send       { "to": "+33612345678", "text": "hello" }
 //   GET  /contacts   returns [{ "id": "...", "name": "John", "phone": "+33612345678" }, ...]
 //   GET  /messages?jid=<jid>&limit=50  returns recent messages for a chat
@@ -23,20 +23,19 @@ import pino from "pino";
 import { join } from "path";
 import { homedir } from "os";
 import { mkdirSync } from "fs";
-import { createGatewayServer, requireGatewayToken } from "./http-boundary.mjs";
+import { createServer } from "http";
+import { URL } from "url";
 
 // Baileys errors carry session paths, protocol internals, and stack frames.
-// Never log the exception value: it can contain private messages or credentials.
-function describeFailure() {
+// The HTTP surface is reachable by anything that can open a loopback socket, so
+// callers get a stable label and the detail goes to the operator's stderr only.
+function describeFailure(err) {
+  console.error("[whatsapp-gateway] request failed:", err);
   return "whatsapp gateway request failed";
 }
 
-const GATEWAY_TOKEN = requireGatewayToken(process.env.WHATSAPP_GATEWAY_TOKEN);
 const SESSION_DIR = process.env.WHATSAPP_SESSION_DIR || join(homedir(), ".civitas", "whatsapp-session");
-const HTTP_PORT = Number(process.env.WHATSAPP_HTTP_PORT || "3035");
-if (!Number.isInteger(HTTP_PORT) || HTTP_PORT < 0 || HTTP_PORT > 65535) {
-  throw new Error("invalid WhatsApp gateway port");
-}
+const HTTP_PORT = parseInt(process.env.WHATSAPP_HTTP_PORT || "3035", 10);
 mkdirSync(SESSION_DIR, { recursive: true });
 
 // Self-terminate when parent process dies.
@@ -65,15 +64,28 @@ if (parentPid && parentPid !== 1) {
 
 let sock = null;
 // In-memory contact store — populated from contacts.update events
-const contactStore = Object.create(null);
+const contactStore = {};
 // In-memory message store — keeps last N messages per chat
 const MAX_MESSAGES_PER_CHAT = 200;
-const messageStore = Object.create(null);
+const messageStore = {};
 // Chat metadata
-const chatStore = Object.create(null);
+const chatStore = {};
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
+}
+
+function toJid(phone) {
+  const cleaned = phone.replace(/[^0-9]/g, "");
+  return cleaned.includes("@") ? cleaned : `${cleaned}@s.whatsapp.net`;
+}
+
+function parseUrl(req) {
+  try {
+    return new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  } catch {
+    return new URL(`http://localhost${req.url}`);
+  }
 }
 
 function contactName(jid) {
@@ -82,17 +94,26 @@ function contactName(jid) {
   return null;
 }
 
-// Authenticate and validate completely before accessing the Baileys connection.
-const server = createGatewayServer(GATEWAY_TOKEN, async (req, res, context) => {
-  const { pathname } = context;
+// HTTP server — Pi curls this directly
+const server = createServer(async (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  const url = parseUrl(req);
+  const pathname = url.pathname;
 
   if (req.method === "POST" && pathname === "/send") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
     try {
-      const { jid, text } = context.message;
+      const { to, text } = JSON.parse(body);
+      if (!to || !text) {
+        res.writeHead(400);
+        return res.end(JSON.stringify({ error: "missing 'to' or 'text'" }));
+      }
       if (!sock) {
         res.writeHead(503);
         return res.end(JSON.stringify({ error: "whatsapp not connected" }));
       }
+      const jid = toJid(to);
       await sock.sendMessage(jid, { text });
       res.writeHead(200);
       return res.end(JSON.stringify({ success: true, to: jid }));
@@ -110,10 +131,8 @@ const server = createGatewayServer(GATEWAY_TOKEN, async (req, res, context) => {
     try {
       const contacts = [];
       for (const [jid, contact] of Object.entries(contactStore)) {
-        // Baileys 7 prefers LID contact IDs; their phoneNumber is the PN JID.
-        const phoneJid = jid.endsWith("@s.whatsapp.net") ? jid : contact.phoneNumber;
-        if (typeof phoneJid !== "string" || !/^[0-9]+@s\.whatsapp\.net$/.test(phoneJid)) continue;
-        const phone = "+" + phoneJid.split("@")[0];
+        if (!jid.endsWith("@s.whatsapp.net")) continue;
+        const phone = "+" + jid.split("@")[0];
         contacts.push({
           id: jid,
           name: contact.name || contact.notify || contact.verifiedName || phone,
@@ -167,7 +186,15 @@ const server = createGatewayServer(GATEWAY_TOKEN, async (req, res, context) => {
       res.writeHead(503);
       return res.end(JSON.stringify({ error: "whatsapp not connected" }));
     }
-    const { jid: targetJid, limit } = context.messages;
+    const jid = url.searchParams.get("jid");
+    const phone = url.searchParams.get("phone");
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+
+    const targetJid = jid || (phone ? toJid(phone) : null);
+    if (!targetJid) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({ error: "provide 'jid' or 'phone' query param" }));
+    }
 
     try {
       const msgs = (messageStore[targetJid] || []).slice(-limit);
@@ -200,57 +227,19 @@ const server = createGatewayServer(GATEWAY_TOKEN, async (req, res, context) => {
 });
 
 server.listen(HTTP_PORT, "127.0.0.1", () => {
-  emit({ type: "http", port: server.address().port });
-});
-server.on("error", () => {
-  emit({ type: "error", message: "whatsapp gateway could not start" });
-  process.exit(1);
+  emit({ type: "http", port: HTTP_PORT });
 });
 
 function storeMessage(jid, msg) {
   if (!messageStore[jid]) messageStore[jid] = [];
-  const messages = messageStore[jid];
-  const existing = msg.id ? messages.findIndex((entry) => entry.id === msg.id) : -1;
-  if (existing >= 0) messages[existing] = msg;
-  else messages.push(msg);
-  // History batches arrive newest first and can overlap live updates. Keep
-  // the newest bounded set, ordered chronologically for GET /messages.
-  messages.sort((a, b) => a.timestamp - b.timestamp);
-  messageStore[jid] = messages.slice(-MAX_MESSAGES_PER_CHAT);
+  messageStore[jid].push(msg);
+  // Trim to max
+  if (messageStore[jid].length > MAX_MESSAGES_PER_CHAT) {
+    messageStore[jid] = messageStore[jid].slice(-MAX_MESSAGES_PER_CHAT);
+  }
   // Update chat metadata
   if (!chatStore[jid]) chatStore[jid] = {};
-  chatStore[jid].updatedAt = Math.max(chatStore[jid].updatedAt || 0, msg.timestamp);
-}
-
-function ingestMessages(messages) {
-  for (const msg of messages || []) {
-    if (!msg?.message) continue;
-    const jid = msg.key?.remoteJid;
-    if (typeof jid !== "string" || !jid || jid === "status@broadcast") continue;
-    const text =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.imageMessage?.caption ||
-      msg.message.videoMessage?.caption ||
-      null;
-    const mediaType =
-      msg.message.imageMessage ? "image" :
-      msg.message.videoMessage ? "video" :
-      msg.message.audioMessage ? "audio" :
-      msg.message.documentMessage ? "document" :
-      msg.message.stickerMessage ? "sticker" :
-      null;
-    const timestamp = Number(msg.messageTimestamp);
-    storeMessage(jid, {
-      id: msg.key.id,
-      fromMe: !!msg.key.fromMe,
-      from: msg.key.fromMe ? "me" : (contactName(jid) || jid.split("@")[0]),
-      text,
-      mediaType,
-      timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Math.floor(Date.now() / 1000),
-      pushName: msg.pushName || null,
-    });
-  }
+  chatStore[jid].updatedAt = msg.timestamp || Date.now();
 }
 
 async function start() {
@@ -289,8 +278,37 @@ async function start() {
         }
       }
     }
-    // The pinned Baileys event is a flat WAMessage[], not nested chat batches.
-    ingestMessages(messages);
+    if (messages) {
+      for (const { messages: msgs } of messages) {
+        for (const msg of msgs) {
+          if (!msg.message) continue;
+          const jid = msg.key.remoteJid;
+          if (!jid || jid === "status@broadcast") continue;
+          const text =
+            msg.message.conversation ||
+            msg.message.extendedTextMessage?.text ||
+            msg.message.imageMessage?.caption ||
+            msg.message.videoMessage?.caption ||
+            null;
+          const mediaType =
+            msg.message.imageMessage ? "image" :
+            msg.message.videoMessage ? "video" :
+            msg.message.audioMessage ? "audio" :
+            msg.message.documentMessage ? "document" :
+            msg.message.stickerMessage ? "sticker" :
+            null;
+          storeMessage(jid, {
+            id: msg.key.id,
+            fromMe: !!msg.key.fromMe,
+            from: msg.key.fromMe ? "me" : (contactName(jid) || jid.split("@")[0]),
+            text,
+            mediaType,
+            timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
+            pushName: msg.pushName || null,
+          });
+        }
+      }
+    }
     emit({ type: "history-sync", contacts: Object.keys(contactStore).length, chats: Object.keys(chatStore).length });
   });
 
@@ -312,8 +330,37 @@ async function start() {
   });
 
   // Track incoming/outgoing messages
-  sock.ev.on("messages.upsert", ({ messages }) => {
-    ingestMessages(messages);
+  sock.ev.on("messages.upsert", ({ messages: msgs, type }) => {
+    for (const msg of msgs) {
+      if (!msg.message) continue; // skip protocol messages
+      const jid = msg.key.remoteJid;
+      if (!jid || jid === "status@broadcast") continue;
+
+      const text =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        msg.message.videoMessage?.caption ||
+        null;
+
+      const mediaType =
+        msg.message.imageMessage ? "image" :
+        msg.message.videoMessage ? "video" :
+        msg.message.audioMessage ? "audio" :
+        msg.message.documentMessage ? "document" :
+        msg.message.stickerMessage ? "sticker" :
+        null;
+
+      storeMessage(jid, {
+        id: msg.key.id,
+        fromMe: !!msg.key.fromMe,
+        from: msg.key.fromMe ? "me" : (contactName(jid) || jid.split("@")[0]),
+        text,
+        mediaType,
+        timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
+        pushName: msg.pushName || null,
+      });
+    }
   });
 
   sock.ev.on("connection.update", (update) => {
@@ -340,15 +387,13 @@ async function start() {
       } else {
         emit({ type: "disconnected", reason: `reconnecting (code ${code})` });
         sock = null;
-        setTimeout(() => start().catch(startupFailed), 3000);
+        setTimeout(() => start(), 3000);
       }
     }
   });
 }
 
-function startupFailed() {
-  emit({ type: "error", message: "whatsapp connection could not start" });
+start().catch((err) => {
+  emit({ type: "error", message: err.message || String(err) });
   process.exit(1);
-}
-
-start().catch(startupFailed);
+});

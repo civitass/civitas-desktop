@@ -77,31 +77,6 @@ the test constants.
 
 ## Interpreting results
 
-The deterministic episode harness has a separate synthetic regression command:
-
-```bash
-cargo run --locked -p civitas-work-eval --bin civitas-eval-episodes -- \
-  crates/civitas-work-eval/evals/scenarios/*.toml
-```
-
-Boundary F1 uses one-to-one matching within an inclusive 30-second tolerance.
-Matched predictions inherit the reference boundary's duration bucket, even
-when a prediction falls just before that boundary. Coverage measures the exact
-duration of the intersection between active reference intervals and the union
-of mined action intervals; overlapping intervals are counted once and isolated
-point events cover no duration. It does not infer activity between events.
-These duration results replace the earlier ten-second sampled approximation
-and should not be compared as though the metric were unchanged.
-
-`resume_precision` and `resume_recall` currently compare counts of resumed
-segments with expected resumes. They are count-agreement upper bounds, not
-validated precision and recall: matching counts do not establish that the
-same episode was resumed. WindowDiff remains a ten-second sampled boundary
-disagreement diagnostic. None of these synthetic metrics establishes accuracy
-on a person's real workflow. Replay preserves captured key codes/modifiers and
-sorts observations by timestamp and id; export fails on malformed rows rather
-than silently omitting them or fabricating a timestamp.
-
 Quality metrics must be considered together with the grounded Ask contract,
 correction tests, deletion propagation, and adversarial Next Actions corpus.
 Latency alone is not success if a result loses its source, crosses a privacy

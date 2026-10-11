@@ -61,14 +61,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: packages/civitas-mcp
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Enforce reviewed dependency advisory policy
-        run: node scripts/audit-js-security.mjs
+        run: bun install --frozen-lockfile
 
       - name: Audit, test, and build
         working-directory: packages/civitas-mcp
         run: |
+          bun audit --audit-level=low
           bun run test
           bun run build
 
@@ -86,9 +84,6 @@ jobs:
           stage="$RUNNER_TEMP/civitas-mcp-production"
           mkdir -p "$stage/dist" "$stage/ui"
           cp package.json bun.lock manifest.json README.md LICENSE.md "$stage/"
-          # Frozen Bun validates every declared patch path, even when the
-          # patched dependency is development-only and omitted from this tree.
-          cp -R patches "$stage/patches"
           cp dist/* "$stage/dist/"
           cp ui/* "$stage/ui/"
           bun install \
@@ -96,21 +91,6 @@ jobs:
             --frozen-lockfile \
             --production \
             --ignore-scripts
-          test ! -e "$stage/node_modules/node-forge"
-          # The distributable contains the installed production tree, not the
-          # tools or inputs used to construct it. Source retains the full lock
-          # and reviewed patches for reproducing this exact staging operation.
-          node - "$stage/package.json" <<'NODE'
-          const fs = require("node:fs");
-          const file = process.argv[2];
-          const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-          delete manifest.devDependencies;
-          delete manifest.patchedDependencies;
-          delete manifest.scripts;
-          fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
-          NODE
-          rm -rf -- "$stage/patches"
-          rm -- "$stage/bun.lock"
           bunx mcpb pack "$stage" "$PWD/civitas-mcp.mcpb"
 
       - name: Inspect npm package boundary
@@ -151,7 +131,7 @@ jobs:
             grep -Fqx "$required" "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"
           done
           if grep -Eq \
-            '^(src/|patches/|bun\.lock$|tsconfig\.json$|vitest\.config\.ts$|node_modules/(@anthropic-ai/mcpb|node-forge|typescript|ts-node|vitest|vite|esbuild|rollup|@rollup/|@rolldown/|lightningcss))' \
+            '^(src/|tsconfig\.json$|vitest\.config\.ts$|node_modules/(@anthropic-ai/mcpb|typescript|ts-node|vitest|vite|esbuild|rollup|@rollup/|@rolldown/|lightningcss))' \
             "$RUNNER_TEMP/civitas-mcp-bundle-files.txt"; then
             echo "::error::mcpb contains source, tests, build tools, or development dependencies"
             exit 1

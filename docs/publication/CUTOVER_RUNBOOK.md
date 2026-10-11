@@ -1,11 +1,5 @@
 # Consumer publication cutover runbook
 
-> Historical first-publication procedure. The source cutover completed in
-> August 2026; its actual approvals and subsequent binary releases are recorded
-> in [Implementation status](IMPLEMENTATION_STATUS.md). Do not repeat history
-> rewrites or repository visibility changes for a normal desktop update. The
-> current signed update process is [Release verification](../RELEASE_VERIFICATION.md).
-
 > Applies to `civitass/civitas-desktop` only.
 > `civitas-cloud`, `civitas-platform`, and all three archive repositories must
 > remain private.

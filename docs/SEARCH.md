@@ -62,13 +62,6 @@ portable export, the resulting copy is outside later Civitas deletion.
 
 ## Local API contract
 
-Time filters on the general `/search` API accept RFC 3339 timestamps or
-non-negative relative durations such as `90m ago`, `1.5h`, and `now`. Fractional
-units retain their duration (`1.5h` is 90 minutes); malformed values and
-magnitudes outside the supported calendar range return validation errors.
-Relative values are measured when the request is parsed. Use explicit UTC
-timestamps when a reproducible query needs identical time boundaries.
-
 The desktop webview calls typed, owner-only routes. It does not construct SQL
 or call the general `/raw_sql` compatibility surface.
 

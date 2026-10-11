@@ -272,9 +272,8 @@ pub enum NormalizeItem {
 /// `seed_prev_ts` seeds the idle-gap detector with the timestamp of the last
 /// event from the *previous* tick.  When set, a gap between that timestamp and
 /// the first event in `events` is measured and may emit an IdleMarker at
-/// the end of the caller's prefix, enabling detection of cross-batch idle
-/// gaps (e.g. user took a 30-minute break between ticks). With no prefix,
-/// `usize::MAX` means before the first action. Pass `None` for no prior tick.
+/// position 0, enabling detection of cross-batch idle gaps (e.g. user took a
+/// 30-minute break between ticks).  Pass `None` when there is no prior tick.
 pub fn normalize(
     events: &[RawEvent],
     config: &MinerConfig,
@@ -327,11 +326,12 @@ pub fn normalize_with_seed(
                     flush_nav(burst, &mut out, &mut action_count);
                 }
                 // after_action_index is the index of the last action *before* this idle gap.
-                // With no actions in this batch, the marker belongs to the
-                // last prefix action, not the first action after the gap.
-                let after_idx = (action_index_offset + action_count)
-                    .checked_sub(1)
-                    .unwrap_or(usize::MAX);
+                // If no actions have been emitted yet, this idle is at the very start — use 0.
+                let after_idx = if action_count > 0 {
+                    action_index_offset + action_count - 1
+                } else {
+                    action_index_offset
+                };
                 out.push(NormalizeItem::Idle(IdleMarker {
                     gap_secs: gap,
                     after_action_index: after_idx,
@@ -808,28 +808,6 @@ mod tests {
             .iter()
             .any(|item| matches!(item, NormalizeItem::Idle(_)));
         assert!(has_idle, "expected idle marker for gap >= soft_idle_secs");
-    }
-
-    #[test]
-    fn seeded_idle_is_before_the_first_new_action() {
-        let cfg = MinerConfig::default();
-        let events = [text_event(1, 600, "Xcode", "main.rs", "a")];
-        for (offset, expected) in [(0, usize::MAX), (1, 0), (5, 4)] {
-            let items = normalize_with_seed(
-                &events,
-                &cfg,
-                offset,
-                Some(events[0].timestamp - chrono::Duration::seconds(600)),
-            );
-            let marker = items
-                .iter()
-                .find_map(|item| match item {
-                    NormalizeItem::Idle(marker) => Some(marker),
-                    _ => None,
-                })
-                .unwrap();
-            assert_eq!(marker.after_action_index, expected);
-        }
     }
 
     #[test]

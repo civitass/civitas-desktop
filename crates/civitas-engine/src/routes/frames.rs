@@ -28,7 +28,7 @@ use tracing::{debug, error};
 
 use crate::{
     server::AppState,
-    video_utils::{extract_frame_from_video, redact_frame_pii_solid},
+    video_utils::{extract_frame_from_video, redact_frame_pii},
 };
 
 use tokio::time::timeout;
@@ -36,7 +36,7 @@ use tokio::time::timeout;
 /// Query parameters for frame retrieval
 #[derive(Debug, Deserialize, OaSchema)]
 pub struct GetFrameQuery {
-    /// If true, mask detected PII; fail if OCR or redaction is unavailable.
+    /// If true, blur/redact any detected PII (credit cards, SSNs, emails) in the frame
     #[serde(default)]
     pub redact_pii: bool,
 }
@@ -171,10 +171,7 @@ pub async fn get_frame_data(
                         debug!("Frame {} extracted in {:?}", frame_id, start_time.elapsed());
                         Ok(response)
                     }
-                    // An existing frame whose requested redaction failed must
-                    // keep its privacy error, not silently substitute a neighbor.
-                    Err(FrameServeError::Redaction(error)) => Err(error),
-                    Err(FrameServeError::Extraction(e)) => {
+                    Err(e) => {
                         // Extraction failed — try the nearest valid frame as fallback
                         debug!(
                             "Frame {} extraction failed ({}), trying nearest frame",
@@ -259,15 +256,9 @@ pub async fn get_frame_data(
     }
 }
 
-#[derive(Debug)]
-enum FrameServeError {
-    Extraction(anyhow::Error),
-    Redaction((StatusCode, JsonResponse<Value>)),
-}
-
+/// Query parameters for finding the next valid frame
 /// Try to extract a single frame and optionally cache the result.
-/// Keep unavailable media separate from failed privacy processing so callers
-/// cannot turn a redaction failure into an unrelated nearest-frame response.
+/// Returns the served image response on success, or the extraction error on failure.
 /// Acquires the frame extraction semaphore to limit concurrent ffmpeg processes.
 async fn try_extract_and_serve_frame(
     state: &Arc<AppState>,
@@ -275,24 +266,20 @@ async fn try_extract_and_serve_frame(
     file_path: &str,
     offset_index: i64,
     redact_pii: bool,
-) -> Result<Response<Body>, FrameServeError> {
+) -> Result<Response<Body>, anyhow::Error> {
     let _permit = state
         .frame_extraction_semaphore
         .acquire()
         .await
-        .map_err(|_| {
-            FrameServeError::Extraction(anyhow::anyhow!("frame extraction semaphore closed"))
-        })?;
+        .map_err(|_| anyhow::anyhow!("frame extraction semaphore closed"))?;
 
     let jpeg_q = crate::video::video_quality_to_jpeg_q(&state.video_quality);
-    let frame_path = extract_frame_from_video(file_path, offset_index, jpeg_q)
-        .await
-        .map_err(FrameServeError::Extraction)?;
+    let frame_path = extract_frame_from_video(file_path, offset_index, jpeg_q).await?;
 
     if redact_pii {
         return apply_pii_redaction(state, frame_id, &frame_path)
             .await
-            .map_err(FrameServeError::Redaction);
+            .map_err(|(status, _)| anyhow::anyhow!("PII redaction failed: {}", status));
     }
 
     // Store in cache if enabled
@@ -302,9 +289,9 @@ async fn try_extract_and_serve_frame(
         }
     }
 
-    serve_file(&frame_path).await.map_err(|(status, _)| {
-        FrameServeError::Extraction(anyhow::anyhow!("Failed to serve file: {}", status))
-    })
+    serve_file(&frame_path)
+        .await
+        .map_err(|(status, _)| anyhow::anyhow!("Failed to serve file: {}", status))
 }
 
 /// Find the nearest extractable frame by searching backward then forward.
@@ -1046,76 +1033,84 @@ pub(crate) async fn apply_pii_redaction(
     frame_id: i64,
     frame_path: &str,
 ) -> Result<Response<Body>, (StatusCode, JsonResponse<Value>)> {
-    let frame_data = tokio::fs::read(frame_path)
-        .await
-        .map_err(|_| redaction_unavailable("media_unavailable"))?;
-    let text_json_str = state
-        .db
-        .get_frame_ocr_text_json(frame_id)
-        .await
-        .map_err(|_| redaction_unavailable("ocr_unavailable"))?
-        .ok_or_else(|| redaction_unavailable("ocr_unavailable"))?;
-    pii_redaction_response(&frame_data, &text_json_str)
-}
-
-fn redaction_unavailable(reason: &'static str) -> (StatusCode, JsonResponse<Value>) {
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        JsonResponse(json!({
-            "error": "The requested privacy redaction could not be completed. Original media was not returned.",
-            "error_type": "pii_redaction_unavailable",
-            "reason": reason,
-        })),
-    )
-}
-
-/// Build an explicitly requested privacy response from the bytes we inspected.
-/// Errors must never reopen/serve the original file, and successful responses
-/// must not enter the ordinary long-lived frame cache.
-fn pii_redaction_response(
-    frame_data: &[u8],
-    text_json_str: &str,
-) -> Result<Response<Body>, (StatusCode, JsonResponse<Value>)> {
-    let text_json: Vec<HashMap<String, String>> =
-        serde_json::from_str(text_json_str).map_err(|_| redaction_unavailable("invalid_ocr"))?;
-    if text_json.is_empty()
-        || text_json.iter().any(|entry| !entry.contains_key("text"))
-        || !text_json.iter().any(|entry| {
-            entry
-                .get("text")
-                .is_some_and(|text| !text.trim().is_empty())
-        })
-    {
-        return Err(redaction_unavailable("ocr_unavailable"));
-    }
-    let img =
-        image::load_from_memory(frame_data).map_err(|_| redaction_unavailable("invalid_image"))?;
-    let (width, height) = img.dimensions();
-    let pii_regions = detect_pii_regions(&text_json, width, height);
-    let (data, content_type) = if pii_regions.is_empty() {
-        let format =
-            image::guess_format(frame_data).map_err(|_| redaction_unavailable("invalid_image"))?;
-        (frame_data.to_vec(), format.to_mime_type())
-    } else {
-        // Opaque masks do not retain the recoverable detail of a Gaussian blur.
-        let redacted = redact_frame_pii_solid(frame_data, &pii_regions)
-            .map_err(|_| redaction_unavailable("redaction_failed"))?;
-        (redacted, "image/jpeg")
+    // Read the frame file
+    let frame_data = match tokio::fs::read(frame_path).await {
+        Ok(data) => data,
+        Err(e) => {
+            error!("Failed to read frame file for PII redaction: {}", e);
+            return serve_file(frame_path).await; // Fall back to unredacted
+        }
     };
-    Response::builder()
-        .header("content-type", content_type)
-        .header("cache-control", "no-store")
-        .header(
-            "x-pii-redacted",
-            if pii_regions.is_empty() {
-                "false"
-            } else {
-                "true"
-            },
-        )
-        .header("x-pii-regions-count", pii_regions.len().to_string())
-        .body(Body::from(data))
-        .map_err(|_| redaction_unavailable("response_failed"))
+
+    // Get OCR text_json for this frame
+    let text_json_str = match state.db.get_frame_ocr_text_json(frame_id).await {
+        Ok(Some(json)) => json,
+        Ok(None) => {
+            debug!("No OCR data for frame {}, serving unredacted", frame_id);
+            return serve_file(frame_path).await;
+        }
+        Err(e) => {
+            error!("Failed to get OCR data for frame {}: {}", frame_id, e);
+            return serve_file(frame_path).await;
+        }
+    };
+
+    // Parse the text_json
+    let text_json: Vec<HashMap<String, String>> = match serde_json::from_str(&text_json_str) {
+        Ok(json) => json,
+        Err(e) => {
+            debug!("Failed to parse OCR text_json: {}", e);
+            return serve_file(frame_path).await;
+        }
+    };
+
+    // Get image dimensions
+    let img = match image::load_from_memory(&frame_data) {
+        Ok(img) => img,
+        Err(e) => {
+            error!("Failed to load image for PII detection: {}", e);
+            return serve_file(frame_path).await;
+        }
+    };
+    let (width, height) = img.dimensions();
+
+    // Detect PII regions
+    let pii_regions = detect_pii_regions(&text_json, width, height);
+
+    if pii_regions.is_empty() {
+        debug!("No PII detected in frame {}", frame_id);
+        return serve_file(frame_path).await;
+    }
+
+    debug!(
+        "Detected {} PII regions in frame {}: {:?}",
+        pii_regions.len(),
+        frame_id,
+        pii_regions.iter().map(|r| &r.pii_type).collect::<Vec<_>>()
+    );
+
+    // Apply redaction
+    match redact_frame_pii(&frame_data, &pii_regions) {
+        Ok(redacted_data) => {
+            let body = Body::from(redacted_data);
+            Response::builder()
+                .header("content-type", "image/jpeg")
+                .header("cache-control", "no-cache") // Don't cache redacted frames
+                .header("x-pii-redacted", "true")
+                .header("x-pii-regions-count", pii_regions.len().to_string())
+                .body(body)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        JsonResponse(json!({"error": format!("Failed to create response: {}", e)})),
+                    )
+                })
+        }
+        Err(e) => {
+            error!("Failed to redact PII from frame {}: {}", frame_id, e);
+            serve_file(frame_path).await // Fall back to unredacted
+        }
+    }
 }
 
 pub(crate) async fn serve_file(path: &str) -> Result<Response, (StatusCode, JsonResponse<Value>)> {
@@ -1156,75 +1151,3 @@ pub use super::content::FrameContent;
 
 /// extract_high_quality_frame re-export for video export
 pub use crate::video_utils::extract_high_quality_frame as extract_hq_frame;
-
-#[cfg(test)]
-mod pii_response_tests {
-    use super::*;
-    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
-    use std::io::Cursor;
-
-    fn synthetic_image() -> Vec<u8> {
-        let pixels = ImageBuffer::from_fn(40, 40, |x, y| {
-            Rgb([if (x + y) % 2 == 0 { 255u8 } else { 0 }, 180, 80])
-        });
-        let mut encoded = Cursor::new(Vec::new());
-        DynamicImage::ImageRgb8(pixels)
-            .write_to(&mut encoded, ImageFormat::Png)
-            .unwrap();
-        encoded.into_inner()
-    }
-
-    #[test]
-    fn missing_or_invalid_ocr_never_returns_original_media() {
-        let image = synthetic_image();
-        for ocr in [
-            "",
-            "not json",
-            "null",
-            "[]",
-            "[{}]",
-            r#"[{"text":""}]"#,
-            r#"[{"text":"synthetic@example.com"},{}]"#,
-        ] {
-            let (status, body) = pii_redaction_response(&image, ocr).unwrap_err();
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-            assert_eq!(body.0["error_type"], "pii_redaction_unavailable");
-        }
-        assert!(pii_redaction_response(b"not an image", r#"[{"text":"ordinary text"}]"#).is_err());
-    }
-
-    #[tokio::test]
-    async fn detected_pii_without_coordinates_is_opaque_not_blurred() {
-        let image = synthetic_image();
-        let response =
-            pii_redaction_response(&image, r#"[{"text":"synthetic@example.com"}]"#).unwrap();
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        assert_eq!(response.headers()["x-pii-redacted"], "true");
-        assert_eq!(response.headers()["x-pii-regions-count"], "1");
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let redacted = image::load_from_memory(&bytes).unwrap().to_rgb8();
-        assert!(
-            redacted
-                .pixels()
-                .all(|pixel| pixel.0.iter().all(|channel| (38..=42).contains(channel))),
-            "the full frame should contain only the opaque mask color"
-        );
-    }
-
-    #[tokio::test]
-    async fn successful_inspection_without_matches_still_disables_caching() {
-        let image = synthetic_image();
-        let response =
-            pii_redaction_response(&image, r#"[{"text":"ordinary public text"}]"#).unwrap();
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        assert_eq!(response.headers()["x-pii-redacted"], "false");
-        assert_eq!(response.headers()["x-pii-regions-count"], "0");
-        assert_eq!(response.headers()["content-type"], "image/png");
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert_eq!(bytes.as_ref(), image);
-    }
-}

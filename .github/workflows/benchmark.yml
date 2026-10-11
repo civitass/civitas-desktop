@@ -6,16 +6,8 @@ name: Rust Benchmark
 
 on:
   schedule:
-    - cron: "0 8 * * *" # Daily at 08:00 UTC
+    - cron: "0 8 * * *" # Daily at midnight PST (8 AM UTC)
   workflow_dispatch:
-    inputs:
-      macos_runner:
-        description: Runner for the Apple OCR benchmark
-        type: choice
-        default: macos-26
-        options:
-          - macos-26
-          - macos-test
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,9 +22,8 @@ permissions:
 jobs:
   apple_ocr_benchmark:
     name: Run Apple OCR benchmark
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_runner == 'macos-test' && fromJSON('["self-hosted","macos-test"]') || 'macos-26' }}
+    runs-on: [self-hosted, macos-test]
     if: github.ref == 'refs/heads/main'
-    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

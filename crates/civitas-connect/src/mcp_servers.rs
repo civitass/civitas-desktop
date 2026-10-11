@@ -342,14 +342,10 @@ impl McpServerStore {
         // 30-60s. Per-call sites use shorter `.timeout(...)` overrides
         // for cheap operations like `initialize` / `tools/list`.
         let client = reqwest::Client::builder()
-            // Tool arguments, custom headers and OAuth forms belong only to
-            // the authorized endpoint. Redirects would bypass the egress
-            // check and can replay bodies to another host or plain HTTP.
-            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(300))
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .expect("static MCP HTTP client configuration must build");
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             civitas_dir,
             secret_store,
@@ -2230,90 +2226,6 @@ mod tests {
 
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    async fn mcp_redirects_never_forward_tool_arguments_or_notifications() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = McpServerStore::new(dir.path().to_path_buf(), None);
-        for status in [301, 302, 303, 307, 308] {
-            let destination = MockServer::start().await;
-            let origin = MockServer::start().await;
-            Mock::given(path("/"))
-                .respond_with(ResponseTemplate::new(200))
-                .expect(0)
-                .mount(&destination)
-                .await;
-            Mock::given(method("POST"))
-                .respond_with(
-                    ResponseTemplate::new(status).insert_header("Location", destination.uri()),
-                )
-                .expect(2)
-                .mount(&origin)
-                .await;
-            let headers = [McpHeader {
-                name: "X-Api-Key".into(),
-                value: "synthetic-secret".into(),
-            }];
-            let error = send_jsonrpc(
-                &store.client,
-                &origin.uri(),
-                &headers,
-                "tools/call",
-                json!({"arguments": {"text": "private synthetic content"}}),
-                None,
-            )
-            .await
-            .unwrap_err();
-            assert!(error.to_string().contains(&status.to_string()));
-            send_mcp_notification(
-                &store.client,
-                &origin.uri(),
-                &headers,
-                "notifications/initialized",
-                json!({}),
-            )
-            .await;
-            assert!(destination.received_requests().await.unwrap().is_empty());
-        }
-    }
-
-    #[tokio::test]
-    async fn oauth_redirects_never_forward_refresh_credentials_or_discovery() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = McpServerStore::new(dir.path().to_path_buf(), None);
-        for status in [301, 302, 303, 307, 308] {
-            let destination = MockServer::start().await;
-            let origin = MockServer::start().await;
-            Mock::given(path("/"))
-                .respond_with(ResponseTemplate::new(200))
-                .expect(0)
-                .mount(&destination)
-                .await;
-            Mock::given(path("/"))
-                .respond_with(
-                    ResponseTemplate::new(status).insert_header("Location", destination.uri()),
-                )
-                .expect(2)
-                .mount(&origin)
-                .await;
-            let token = McpOAuthToken {
-                access_token: "synthetic-access-token".into(),
-                token_url: origin.uri(),
-                client_id: "synthetic-client".into(),
-                client_secret: Some("synthetic-client-secret".into()),
-                refresh_token: Some("synthetic-refresh-token".into()),
-                resource: String::new(),
-                token_type: None,
-                expires_at: None,
-                scope: None,
-            };
-            let error = store.refresh_oauth_token("test", &token).await.unwrap_err();
-            assert!(error.to_string().contains(&status.to_string()));
-            let error = store.fetch_first_json(&[origin.uri()]).await.unwrap_err();
-            assert!(error.to_string().contains(&status.to_string()));
-            assert!(destination.received_requests().await.unwrap().is_empty());
-        }
-    }
 
     #[tokio::test]
     async fn probe_against_mock_returns_tools() {

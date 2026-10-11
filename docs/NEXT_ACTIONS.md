@@ -43,12 +43,6 @@ Everything the ranker sees is a `CandidateInput`; everything the UI sees is a
 `RankedNextAction`. The ranker is a pure function of `(input, now)`; the same
 local database always yields the same ranking (asserted by the eval suite).
 
-Scores and confidence labels are heuristic ranking support, not calibrated
-probabilities of usefulness or completion. Every numeric input must be finite:
-NaN and either infinity cause abstention before evidence or score thresholds
-are evaluated. The local feedback report describes observed ratings; it does
-not establish predictive validity beyond those observations.
-
 ## 2. Screening of the previous implementation (2.6.x)
 
 The 2.6.x policy was reviewed end to end: the pure ranker, all four generators,

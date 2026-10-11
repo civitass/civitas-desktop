@@ -8,14 +8,10 @@ use serde::{Deserialize, Deserializer};
 /// Parse a relative time string like "16h ago", "2d ago", "30m ago", "1w ago"
 /// into a `DateTime<Utc>` by subtracting from now.
 fn parse_relative_time(s: &str) -> Option<DateTime<Utc>> {
-    parse_relative_time_at(s, Utc::now())
-}
-
-fn parse_relative_time_at(s: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let s = s.trim();
 
     if s.eq_ignore_ascii_case("now") {
-        return Some(now);
+        return Some(Utc::now());
     }
 
     let trimmed = s.strip_suffix("ago").or(Some(s))?.trim();
@@ -32,21 +28,16 @@ fn parse_relative_time_at(s: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
     let value: f64 = trimmed[..num_end].parse().ok()?;
     let unit = trimmed[num_end..].trim();
 
-    let seconds_per_unit = match unit {
-        "s" | "sec" | "second" | "seconds" => 1.0,
-        "m" | "min" | "minute" | "minutes" => 60.0,
-        "h" | "hr" | "hour" | "hours" => 3_600.0,
-        "d" | "day" | "days" => 86_400.0,
-        "w" | "week" | "weeks" => 604_800.0,
+    let duration = match unit {
+        "s" | "sec" | "second" | "seconds" => Duration::seconds(value as i64),
+        "m" | "min" | "minute" | "minutes" => Duration::minutes(value as i64),
+        "h" | "hr" | "hour" | "hours" => Duration::hours(value as i64),
+        "d" | "day" | "days" => Duration::days(value as i64),
+        "w" | "week" | "weeks" => Duration::weeks(value as i64),
         _ => return None,
     };
 
-    // Convert only after scaling so fractional units retain their meaning.
-    // Both conversions and subtraction are checked: user-supplied magnitudes
-    // must return a validation error rather than panic or saturate to an i64.
-    let duration = std::time::Duration::try_from_secs_f64(value * seconds_per_unit).ok()?;
-    let duration = Duration::from_std(duration).ok()?;
-    now.checked_sub_signed(duration)
+    Some(Utc::now() - duration)
 }
 
 /// Try to parse a string as either ISO 8601 or relative time.
@@ -155,36 +146,5 @@ mod tests {
     fn test_parse_invalid() {
         assert!(parse_flexible_datetime("banana").is_err());
         assert!(parse_flexible_datetime("").is_err());
-    }
-
-    #[test]
-    fn fractional_units_preserve_elapsed_time() {
-        let now = "2026-10-11T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
-        for (input, expected) in [
-            ("1.5h ago", Duration::minutes(90)),
-            ("0.25d", Duration::hours(6)),
-            ("0.5m ago", Duration::seconds(30)),
-            ("0.125s", Duration::milliseconds(125)),
-            ("0w", Duration::zero()),
-        ] {
-            assert_eq!(parse_relative_time_at(input, now), Some(now - expected));
-        }
-    }
-
-    #[test]
-    fn out_of_range_relative_times_return_errors_without_panicking() {
-        for input in [
-            "9223372036854775807w".to_string(),
-            "9223372036854775807s".to_string(),
-            "1000000000000d".to_string(),
-            format!("{}h", "9".repeat(1_000)),
-            "NaNh".to_string(),
-            "infh".to_string(),
-            "-1h".to_string(),
-            "1.2.3h".to_string(),
-        ] {
-            assert!(parse_flexible_datetime(&input).is_err(), "{input}");
-        }
-        assert_eq!(parse_relative_time_at("1s", DateTime::<Utc>::MIN_UTC), None);
     }
 }

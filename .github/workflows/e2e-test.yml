@@ -24,10 +24,10 @@ on:
       windows_runner:
         description: "Runner for the Windows E2E leg"
         type: choice
-        default: windows-2022
+        default: windows-desktop-test
         options:
-          - windows-2022 # GitHub-hosted default
-          - windows-desktop-test # Explicit interactive self-hosted session
+          - windows-desktop-test # self-hosted Windows VM (0x billing, persistent cargo cache)
+          - windows-2022 # GitHub-hosted fallback
 
 permissions:
   contents: read
@@ -44,10 +44,12 @@ jobs:
     if: >-
       github.event_name != 'push' ||
       contains(github.event.head_commit.message, '[run-e2e]')
-    # Nightly and release evidence must remain runnable when no private VM is
-    # registered. An interactive self-hosted Windows session is an explicit
-    # opt-in for capture fidelity checks; its availability is not assumed.
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_runner == 'windows-desktop-test' && fromJSON('["self-hosted","windows-desktop-test"]') || 'windows-2022' }}
+    # windows-desktop-test = the self-hosted Windows VM (interactive session, so
+    # WGC capture + WebView2 work). This is now the DEFAULT for both scheduled
+    # (nightly) and bare workflow_dispatch runs — the self-hosted path is proven
+    # green (run 28692981010: 46/46 spec files, core-recording, user-journey).
+    # Pass windows_runner=windows-2022 to fall back to the GitHub-hosted runner.
+    runs-on: ${{ (github.event_name == 'push' || inputs.windows_runner == 'windows-2022') && 'windows-2022' || fromJSON('["self-hosted","windows-desktop-test"]') }}
     # A macOS-only release must not be gated on a Windows-only regression.
     # This leg still runs and still reports red in the checks list; it stops
     # failing the whole run only while Windows releases are disabled.

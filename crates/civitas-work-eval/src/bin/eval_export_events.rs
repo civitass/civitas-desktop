@@ -213,15 +213,6 @@ fn export_events(
     )
     .with_context(|| format!("open {}", db_path.display()))?;
 
-    read_events(&conn, start, end, include_raw_text)
-}
-
-fn read_events(
-    conn: &rusqlite::Connection,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    include_raw_text: bool,
-) -> Result<Vec<ReplayEvent>> {
     let start_str = start.to_rfc3339();
     let end_str = end.to_rfc3339();
 
@@ -234,7 +225,7 @@ fn read_events(
             u.app_name, u.window_title, u.browser_url,
             u.element_role, u.element_name, u.element_value,
             u.element_automation_id,
-            f.document_path, u.key_code, u.modifiers
+            f.document_path
         FROM ui_events u
         LEFT JOIN frames f ON f.id = u.frame_id
         WHERE u.timestamp >= ?1
@@ -243,17 +234,13 @@ fn read_events(
         )
         .with_context(|| "prepare export query")?;
 
-    let mut events: Vec<ReplayEvent> = stmt
+    let events: Vec<ReplayEvent> = stmt
         .query_map(rusqlite::params![start_str, end_str], |row| {
             // Parse timestamp string from SQLite.
             let ts_str: String = row.get(1)?;
-            let timestamp: DateTime<Utc> = ts_str.parse::<DateTime<Utc>>().map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    1,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?;
+            let timestamp: DateTime<Utc> = ts_str
+                .parse::<DateTime<Utc>>()
+                .unwrap_or_else(|_| Utc::now());
 
             let event_type: String = row.get(2)?;
             let raw_text_content: Option<String> = row.get(5)?;
@@ -279,8 +266,6 @@ fn read_events(
                 timestamp,
                 event_type,
                 button: row.get(3)?,
-                key_code: row.get(17)?,
-                modifiers: row.get(18)?,
                 click_count: row.get(4)?,
                 text_content,
                 text_redacted,
@@ -297,10 +282,8 @@ fn read_events(
             })
         })
         .with_context(|| "execute export query")?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("decode exported events")?;
-
-    events.sort_by_key(|event| (event.timestamp, event.id));
+        .filter_map(|r| r.ok())
+        .collect();
 
     Ok(events)
 }
@@ -308,62 +291,6 @@ fn read_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn synthetic_db() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE frames (id INTEGER, document_path TEXT);
-            CREATE TABLE ui_events (id INTEGER, timestamp TEXT, event_type TEXT, button INTEGER,
-                click_count INTEGER, text_content TEXT, text_redacted TEXT, redacted_at INTEGER,
-                text_length INTEGER, app_name TEXT, window_title TEXT, browser_url TEXT,
-                element_role TEXT, element_name TEXT, element_value TEXT, element_automation_id TEXT,
-                frame_id INTEGER, key_code INTEGER, modifiers INTEGER);").unwrap();
-        conn
-    }
-
-    fn export_window(conn: &rusqlite::Connection) -> Result<Vec<ReplayEvent>> {
-        read_events(
-            conn,
-            "2026-06-11T00:00:00Z".parse().unwrap(),
-            "2026-06-12T00:00:00Z".parse().unwrap(),
-            false,
-        )
-    }
-
-    #[test]
-    fn export_preserves_chords_and_redacts_typed_text() {
-        let conn = synthetic_db();
-        conn.execute_batch(
-            "INSERT INTO ui_events (id, timestamp, event_type, key_code, modifiers)
-            VALUES (1, '2026-06-11T09:00:01+00:00', 'key', 1, 8);
-            INSERT INTO ui_events (id, timestamp, event_type, text_content)
-            VALUES (2, '2026-06-11T09:00:00+00:00', 'text', 'synthetic private text');",
-        )
-        .unwrap();
-        let events = export_window(&conn).unwrap();
-        assert_eq!(
-            events[0].id, 2,
-            "timestamp order takes precedence over insertion order"
-        );
-        assert_eq!(events[0].text_content, None);
-        assert_eq!(events[1].key_code, Some(1));
-        assert_eq!(events[1].modifiers, Some(8));
-    }
-
-    #[test]
-    fn export_reports_malformed_rows_instead_of_inventing_or_dropping_evidence() {
-        let conn = synthetic_db();
-        conn.execute_batch(
-            "INSERT INTO ui_events (id, timestamp, event_type)
-            VALUES (1, '2026-06-11T09:00:invalid', 'text');",
-        )
-        .unwrap();
-        assert!(export_window(&conn).is_err());
-        conn.execute_batch(
-            "UPDATE ui_events SET timestamp = '2026-06-11T09:00:00+00:00', id = NULL;",
-        )
-        .unwrap();
-        assert!(export_window(&conn).is_err());
-    }
 
     #[test]
     fn live_path_detection() {

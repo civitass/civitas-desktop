@@ -77,15 +77,14 @@ display.
 
 ## Start in three steps
 
-1. Download the signed macOS DMG — or the Windows installer, when a release
-   covers it — from
+1. If a signed version is present, download the verified macOS DMG — or the
+   Windows installer, once a release covers it — from
    [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
-   For other supported development platforms, [build from source](docs/BUILDING.md).
+   Otherwise, [build from source](docs/BUILDING.md).
 2. Choose exactly what Civitas may capture. Screen and microphone permissions
    remain separate, and capture can be paused immediately from the tray.
-3. Search locally first. For Ask and Chat, review and install the optional
-   assistant runtime under **Settings → AI**, then connect a local model or
-   your own provider credentials.
+3. Search locally first. If you want AI answers, add a local model or one of
+   your own provider credentials under **Settings → AI**.
 
 ## What you can do
 
@@ -111,7 +110,6 @@ display.
 | Local first | Capture, media, SQLite/FTS indexes, graph data, feedback, and provider profile metadata live under your local Civitas data directory. |
 | Account-free | Capture, search, graph, export, deletion, local AI, and MCP do not require a Civitas login or subscription. |
 | No hidden cloud | Railway, Supabase auth, Civitas-hosted AI credits, fleet, team sync, and enterprise policy are not part of the consumer runtime. |
-| Remote access is optional | Fresh installs start in Local-only mode. Remote providers, external processes, downloads, and connections require the owner to enable remote features. |
 | Bring your own model | Use loopback Ollama-compatible inference or connect OpenAI, Anthropic, OpenRouter, Bedrock, or a compatible endpoint. |
 | Credentials stay protected | Persistent keys are encrypted with an OS-vault-backed key; an explicit session-only mode stays in process memory until quit. No plaintext fallback exists. |
 | Capture is controllable | The tray shows capturing/paused/private state and provides immediate, timed, and indefinite pause controls. Clipboard and raw typed-text persistence are off by default. |
@@ -211,13 +209,6 @@ global agent. Core capture, search, graph, export, and MCP features do not need
 this runtime. The same card can stop active assistant sessions and remove the
 managed packages without deleting work data, provider profiles, or credentials.
 
-Optional personal connections have separate boundaries. WhatsApp pairing
-installs a pinned, unofficial gateway only after an explicit action; startup
-cannot download its runtime. Its private transport sits behind the engine's
-authenticated connection routes. External MCP requests reject redirects so
-an endpoint cannot forward credentials or tool data elsewhere. See the
-[network boundary](docs/NETWORK_BOUNDARY.md) for destinations and limits.
-
 ## Install on macOS
 
 1. Open [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
@@ -273,16 +264,14 @@ bun install --frozen-lockfile
 bun run tauri dev
 ```
 
-An optimized, locally signed macOS bundle:
+An optimized local bundle:
 
 ```bash
 cd apps/civitas-app-tauri
-./scripts/build_macos.sh --bundles app
+bun run tauri build
 ```
 
-The helper applies and verifies the development signature after building.
-This local app is not a notarized official release. Platform prerequisites,
-Windows/Linux commands, feature flags, generated bindings, and release-vs-source
+Platform prerequisites, feature flags, generated bindings, and release-vs-source
 differences are in [Building](docs/BUILDING.md).
 
 ## Connect an MCP client
