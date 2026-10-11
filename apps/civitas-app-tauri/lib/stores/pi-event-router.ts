@@ -380,15 +380,12 @@ export async function mountPiEventRouter(): Promise<() => void> {
     const offEvicted = onEvicted((p) => handleSessionEvicted(p));
     unregistrations.push(offDefault, offTerminated, offEvicted);
 
-    // Flush pending saves on app quit. Without this, a Cmd+Q during an
-    // active stream — or any time agent_end hasn't fired yet — leaves
-    // the partial transcript only in the in-memory store; the next
-    // launch reads stale disk and the latest exchanges silently
-    // disappear. We prevent the default close, await the flush, then
-    // destroy the window. Foreground sessions whose tokens live only
-    // in the panel's local React state aren't fully covered here —
-    // those rely on the panel's own snapshot-on-switch — but anything
-    // that's reached the store does get persisted.
+    // Save the current store snapshot when Home closes. The native close
+    // handler hides/minimizes this persistent window; it must stay alive
+    // so this router continues processing background sessions. Destroying
+    // it here would bypass that lifecycle and the Windows taskbar setting.
+    // This is a window-close hook, not an app-quit barrier. Tokens held only
+    // in the foreground panel still rely on that panel's own persistence.
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
@@ -396,27 +393,33 @@ export async function mountPiEventRouter(): Promise<() => void> {
         event.preventDefault();
         try {
           await flushPendingSaves();
-        } catch (e) {
+        } catch {
           console.error("Pending chat saves could not be flushed on close.");
+          // Native close handling already hid/minimized Home before this
+          // async flush completed. Restore it through the same path as the
+          // tray, including Windows' skip_taskbar reset, without navigating.
+          try {
+            const { commands } = await import("@/lib/utils/tauri");
+            const result = await commands.showWindow({ Home: { page: null } });
+            if (result.status === "error") {
+              console.error("Home could not be restored after a chat save failed.");
+            }
+          } catch {
+            console.error("Home could not be restored after a chat save failed.");
+          }
           toast({
-            title: "Quit paused to protect your chat",
+            title: "Chat could not be saved",
             description:
-              "Civitas kept the window open because a conversation couldn’t be saved. Retry after checking available disk space.",
+              "Your conversation is still in memory. Keep Civitas running and retry after checking available disk space.",
             variant: "destructive",
           });
-          return;
-        }
-        try {
-          await win.destroy();
-        } catch {
-          /* window already gone */
         }
       });
       unregistrations.push(offClose);
     } catch {
-      console.error("Chat quit protection could not be registered.");
+      console.error("Chat save-on-close could not be registered.");
       toast({
-        title: "Quit protection is unavailable",
+        title: "Save-on-close is unavailable",
         description:
           "Chats will still autosave, but wait for a response to finish before quitting Civitas.",
         variant: "destructive",
@@ -725,10 +728,9 @@ function queueBackgroundPersistence(sid: string): void {
   });
 }
 
-/** Persist every in-store session that has unsaved messages. Awaits the
- *  saveQueue tail for each id so already-running saves finish before
- *  the window closes. Used by the close-on-quit hook in
- *  `mountPiEventRouter`. */
+/** Persist every in-store session with messages and await its saveQueue tail,
+ *  including already-running saves. Used when the persistent Home window
+ *  receives a close request; native code owns hiding/minimizing the window. */
 export async function flushPendingSaves(): Promise<void> {
   const sessions = useChatStore.getState().sessions;
   const ids = Object.keys(sessions).filter((id) => {

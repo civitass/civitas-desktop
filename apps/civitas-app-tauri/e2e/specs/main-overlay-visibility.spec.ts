@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
-import { closeWindow, invokeOrThrow, waitForWindowClosed, waitForWindowHandle } from "../helpers/tauri.js";
+import { closeWindow, invokeOrThrow, waitForWindowHandle } from "../helpers/tauri.js";
 
 const MAIN_LABELS = ["main", "main-window"] as const;
 type MainLabel = (typeof MAIN_LABELS)[number];
@@ -86,9 +86,17 @@ describe("Main overlay: visibility", function () {
     await invokeOrThrow("show_main_window");
     const handles = await browser.getWindowHandles();
     expect(handles.filter((h) => h === label)).toHaveLength(1);
-    await expectMainOverlayVisible(true, t(20_000));
+    // Observe beyond the native 300 ms blur debounce, not just a transient show.
+    await expectMainOverlayVisible(true, t(20_000), 1_000);
+    await browser.switchToWindow(label);
+    const filepath = await saveScreenshot("main-overlay-visible");
+    expect(existsSync(filepath)).toBe(true);
 
     // Opening the floating Search bar must also dismiss the main overlay.
+    // Keep this last: Search claims input focus while loading and normal close
+    // retains its native window. Neither a competing re-show during startup nor
+    // forcibly destroying its macOS panel belongs in this visibility test.
+    await browser.switchToWindow("home");
     await invokeOrThrow("open_search_window", { query: null });
     await waitForWindowHandle("search", t(20_000));
     await browser.switchToWindow("search");
@@ -102,21 +110,5 @@ describe("Main overlay: visibility", function () {
       timeoutMsg: "Search input did not finish loading and receive focus",
     });
     await expectMainOverlayVisible(false, t(20_000));
-
-    // Search's normal close intentionally hides and retains its webview on all
-    // platforms. Destroy this synthetic fixture from Home's permitted IPC
-    // context so its input focus guard cannot compete with the independent
-    // Main re-show/screenshot assertion. Search opening/hiding Main was checked
-    // above; this is fixture teardown, not a claim about normal close behavior.
-    await invokeOrThrow("plugin:window|destroy", { label: "search" });
-    await waitForWindowClosed("search", t(20_000));
-
-    // Capture a screenshot from Main (when visible) to debug ordering/focus issues.
-    await invokeOrThrow("show_main_window");
-    // Observe beyond the native 300 ms blur debounce, not just a transient show.
-    await expectMainOverlayVisible(true, t(20_000), 1_000);
-    await browser.switchToWindow(label);
-    const filepath = await saveScreenshot("main-overlay-visible");
-    expect(existsSync(filepath)).toBe(true);
   });
 });
