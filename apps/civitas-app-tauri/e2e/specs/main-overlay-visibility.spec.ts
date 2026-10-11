@@ -103,11 +103,12 @@ describe("Main overlay: visibility", function () {
     });
     await expectMainOverlayVisible(false, t(20_000));
 
-    // Search claims input focus when its webview mounts. A native handle alone
-    // does not mean that startup has settled: immediately showing Main while
-    // Search is loading makes its later focus correctly auto-hide Main again.
-    // Dismiss Search before this independent re-show/screenshot assertion.
-    await closeWindow({ Search: { query: null } });
+    // Search's normal close intentionally hides and retains its webview on all
+    // platforms. Destroy this synthetic fixture from Home's permitted IPC
+    // context so its input focus guard cannot compete with the independent
+    // Main re-show/screenshot assertion. Search opening/hiding Main was checked
+    // above; this is fixture teardown, not a claim about normal close behavior.
+    await invokeOrThrow("plugin:window|destroy", { label: "search" });
     await waitForWindowClosed("search", t(20_000));
 
     // Capture a screenshot from Main (when visible) to debug ordering/focus issues.
