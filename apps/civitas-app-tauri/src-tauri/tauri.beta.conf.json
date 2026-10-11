@@ -31,8 +31,7 @@
       "icons/civitas-logo-tray-beta.png"
     ],
     "resources": {
-      "assets/*": "assets/",
-      "permission-flow/PermissionFlow_PermissionFlow.bundle": "PermissionFlow_PermissionFlow.bundle"
+      "assets/*": "assets/"
     },
     "macOS": {
       "entitlements": "entitlements.plist",

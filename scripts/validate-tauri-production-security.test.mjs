@@ -53,6 +53,58 @@ test("the checked-in Tauri publication boundary passes", () => {
   assert.deepEqual(auditTauriSecurity(repoRoot).hazards, []);
 });
 
+// Tauri merges its automatic platform overlay with JSON Merge Patch (RFC
+// 7396): object entries survive unless explicitly replaced/deleted, whereas
+// arrays replace the prior value. A Windows resource map cannot erase a
+// macOS-only entry accidentally added to the shared config.
+function mergeConfig(target, patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    return structuredClone(patch);
+  }
+  const result = target && typeof target === "object" && !Array.isArray(target)
+    ? structuredClone(target)
+    : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete result[key];
+    else result[key] = mergeConfig(result[key], value);
+  }
+  return result;
+}
+
+test("effective platform resources isolate Swift bundles while retaining shared assets and native dependencies", () => {
+  const readConfig = (name) => JSON.parse(fs.readFileSync(path.join(repoRoot, srcTauriRelativePath, name), "utf8"));
+  const swiftSource = "permission-flow/PermissionFlow_PermissionFlow.bundle";
+  const e2e = readConfig("tauri.e2e.json");
+  for (const channel of ["tauri.conf.json", "tauri.prod.conf.json", "tauri.beta.conf.json"]) {
+    const base = readConfig(channel);
+    // Release selection copies the channel config to tauri.conf.json before
+    // Tauri applies the platform overlay; development uses the base directly.
+    for (const platform of ["macos", "windows", "linux"]) {
+      const effective = mergeConfig(base, readConfig(`tauri.${platform}.conf.json`));
+      for (const config of [effective, mergeConfig(effective, e2e)]) {
+        const resources = config.bundle.resources;
+        const paths = Array.isArray(resources) ? resources : Object.keys(resources);
+        assert(paths.includes("assets/*"), `${channel}/${platform}: shared assets missing`);
+        if (platform === "macos") {
+          assert.equal(resources[swiftSource], "PermissionFlow_PermissionFlow.bundle", `${channel}: macOS permission localization bundle missing`);
+          assert.deepEqual(config.bundle.externalBin, ["bun", "ffmpeg", "ffprobe"]);
+        } else {
+          assert(!paths.some((resource) => /permission-flow|PermissionFlow/.test(resource)), `${channel}/${platform}: macOS Swift resource leaked into another platform`);
+          if (platform === "windows") {
+            assert(paths.includes("ffmpeg\\bin\\ffmpeg.exe"));
+            assert(paths.includes("onnxruntime*\\lib\\onnxruntime.dll"));
+            assert(paths.includes("openblas\\bin\\*.dll"));
+            assert(paths.includes("vcredist\\*.dll"));
+          } else {
+            assert(paths.includes("tessdata/*"));
+            assert(paths.includes("tessdata/configs/*"));
+          }
+        }
+      }
+    }
+  }
+});
+
 test("the gate rejects wildcard and overlapping window privileges", () => {
   const result = withSecurityFixture((srcTauriRoot) => {
     mutateJson(path.join(srcTauriRoot, "capabilities", "viewer.json"), (capability) => {

@@ -13,14 +13,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/windows/ci-probe-helpers.ps1"
 
 function Get-HealthSnapshot {
-  try {
-    return Invoke-RestMethod -Uri $HealthUrl -TimeoutSec $HealthRequestTimeoutSeconds
-  } catch {
-    Write-Host "health poll failed: $($_.Exception.Message)"
-    return $null
-  }
+  return Get-CivitasHealthSnapshot -HealthUrl $HealthUrl -TimeoutSeconds $HealthRequestTimeoutSeconds
 }
 
 function Get-AudioRmsCandidates {
@@ -198,15 +194,16 @@ if ($null -eq $health -or $null -eq $health.audio_pipeline) {
   # Distinguish two failure modes during bootstrap:
   #   1) /health was reachable but never reported audio_pipeline — that's a
   #      real engine-side regression (audio module never came up), throw.
-  #   2) /health never responded at all within the budget — every Invoke-
-  #      RestMethod hit its per-request timeout. We've seen this on hosted
+  #   2) /health never responded at all within the budget — every request
+  #      failed at the transport layer. We've seen this on hosted
   #      Windows runners under load (the server logs "listening on 3030"
   #      but TCP polls never complete inside the 10s budget). The smoke
   #      can't tell a near-silent WASAPI regression from "we never got
   #      a response", so degrade to inconclusive — matches what the
-  #      post-stimulus loop already does.
+  #      post-stimulus loop already does. HTTP errors (including 401/403),
+  #      redirects and invalid JSON fail immediately in the probe helper.
   if ($bootstrapResponsivePolls -eq 0) {
-    Write-Warning "Windows audio RMS smoke inconclusive: /health did not respond to any poll during the ${TimeoutSeconds}s bootstrap budget. Treating as a hosted-runner health-poll artifact instead of an audio capture regression."
+    Write-Warning "Windows audio RMS smoke inconclusive: every /health poll had a transport connection or timeout failure during the ${TimeoutSeconds}s bootstrap budget. Audio capture was not verified."
     return
   }
   throw "civitas /health did not expose audio_pipeline within ${TimeoutSeconds}s"
@@ -246,8 +243,11 @@ try {
 
 Write-Host "final audio health:"
 Write-AudioHealth -Health (Get-HealthSnapshot)
-if ($responsivePollsAfterStimulus -eq 0 -or $max.Device -eq "none") {
-  Write-Warning "Windows audio RMS smoke inconclusive: /health did not provide a post-stimulus RMS candidate. Treating this as a hosted-runner health-poll artifact instead of a near-silent audio capture regression."
+if ($responsivePollsAfterStimulus -eq 0) {
+  Write-Warning "Windows audio RMS smoke inconclusive: every post-stimulus /health poll had a transport connection or timeout failure. Audio capture was not verified."
   return
+}
+if ($max.Device -eq "none") {
+  throw 'Windows audio RMS smoke failed: responsive health snapshots did not include an audio RMS candidate'
 }
 throw ("Windows audio RMS smoke failed: max observed RMS {0:N6} on {1}, expected >= {2}. This catches near-silent WASAPI regressions such as cpal AUTOCONVERTPCM on Win11 24H2." -f $max.Rms, $max.Device, $MinRms)
