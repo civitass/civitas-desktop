@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 
 import { E2E_DATA_DIR } from "../helpers/app-launcher.js";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
+import { invokeOrThrow } from "../helpers/tauri.js";
 import { openHomeWindow, t, waitForAppReady } from "../helpers/test-utils.js";
 
 type CommitmentKind = "commitment" | "open-loop";
@@ -27,29 +28,9 @@ async function seedPublicationTimeline(): Promise<PublicationTimelineSeedResult>
     resolve(destinationDirectory, "timeline-frame.png"),
   );
 
-  return (await browser.executeAsync(
-    (done: (value: PublicationTimelineSeedResult | Error) => void) => {
-      const global = globalThis as unknown as {
-        __TAURI__?: {
-          core?: {
-            invoke: (command: string, args?: object) => Promise<unknown>;
-          };
-        };
-        __TAURI_INTERNALS__?: {
-          invoke: (command: string, args?: object) => Promise<unknown>;
-        };
-      };
-      const invoke =
-        global.__TAURI__?.core?.invoke ?? global.__TAURI_INTERNALS__?.invoke;
-      if (!invoke) {
-        done(new Error("Tauri invoke is unavailable"));
-        return;
-      }
-      void invoke("e2e_seed_publication_timeline")
-        .then((value) => done(value as PublicationTimelineSeedResult))
-        .catch((error) => done(new Error(String(error))));
-    },
-  )) as PublicationTimelineSeedResult;
+  return invokeOrThrow<PublicationTimelineSeedResult>(
+    "e2e_seed_publication_timeline",
+  );
 }
 
 async function settlePublicationFrame(options?: {
@@ -248,7 +229,7 @@ describe("Publication demo surfaces", function () {
     const slider = await $('[data-testid="timeline-slider"]');
     await slider.waitForExist({ timeout: t(30_000) });
     await browser.waitUntil(
-      async () => (await slider.$$("[data-timestamp]")).length >= 3,
+      async () => (await (await slider.$$("[data-timestamp]")).length) >= 3,
       {
         timeout: t(30_000),
         interval: 250,

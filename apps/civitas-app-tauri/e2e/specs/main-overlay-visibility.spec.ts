@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import { saveScreenshot } from "../helpers/screenshot-utils.js";
 import { openHomeWindow, waitForAppReady, t } from "../helpers/test-utils.js";
-import { closeWindow, invokeOrThrow, waitForWindowHandle } from "../helpers/tauri.js";
+import { closeWindow, invokeOrThrow, waitForWindowClosed, waitForWindowHandle } from "../helpers/tauri.js";
 
 const MAIN_LABELS = ["main", "main-window"] as const;
 type MainLabel = (typeof MAIN_LABELS)[number];
@@ -30,7 +30,12 @@ async function waitForAnyMainHandle(timeoutMs = t(12_000)): Promise<MainLabel> {
   throw new Error(`Main window handle did not appear (${MAIN_LABELS.join(", ")})`);
 }
 
-async function expectMainOverlayVisible(expected: boolean, timeoutMs = t(15_000)): Promise<void> {
+async function expectMainOverlayVisible(
+  expected: boolean,
+  timeoutMs = t(15_000),
+  stableMs = 0,
+): Promise<void> {
+  let matchingSince: number | null = null;
   await browser.waitUntil(async () => {
     // Use Home as the invoke() context. Some surfaces (like Main) can be hidden
     // and still have a handle, but Home is always a stable Tauri IPC origin.
@@ -38,7 +43,12 @@ async function expectMainOverlayVisible(expected: boolean, timeoutMs = t(15_000)
       await browser.switchToWindow("home");
     }
     const visible = await invokeOrThrow<boolean>("e2e_main_overlay_visible");
-    return visible === expected;
+    if (visible !== expected) {
+      matchingSince = null;
+      return false;
+    }
+    matchingSince ??= Date.now();
+    return Date.now() - matchingSince >= stableMs;
   }, {
     timeout: timeoutMs,
     interval: 250,
@@ -81,11 +91,29 @@ describe("Main overlay: visibility", function () {
     // Opening the floating Search bar must also dismiss the main overlay.
     await invokeOrThrow("open_search_window", { query: null });
     await waitForWindowHandle("search", t(20_000));
+    await browser.switchToWindow("search");
+    await browser.waitUntil(async () => await browser.execute(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLInputElement
+        && active.placeholder.toLowerCase().includes("search memory");
+    }), {
+      timeout: t(20_000),
+      interval: 250,
+      timeoutMsg: "Search input did not finish loading and receive focus",
+    });
     await expectMainOverlayVisible(false, t(20_000));
+
+    // Search claims input focus when its webview mounts. A native handle alone
+    // does not mean that startup has settled: immediately showing Main while
+    // Search is loading makes its later focus correctly auto-hide Main again.
+    // Dismiss Search before this independent re-show/screenshot assertion.
+    await closeWindow({ Search: { query: null } });
+    await waitForWindowClosed("search", t(20_000));
 
     // Capture a screenshot from Main (when visible) to debug ordering/focus issues.
     await invokeOrThrow("show_main_window");
-    await expectMainOverlayVisible(true, t(20_000));
+    // Observe beyond the native 300 ms blur debounce, not just a transient show.
+    await expectMainOverlayVisible(true, t(20_000), 1_000);
     await browser.switchToWindow(label);
     const filepath = await saveScreenshot("main-overlay-visible");
     expect(existsSync(filepath)).toBe(true);

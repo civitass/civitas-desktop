@@ -271,8 +271,8 @@ export const TimelineSlider = ({
 	const [hoveredTimestamp, setHoveredTimestamp] = useState<string | null>(null);
 	const [hoveredRect, setHoveredRect] = useState<{ x: number; y: number } | null>(null);
 	const [isDragging, setIsDragging] = useState(false);
-	const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
-	const [hasDragMoved, setHasDragMoved] = useState(false); // Track if mouse moved during drag
+	const dragGestureRef = useRef<{ startIndex: number; moved: boolean } | null>(null);
+	const suppressDragClickRef = useRef(false);
 	const [selectedIndices, setSelectedIndices] = useState<Set<number>>(
 		new Set(),
 	);
@@ -859,22 +859,24 @@ export const TimelineSlider = ({
 	}, [currentIndex, frames.length]);
 
 	const handleDragStart = (index: number) => {
+		if (!frames[index]) return;
+		dragGestureRef.current = { startIndex: index, moved: false };
 		setIsDragging(true);
-		setDragStartIndex(index);
-		setHasDragMoved(false); // Reset movement tracking
 		setActivePopoverGroup(null); // Close popover when interacting with frames
 		// Don't set selection immediately - wait for movement
 	};
 
 	const handleDragOver = (index: number) => {
-		if (isDragging && dragStartIndex !== null && frames && frames.length > 0) {
+		const gesture = dragGestureRef.current;
+		if (gesture && frames[index]) {
+			const dragStartIndex = gesture.startIndex;
 			// Check if we've actually moved to a different frame
 			if (index !== dragStartIndex) {
-				setHasDragMoved(true); // Mark that mouse has moved during drag
+				gesture.moved = true;
 			}
 
 			// Only create selection if we've moved
-			if (!hasDragMoved && index === dragStartIndex) {
+			if (!gesture.moved) {
 				return; // No movement yet, don't create selection
 			}
 
@@ -908,14 +910,13 @@ export const TimelineSlider = ({
 	};
 
 	const handleDragEnd = () => {
-		// If no movement during drag, this was a click - jump to that frame
-		if (!hasDragMoved && dragStartIndex !== null) {
-			onFrameChange(dragStartIndex);
-			// Don't create selection for clicks
-			setSelectedIndices(new Set());
-			setSelectionRange(null);
-			setSelectionRect(null);
-		} else if (selectedIndices.size > 1) {
+		const gesture = dragGestureRef.current;
+		if (!gesture) return;
+		dragGestureRef.current = null;
+		// The browser can dispatch click after a range drag, including to the
+		// bars' common ancestor. Keep that click from collapsing the selection.
+		suppressDragClickRef.current = gesture.moved;
+		if (gesture.moved && selectedIndices.size > 1) {
 			// Track selection if multiple frames were selected
 			posthog.capture("timeline_selection_made", {
 				frames_selected: selectedIndices.size,
@@ -939,8 +940,18 @@ export const TimelineSlider = ({
 			}
 		}
 		setIsDragging(false);
-		setDragStartIndex(null);
-		setHasDragMoved(false);
+	};
+
+	const activateFrame = (index: number) => {
+		if (!frames[index]) return;
+		dragGestureRef.current = null;
+		suppressDragClickRef.current = false;
+		setIsDragging(false);
+		setActivePopoverGroup(null);
+		onFrameChange(index);
+		setSelectedIndices(new Set());
+		setSelectionRange(null);
+		setSelectionRect(null);
 	};
 
 	// Calculate group width for positioning labels
@@ -1405,6 +1416,14 @@ export const TimelineSlider = ({
 				}}
 				data-testid="timeline-slider"
 				tabIndex={0}
+				onMouseDownCapture={() => { suppressDragClickRef.current = false; }}
+				onTouchStartCapture={() => { suppressDragClickRef.current = false; }}
+				onClickCapture={(event) => {
+					// detail=0 is semantic/assistive activation, with no mouse gesture.
+					const suppress = suppressDragClickRef.current && event.detail > 0;
+					suppressDragClickRef.current = false;
+					if (suppress) event.stopPropagation();
+				}}
 				className="w-full overflow-x-auto overflow-y-visible scrollbar-hide bg-gradient-to-t from-background/90 via-background/50 to-transparent outline-none"
 				style={{
 					paddingTop: "60px", // Space for tooltips above
@@ -1694,8 +1713,12 @@ export const TimelineSlider = ({
 											data-frame-id={frameId || undefined}
 											data-current={isCurrent ? "true" : undefined}
 											data-selected={isSelected || isInRange ? "true" : undefined}
+											role="button"
+											aria-label={`View ${getFrameAppName(frame)} frame at ${format(frameDate, "MMM d, h:mm:ss a")}`}
+											aria-pressed={isCurrent}
+											tabIndex={isCurrent ? 0 : -1}
 											className={cn(
-												"flex-shrink-0 cursor-ew-resize rounded-t relative hover:z-50 transition-ui duration-200",
+												"flex-shrink-0 cursor-ew-resize rounded-t relative hover:z-50 transition-ui duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 												(isSelected || isInRange) && "ring-2 ring-foreground/60 ring-offset-1 ring-offset-background",
 												isCurrent && isPlaying && "animate-pulse"
 											)}
@@ -1731,7 +1754,19 @@ export const TimelineSlider = ({
 												scale: 0.95,
 												transition: { duration: 0.1 }
 											}}
-											onMouseDown={() => handleDragStart(frameIndex)}
+											onClick={(event) => {
+												event.stopPropagation();
+												activateFrame(frameIndex);
+											}}
+											onKeyDown={(event) => {
+												if (event.key !== "Enter" && event.key !== " ") return;
+												event.preventDefault();
+												event.stopPropagation();
+												if (!event.repeat) activateFrame(frameIndex);
+											}}
+											onMouseDown={(event) => {
+												if (event.button === 0) handleDragStart(frameIndex);
+											}}
 											onMouseEnter={(e) => {
 												const rect = e.currentTarget.getBoundingClientRect();
 												setHoveredRect({ x: rect.left + rect.width / 2, y: rect.top });

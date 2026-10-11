@@ -45,6 +45,7 @@ cargo test -p <changed-crate>
 # Desktop frontend
 cd apps/civitas-app-tauri
 bun run typecheck
+bun run typecheck:e2e
 bun run test
 
 # Generated Tauri bindings

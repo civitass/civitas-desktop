@@ -14,6 +14,7 @@ on:
       - 'apps/civitas-app-tauri/bun.lock'
       - 'apps/civitas-app-tauri/vitest.config.ts'
       - 'apps/civitas-app-tauri/tsconfig*.json'
+      - 'apps/civitas-app-tauri/e2e/**/tsconfig*.json'
       - '.github/workflows/test-frontend.yml'
   pull_request:
     paths:
@@ -24,6 +25,7 @@ on:
       - 'apps/civitas-app-tauri/bun.lock'
       - 'apps/civitas-app-tauri/vitest.config.ts'
       - 'apps/civitas-app-tauri/tsconfig*.json'
+      - 'apps/civitas-app-tauri/e2e/**/tsconfig*.json'
       - '.github/workflows/test-frontend.yml'
 
 concurrency:
@@ -62,6 +64,9 @@ jobs:
         # also catches but ~5x slower. Runs first because a TS error makes
         # the test run useless.
         run: bun run typecheck
+
+      - name: Type-check WebDriver specs and Bun updater harness
+        run: bun run typecheck:e2e
 
       - name: Vitest (jsdom)
         run: bun run test:vitest

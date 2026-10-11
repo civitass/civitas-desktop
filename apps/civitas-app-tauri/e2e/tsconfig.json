@@ -24,7 +24,8 @@
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "mock-updates"
   ],
   "ts-node": {
     "esm": true

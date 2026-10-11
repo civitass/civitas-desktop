@@ -17,6 +17,7 @@ cargo test --locked --workspace
 cd apps/civitas-app-tauri
 bun install --frozen-lockfile
 bun run typecheck
+bun run typecheck:e2e
 bun run test
 bun run bindings:check
 bun run e2e:coverage:check
