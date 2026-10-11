@@ -83,6 +83,27 @@ dependency graph and registry integrity values are recorded in
 embeds that lockfile and installs with dependency lifecycle scripts disabled.
 The release SBOM and lockfile are the authoritative full inventory.
 
+### Optional WhatsApp gateway runtime
+
+The personal WhatsApp connection uses the unofficial Baileys
+`7.0.0-rc14` runtime (MIT), pino `10.4.0` (MIT), and ws `8.22.0` (MIT).
+Its dependency graph includes libsignal `6.0.0` (GPL-3.0) and
+whatsapp-rust-bridge `0.5.4` (MIT). These optional packages are downloaded
+separately when the user explicitly pairs in **Settings → Connections**;
+they are not bundled into the application. Startup never installs them.
+
+The reviewed versions and registry integrity values are recorded in
+`crates/civitas-connect/assets/whatsapp-runtime/bun.lock`. Installation uses
+Bun `1.3.10`, a frozen lockfile, and disabled lifecycle scripts. Upstream
+source and licenses are available from
+[Baileys](https://github.com/WhiskeySockets/Baileys),
+[libsignal](https://www.npmjs.com/package/libsignal/v/6.0.0),
+[pino](https://github.com/pinojs/pino),
+[ws](https://github.com/websockets/ws), and
+[whatsapp-rust-bridge](https://github.com/jlucaso1/whatsapp-rust-bridge).
+This pre-release, unofficial protocol integration is optional and is not
+endorsed by WhatsApp.
+
 ## Windows build and runtime dependencies
 
 Official Windows builds stage these native components from versioned HTTPS

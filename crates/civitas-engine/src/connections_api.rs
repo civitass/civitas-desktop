@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use civitas_connect::connections::is_vault_only_field;
 use civitas_connect::connections::ConnectionManager;
 use civitas_connect::whatsapp::WhatsAppGateway;
-use civitas_core::network::{authorize_url, EgressPurpose};
+use civitas_core::network::{authorize_external_process, authorize_url, EgressPurpose};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -694,6 +694,16 @@ fn local_path_fingerprints(id: &str, credentials: &Map<String, Value>) -> Map<St
         .collect()
 }
 
+pub(crate) const WHATSAPP_API_DESCRIPTION: &str =
+    "Personal WhatsApp, paired in Settings > Connections. Authenticated local API: \
+        GET /connections/whatsapp/contacts lists saved contacts; \
+        GET /connections/whatsapp/chats lists recent chats; \
+        GET /connections/whatsapp/messages?phone=PHONE&limit=50 reads recent messages \
+        (URL-encode the phone, or supply jid; limit 1–200); \
+        POST /connections/whatsapp/send {\"to\":\"+PHONE\",\"text\":\"MSG\"} sends only when \
+        explicitly requested by the user and permitted by the workflow's API scope. \
+        GET /connections/whatsapp/status reports pairing status.";
+
 /// GET /connections — list all integrations with connection status.
 async fn list_connections(State(state): State<ConnectionsState>) -> Json<Value> {
     let mgr = state.cm.lock().await;
@@ -703,26 +713,11 @@ async fn list_connections(State(state): State<ConnectionsState>) -> Json<Value> 
     let wa = state.wa.lock().await;
     let wa_status = wa.status().await;
     let has_session = wa.has_session();
-    let wa_port = wa.http_port().await;
     drop(wa);
     let wa_connected = matches!(
         wa_status,
         civitas_connect::whatsapp::WhatsAppStatus::Connected { .. }
     );
-    let wa_desc = if let Some(port) = wa_port {
-        format!(
-            "WhatsApp messaging gateway on port {}. Endpoints: \
-            GET /contacts — list saved contacts (may be empty, ask user for phone number if needed). \
-            GET /chats — list recent chats with last message. \
-            GET /messages?phone=+PHONE&limit=50 — read recent messages from a chat. \
-            POST /send {{\"to\":\"+PHONE\",\"text\":\"MSG\"}} — send a message. \
-            GET /status — connection info. \
-            All endpoints are at http://localhost:{}.",
-            port, port
-        )
-    } else {
-        "Connect your personal WhatsApp via QR code pairing in Settings > Connections.".to_string()
-    };
 
     let mut data = serde_json::to_value(&list).unwrap_or(json!([]));
     if let Some(arr) = data.as_array_mut() {
@@ -787,7 +782,7 @@ async fn list_connections(State(state): State<ConnectionsState>) -> Json<Value> 
             "name": "WhatsApp",
             "icon": "whatsapp",
             "category": "notification",
-            "description": wa_desc,
+            "description": WHATSAPP_API_DESCRIPTION,
             "fields": [],
             "connected": wa_connected,
             "has_session": has_session,
@@ -1385,11 +1380,288 @@ async fn whatsapp_status(State(state): State<ConnectionsState>) -> Json<Value> {
     Json(json!({ "status": status }))
 }
 
+const MAX_WHATSAPP_REQUEST_BYTES: usize = 64 * 1024;
+const MAX_WHATSAPP_TEXT_BYTES: usize = 16 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WhatsAppMessagesQuery {
+    phone: Option<String>,
+    jid: Option<String>,
+    limit: Option<u16>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WhatsAppSendRequest {
+    to: String,
+    text: String,
+}
+
+// This enum fixes every child destination and method. Caller input can enter
+// only encoded query values or a JSON body, never the host, path or headers.
+enum WhatsAppGatewayRequest {
+    Contacts,
+    Chats,
+    Messages(WhatsAppMessagesQuery),
+    Send(WhatsAppSendRequest),
+}
+
+fn valid_whatsapp_phone(value: &str) -> bool {
+    if value.len() > 64 {
+        return false;
+    }
+    let value = value.trim();
+    let number = value.strip_prefix('+').unwrap_or(value);
+    number
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || b" ().-".contains(&byte))
+        && (5..=15).contains(&number.bytes().filter(u8::is_ascii_digit).count())
+}
+
+fn valid_whatsapp_jid(value: &str) -> bool {
+    if value.len() > 254 {
+        return false;
+    }
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && local
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:+-".contains(&byte))
+        && domain
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b".-".contains(&byte))
+}
+
+fn valid_whatsapp_messages(query: &WhatsAppMessagesQuery) -> bool {
+    (1..=200).contains(&query.limit.unwrap_or(50))
+        && match (&query.phone, &query.jid) {
+            (Some(phone), None) => valid_whatsapp_phone(phone),
+            (None, Some(jid)) => valid_whatsapp_jid(jid),
+            _ => false,
+        }
+}
+
+fn valid_whatsapp_send(body: &WhatsAppSendRequest) -> bool {
+    valid_whatsapp_phone(&body.to)
+        && !body.text.trim().is_empty()
+        && body.text.len() <= MAX_WHATSAPP_TEXT_BYTES
+}
+
+type WhatsAppProxyResult = Result<Value, (StatusCode, &'static str)>;
+
+fn whatsapp_proxy_response(result: WhatsAppProxyResult) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let (status, body) = match result {
+        Ok(value) => (StatusCode::OK, value),
+        Err((status, message)) => (status, json!({ "error": message })),
+    };
+    (status, [("cache-control", "no-store")], Json(body)).into_response()
+}
+
+/// The outer server authentication and workflow-permission middleware applies
+/// to all these routes. A declared connection grants GET only; sending still
+/// requires the existing explicit POST permission (or the device owner key).
+async fn whatsapp_contacts(State(state): State<ConnectionsState>) -> axum::response::Response {
+    whatsapp_proxy_response(whatsapp_forward(&state, WhatsAppGatewayRequest::Contacts).await)
+}
+
+async fn whatsapp_chats(State(state): State<ConnectionsState>) -> axum::response::Response {
+    whatsapp_proxy_response(whatsapp_forward(&state, WhatsAppGatewayRequest::Chats).await)
+}
+
+async fn whatsapp_messages(
+    State(state): State<ConnectionsState>,
+    Query(query): Query<WhatsAppMessagesQuery>,
+) -> axum::response::Response {
+    if !valid_whatsapp_messages(&query) {
+        return whatsapp_proxy_response(Err((
+            StatusCode::BAD_REQUEST,
+            "provide exactly one valid phone or jid and a limit between 1 and 200",
+        )));
+    }
+    whatsapp_proxy_response(whatsapp_forward(&state, WhatsAppGatewayRequest::Messages(query)).await)
+}
+
+async fn whatsapp_send(
+    State(state): State<ConnectionsState>,
+    Json(body): Json<WhatsAppSendRequest>,
+) -> axum::response::Response {
+    if !valid_whatsapp_send(&body) {
+        return whatsapp_proxy_response(Err((
+            StatusCode::BAD_REQUEST,
+            "provide a valid phone and nonempty text of at most 16384 UTF-8 bytes",
+        )));
+    }
+    whatsapp_proxy_response(whatsapp_forward(&state, WhatsAppGatewayRequest::Send(body)).await)
+}
+
+async fn whatsapp_forward(
+    state: &ConnectionsState,
+    request: WhatsAppGatewayRequest,
+) -> WhatsAppProxyResult {
+    let _permit = state
+        .proxy_semaphore
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many concurrent connection requests",
+            )
+        })?;
+    // The child's HTTP transport is local, but its actions and reads are part
+    // of a remote connection. Do not mistake loopback for Local-only consent.
+    authorize_external_process(EgressPurpose::Connection).map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            "WhatsApp is disabled in Local-only mode",
+        )
+    })?;
+    let (port, token) = {
+        let wa = state.wa.lock().await;
+        let port = wa.http_port().await.ok_or((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "WhatsApp gateway is not running",
+        ))?;
+        (port, wa.http_token().to_owned())
+    };
+    whatsapp_gateway_request(port, &token, request).await
+}
+
+async fn whatsapp_gateway_request(
+    port: u16,
+    token: &str,
+    request: WhatsAppGatewayRequest,
+) -> WhatsAppProxyResult {
+    let outbound = build_whatsapp_gateway_request(port, token, request)?;
+    authorize_external_process(EgressPurpose::Connection).map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            "WhatsApp is disabled in Local-only mode",
+        )
+    })?;
+    // Never retry a send: a timeout may occur after the recipient received it.
+    let response = outbound.send().await.map_err(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "WhatsApp request failed; delivery may be unknown for sends",
+        )
+    })?;
+    read_whatsapp_gateway_response(response).await
+}
+
+fn build_whatsapp_gateway_request(
+    port: u16,
+    token: &str,
+    request: WhatsAppGatewayRequest,
+) -> Result<reqwest::RequestBuilder, (StatusCode, &'static str)> {
+    let valid = match &request {
+        WhatsAppGatewayRequest::Messages(query) => valid_whatsapp_messages(query),
+        WhatsAppGatewayRequest::Send(body) => valid_whatsapp_send(body),
+        _ => true,
+    };
+    if !valid {
+        return Err((StatusCode::BAD_REQUEST, "WhatsApp request is invalid"));
+    }
+    if port == 0 || token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "WhatsApp gateway is unavailable",
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(PROXY_CONNECT_TIMEOUT)
+        .timeout(PROXY_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|_| (StatusCode::BAD_GATEWAY, "WhatsApp transport is unavailable"))?;
+    let (method, path) = match &request {
+        WhatsAppGatewayRequest::Contacts => (reqwest::Method::GET, "contacts"),
+        WhatsAppGatewayRequest::Chats => (reqwest::Method::GET, "chats"),
+        WhatsAppGatewayRequest::Messages(_) => (reqwest::Method::GET, "messages"),
+        WhatsAppGatewayRequest::Send(_) => (reqwest::Method::POST, "send"),
+    };
+    let mut outbound = client
+        .request(method, format!("http://127.0.0.1:{port}/{path}"))
+        .bearer_auth(token)
+        .header("accept", "application/json");
+    match request {
+        WhatsAppGatewayRequest::Messages(query) => {
+            let mut pairs = vec![("limit", query.limit.unwrap_or(50).to_string())];
+            if let Some(phone) = query.phone {
+                pairs.push(("phone", phone));
+            }
+            if let Some(jid) = query.jid {
+                pairs.push(("jid", jid));
+            }
+            outbound = outbound.query(&pairs);
+        }
+        WhatsAppGatewayRequest::Send(body) => outbound = outbound.json(&body),
+        _ => {}
+    }
+    Ok(outbound)
+}
+
+async fn read_whatsapp_gateway_response(mut response: reqwest::Response) -> WhatsAppProxyResult {
+    if !response.status().is_success() {
+        let status = if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        // Child responses can contain provider details. Do not echo their
+        // bodies, URLs, headers, tokens or arbitrary error strings.
+        return Err((status, "WhatsApp gateway could not complete the request"));
+    }
+    if !proxy_response_length_allowed(response.content_length()) {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "WhatsApp response exceeded the size limit",
+        ));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "WhatsApp response could not be read",
+        )
+    })? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_PROXY_RESPONSE_BYTES {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                "WhatsApp response exceeded the size limit",
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "WhatsApp response was not valid JSON",
+        )
+    })
+}
+
 /// POST /connections/whatsapp/disconnect — stop gateway and wipe session.
-async fn whatsapp_disconnect(State(state): State<ConnectionsState>) -> Json<Value> {
+async fn whatsapp_disconnect(State(state): State<ConnectionsState>) -> (StatusCode, Json<Value>) {
     let wa = state.wa.lock().await;
-    wa.logout().await;
-    Json(json!({ "success": true }))
+    match wa.logout().await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "success": false,
+                "gateway_stopped": true,
+                "error": "The gateway stopped, but its saved session could not be removed. It may reconnect after restart. Retry disconnect or unlink this device in WhatsApp.",
+            })),
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2862,6 +3134,15 @@ where
         // WhatsApp-specific routes (must be before /:id to avoid conflict)
         .route("/whatsapp/pair", post(whatsapp_pair))
         .route("/whatsapp/status", get(whatsapp_status))
+        .route("/whatsapp/contacts", get(whatsapp_contacts))
+        .route("/whatsapp/chats", get(whatsapp_chats))
+        .route("/whatsapp/messages", get(whatsapp_messages))
+        .route(
+            "/whatsapp/send",
+            post(whatsapp_send).layer(axum::extract::DefaultBodyLimit::max(
+                MAX_WHATSAPP_REQUEST_BYTES,
+            )),
+        )
         .route("/whatsapp/disconnect", post(whatsapp_disconnect))
         // Narrow local filesystem operations. These must precede generic
         // `/:id/*` routes so paths are never interpreted as proxy segments.
@@ -3478,6 +3759,291 @@ mod tests {
         let (instance, forwarded) = split_instance_query(Some("page=1&limit=10"));
         assert_eq!(instance, None);
         assert_eq!(forwarded.as_deref(), Some("page=1&limit=10"));
+    }
+
+    #[test]
+    fn whatsapp_proxy_validates_recipient_message_and_query_bounds() {
+        for phone in [
+            "+15550100001",
+            "+1 (555) 010-0001",
+            "12345",
+            "123456789012345",
+        ] {
+            assert!(valid_whatsapp_phone(phone));
+        }
+        for phone in [
+            "",
+            "1234",
+            "1234567890123456",
+            "1+5550100001",
+            "555\n0100001",
+            "name@example.invalid",
+            "https://example.invalid",
+        ] {
+            assert!(!valid_whatsapp_phone(phone));
+        }
+        assert!(!valid_whatsapp_phone(&format!("{}12345", " ".repeat(64))));
+        for jid in [
+            "15550100001@s.whatsapp.net",
+            "12345-67890@g.us",
+            "12345:7@lid",
+        ] {
+            assert!(valid_whatsapp_jid(jid));
+        }
+        for jid in [
+            "@g.us",
+            "123@",
+            "123@@g.us",
+            "123@g.us/path",
+            "123@g.us?limit=0",
+            "123\n@g.us",
+            "é@g.us",
+        ] {
+            assert!(!valid_whatsapp_jid(jid));
+        }
+        assert!(!valid_whatsapp_jid(&format!("{}@g.us", "1".repeat(254))));
+        for (phone, jid, limit, expected) in [
+            (Some("+15550100001"), None, None, true),
+            (None, Some("12345@g.us"), Some(200), true),
+            (None, None, Some(50), false),
+            (Some("+15550100001"), Some("12345@g.us"), Some(50), false),
+            (Some("+15550100001"), None, Some(0), false),
+            (Some("+15550100001"), None, Some(201), false),
+        ] {
+            assert_eq!(
+                valid_whatsapp_messages(&WhatsAppMessagesQuery {
+                    phone: phone.map(str::to_owned),
+                    jid: jid.map(str::to_owned),
+                    limit,
+                }),
+                expected
+            );
+        }
+        let mut body = WhatsAppSendRequest {
+            to: "+15550100001".into(),
+            text: "é".repeat(MAX_WHATSAPP_TEXT_BYTES / 2),
+        };
+        assert!(valid_whatsapp_send(&body));
+        body.text.push('é');
+        assert!(!valid_whatsapp_send(&body));
+        body.text = " \n\t".into();
+        assert!(!valid_whatsapp_send(&body));
+        assert!(serde_json::from_value::<WhatsAppSendRequest>(json!({
+            "to": "+15550100001", "text": "synthetic", "url": "http://example.invalid"
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<WhatsAppMessagesQuery>(json!({
+            "phone": "+15550100001", "limit": -1
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn whatsapp_proxy_requests_pin_destination_and_hide_credentials_in_headers() {
+        let token = "a".repeat(64); // synthetic parent-only credential
+        let request = build_whatsapp_gateway_request(
+            12345,
+            &token,
+            WhatsAppGatewayRequest::Messages(WhatsAppMessagesQuery {
+                phone: Some("+1 (555) 010-0001".into()),
+                jid: None,
+                limit: Some(25),
+            }),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(request.method(), reqwest::Method::GET);
+        assert_eq!(request.url().host_str(), Some("127.0.0.1"));
+        assert_eq!(request.url().port(), Some(12345));
+        assert_eq!(request.url().path(), "/messages");
+        let params: HashMap<_, _> = request.url().query_pairs().into_owned().collect();
+        assert_eq!(
+            params.get("phone").map(String::as_str),
+            Some("+1 (555) 010-0001")
+        );
+        assert_eq!(params.get("limit").map(String::as_str), Some("25"));
+        assert!(!request.url().as_str().contains(&token));
+        let authorization = request.headers().get("authorization").unwrap();
+        assert!(authorization.is_sensitive());
+        assert_eq!(authorization.to_str().unwrap(), format!("Bearer {token}"));
+        assert!(!request.headers().contains_key("origin"));
+        assert!(!request.headers().contains_key("cookie"));
+        let request = build_whatsapp_gateway_request(
+            12345,
+            &token,
+            WhatsAppGatewayRequest::Send(WhatsAppSendRequest {
+                to: "+15550100001".into(),
+                text: "Synthetic test message".into(),
+            }),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.url().path(), "/send");
+        let body: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"to": "+15550100001", "text": "Synthetic test message"})
+        );
+        for token in ["", "short", &"z".repeat(64)] {
+            assert!(
+                build_whatsapp_gateway_request(12345, token, WhatsAppGatewayRequest::Contacts)
+                    .is_err()
+            );
+        }
+        assert!(build_whatsapp_gateway_request(0, &token, WhatsAppGatewayRequest::Chats).is_err());
+    }
+
+    #[test]
+    fn whatsapp_workflows_need_declared_reads_and_explicit_send_permission() {
+        use civitas_core::pipes::{permissions::PipePermissions, PipeConfig};
+        let config: PipeConfig = serde_json::from_value(json!({
+            "name": "synthetic", "permissions": "reader"
+        }))
+        .unwrap();
+        let permissions = PipePermissions::from_config(&config);
+        for path in ["contacts", "chats", "messages"] {
+            assert!(
+                !permissions.is_endpoint_allowed("GET", &format!("/connections/whatsapp/{path}"))
+            );
+        }
+        let config: PipeConfig = serde_json::from_value(json!({
+            "name": "synthetic", "permissions": "reader", "connections": ["whatsapp"]
+        }))
+        .unwrap();
+        let permissions = PipePermissions::from_config(&config);
+        for path in ["contacts", "chats", "messages"] {
+            assert!(
+                permissions.is_endpoint_allowed("GET", &format!("/connections/whatsapp/{path}"))
+            );
+        }
+        assert!(!permissions.is_endpoint_allowed("POST", "/connections/whatsapp/send"));
+        let config: PipeConfig = serde_json::from_value(json!({
+            "name": "synthetic", "connections": ["whatsapp"],
+            "permissions": {"allow": ["Api(POST /connections/whatsapp/send)"]}
+        }))
+        .unwrap();
+        let permissions = PipePermissions::from_config(&config);
+        assert!(permissions.is_endpoint_allowed("POST", "/connections/whatsapp/send"));
+        assert!(!permissions.is_endpoint_allowed("POST", "/connections/whatsapp/pair"));
+    }
+
+    async fn whatsapp_mock_response(
+        response: axum::response::Response,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let response = Arc::new(Mutex::new(Some(response)));
+        let app = Router::new().fallback(move || {
+            let response = response.clone();
+            async move { response.lock().await.take().unwrap() }
+        });
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (port, task)
+    }
+
+    #[tokio::test]
+    async fn whatsapp_proxy_bounds_child_responses_and_rejects_redirects() {
+        use axum::response::IntoResponse;
+        let oversized_chunks = futures::stream::iter([
+            Ok::<_, std::io::Error>(vec![b' '; MAX_PROXY_RESPONSE_BYTES]),
+            Ok(vec![b' '; 1]),
+        ]);
+        let cases = [
+            (Json(json!({"messages": []})).into_response(), true),
+            (
+                (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [("location", "http://127.0.0.1:1/private")],
+                )
+                    .into_response(),
+                false,
+            ),
+            (
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "synthetic upstream detail",
+                )
+                    .into_response(),
+                false,
+            ),
+            ("invalid JSON".into_response(), false),
+            (
+                axum::response::Response::builder()
+                    .body(Body::from_stream(oversized_chunks))
+                    .unwrap(),
+                false,
+            ),
+            (
+                axum::response::Response::builder()
+                    .header("content-length", MAX_PROXY_RESPONSE_BYTES + 1)
+                    .body(Body::empty())
+                    .unwrap(),
+                false,
+            ),
+        ];
+        for (response, expected_success) in cases {
+            let (port, task) = whatsapp_mock_response(response).await;
+            let builder = build_whatsapp_gateway_request(
+                port,
+                &"a".repeat(64),
+                WhatsAppGatewayRequest::Contacts,
+            )
+            .unwrap();
+            let result = read_whatsapp_gateway_response(builder.send().await.unwrap()).await;
+            assert_eq!(result.is_ok(), expected_success);
+            if let Err((status, message)) = result {
+                assert_eq!(status, StatusCode::BAD_GATEWAY);
+                assert!(!message.contains("synthetic upstream detail"));
+            }
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn whatsapp_proxy_responses_are_never_cached() {
+        for result in [Ok(json!([])), Err((StatusCode::BAD_GATEWAY, "unavailable"))] {
+            let response = whatsapp_proxy_response(result);
+            assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        }
+    }
+
+    #[tokio::test]
+    async fn whatsapp_routes_enforce_send_body_and_query_limits() {
+        let dir = TempDir::new().unwrap();
+        let app = ics_test_router(&dir);
+        for uri in [
+            "/whatsapp/messages",
+            "/whatsapp/messages?phone=12345&limit=0",
+            "/whatsapp/messages?phone=12345&limit=201",
+            "/whatsapp/messages?phone=12345&jid=12345%40g.us",
+            "/whatsapp/messages?phone=12345&url=example.invalid",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        let response = app
+            .oneshot(
+                Request::post("/whatsapp/send")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "to": "+15550100001", "text": "a".repeat(MAX_WHATSAPP_REQUEST_BYTES)
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[test]

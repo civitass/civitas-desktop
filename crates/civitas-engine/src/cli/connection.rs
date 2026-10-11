@@ -64,17 +64,11 @@ pub async fn handle_connection_command(command: &ConnectionCommand) -> anyhow::R
                 .join("whatsapp-session")
                 .join("creds.json")
                 .exists();
-            let wa_connected = has_session
-                && reqwest::Client::new()
-                    .get("http://localhost:3035/status")
-                    .timeout(std::time::Duration::from_secs(2))
-                    .send()
-                    .await
-                    .is_ok();
+            let wa_connected = has_session && fetch_running_whatsapp().await?;
             let wa_desc = if wa_connected {
-                "WhatsApp messaging gateway. Endpoints at http://localhost:3035: GET /contacts (list contacts), GET /chats (recent chats), GET /messages?phone=+PHONE&limit=50 (read messages), POST /send {\"to\":\"+PHONE\",\"text\":\"MSG\"} (send message), GET /status.".to_string()
+                crate::connections_api::WHATSAPP_API_DESCRIPTION.to_string()
             } else if has_session {
-                "WhatsApp has a saved session but the gateway is not running. It should auto-reconnect on server restart.".to_string()
+                "WhatsApp has a saved session but no authenticated active connection was confirmed. Check Settings > Connections in the running desktop app.".to_string()
             } else {
                 "Not paired. User must pair via Settings > Connections in the desktop app first."
                     .to_string()
@@ -144,25 +138,19 @@ pub async fn handle_connection_command(command: &ConnectionCommand) -> anyhow::R
                     .join("whatsapp-session")
                     .join("creds.json")
                     .exists();
-                let gateway_reachable = has_session
-                    && reqwest::Client::new()
-                        .get("http://localhost:3035/status")
-                        .timeout(std::time::Duration::from_secs(2))
-                        .send()
-                        .await
-                        .is_ok();
+                let gateway_reachable = has_session && fetch_running_whatsapp().await?;
                 let info = if gateway_reachable {
                     json!({
                         "id": "whatsapp",
                         "connected": true,
-                        "description": "WhatsApp messaging gateway. Endpoints at http://localhost:3035: GET /contacts (list contacts), GET /chats (recent chats), GET /messages?phone=+PHONE&limit=50 (read messages), POST /send {\"to\":\"+PHONE\",\"text\":\"MSG\"} (send message), GET /status."
+                        "description": crate::connections_api::WHATSAPP_API_DESCRIPTION
                     })
                 } else if has_session {
                     json!({
                         "id": "whatsapp",
                         "connected": false,
                         "has_session": true,
-                        "description": "WhatsApp has a saved session but the gateway is not running. It should auto-reconnect on server restart."
+                        "description": "WhatsApp has a saved session but no authenticated active connection was confirmed. Check Settings > Connections in the running desktop app."
                     })
                 } else {
                     json!({
@@ -387,27 +375,103 @@ struct BrowsersResponse {
 }
 
 async fn fetch_running_browsers() -> anyhow::Result<Vec<BrowserSummaryWire>> {
-    // Auth lookup goes through `crate::auth_key::find_api_auth_key` —
-    // the single read-only resolver that knows about the encrypted
-    // SecretStore in db.sqlite, the env-var aliases pi-agent injects,
-    // and the encrypted secret store. Don't open-code another priority chain
-    // here; that's how this query started silently 403'ing in the first
-    // place.
-    let auth_token = crate::auth_key::find_api_auth_key().await?;
+    Ok(fetch_engine_connection_json("browsers")
+        .await?
+        .and_then(|value| serde_json::from_value::<BrowsersResponse>(value).ok())
+        .map(|body| body.data)
+        .unwrap_or_default())
+}
 
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get("http://localhost:3030/connections/browsers")
-        .timeout(std::time::Duration::from_secs(2));
-    if let Some(t) = auth_token {
-        req = req.header("Authorization", format!("Bearer {t}"));
+async fn fetch_running_whatsapp() -> anyhow::Result<bool> {
+    Ok(fetch_engine_connection_json("whatsapp/status")
+        .await?
+        .as_ref()
+        .is_some_and(whatsapp_status_is_connected))
+}
+
+fn whatsapp_status_is_connected(value: &Value) -> bool {
+    value
+        .get("status")
+        .and_then(|status| status.get("connected"))
+        .is_some_and(|connected| {
+            connected.get("name").and_then(Value::as_str).is_some()
+                && connected.get("phone").and_then(Value::as_str).is_some()
+        })
+}
+
+/// Probe only the authenticated engine, never the private child gateway. The
+/// resolver preserves scoped workflow tokens instead of acquiring owner scope.
+async fn fetch_engine_connection_json(path: &'static str) -> anyhow::Result<Option<Value>> {
+    let Some(auth_token) = crate::auth_key::find_api_auth_key().await? else {
+        return Ok(None);
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .context("could not initialize the local connection status transport")?;
+    let response = client
+        .get(format!("http://127.0.0.1:3030/connections/{path}"))
+        .bearer_auth(auth_token)
+        .send()
+        .await;
+    let mut response = match response {
+        Ok(response) if response.status().is_success() => response,
+        _ => return Ok(None),
+    };
+    const MAX_STATUS_BYTES: usize = 64 * 1024;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_STATUS_BYTES as u64)
+    {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if bytes.len().saturating_add(chunk.len()) <= MAX_STATUS_BYTES => {
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            _ => return Ok(None),
+        }
+    }
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whatsapp_cli_requires_authenticated_connected_status_shape() {
+        assert!(whatsapp_status_is_connected(&json!({
+            "status": {"connected": {"name": "Synthetic fixture", "phone": "+15550100001"}}
+        })));
+        for status in [
+            json!({"connected": true}), // Retired unauthenticated child shape.
+            json!({"status": "disconnected"}),
+            json!({"status": "waiting_for_qr"}),
+            json!({"status": {"qr_ready": {"qr": "synthetic"}}}),
+            json!({"status": {"error": {"message": "synthetic"}}}),
+            json!({"status": {"connected": {}}}),
+            json!({"status": {"connected": {"name": true, "phone": false}}}),
+            json!({"error": "unauthorized"}),
+        ] {
+            assert!(!whatsapp_status_is_connected(&status));
+        }
     }
 
-    Ok(match req.send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<BrowsersResponse>().await {
-            Ok(body) => body.data,
-            Err(_) => Vec::new(),
-        },
-        _ => Vec::new(),
-    })
+    #[test]
+    fn whatsapp_description_uses_only_authenticated_engine_paths() {
+        let description = crate::connections_api::WHATSAPP_API_DESCRIPTION;
+        for path in ["contacts", "chats", "messages", "send", "status"] {
+            assert!(description.contains(&format!("/connections/whatsapp/{path}")));
+        }
+        assert!(!description.contains("http://"));
+        assert!(!description.contains("3035"));
+        assert!(!description.contains("Bearer"));
+    }
 }

@@ -22,6 +22,15 @@ ip-address 10.7.3, proxy-addr 2.0.8, and source-map-js 1.2.2. The separately
 consented assistant runtime remains at pi 0.82.1 with brace-expansion 5.0.12
 and undici 8.10.2. These updates add no runtime destination or permission.
 
+Personal WhatsApp pairing now uses its own reviewed frozen lockfile instead
+of resolving the latest packages into the data root. It pins Baileys
+7.0.0-rc14, pino 10.4.0, and ws 8.22.0, with integrity-locked transitive
+dependencies and lifecycle scripts disabled. Missing or changed runtime
+packages require an explicit pairing action; startup reconnection cannot
+download them. This optional pre-release integration retains its own
+upstream compatibility and licensing limits, documented in the
+[third-party notices](../THIRD_PARTY_NOTICES.md).
+
 ## Reviewed local patches
 
 Two advisories have no patched npm release as of this review. Upstream package

@@ -121,6 +121,21 @@ for (const lockfile of lockfiles) {
     if (regressions.status !== 0) fail(`${label}: dependency patch regressions failed`);
   }
 
+  if (packageJson.name === "@civitas/whatsapp-runtime") {
+    const smoke = run(bunBinary, ["--no-install", "-e", `
+      const baileys = await import("@whiskeysockets/baileys");
+      const pino = await import("pino");
+      const ws = await import("ws");
+      for (const fn of [baileys.default, baileys.useMultiFileAuthState,
+        baileys.fetchLatestBaileysVersion, pino.default, ws.default]) {
+        if (typeof fn !== "function") throw new Error("Incompatible WhatsApp runtime export");
+      }
+      if (!baileys.DisconnectReason) throw new Error("Missing WhatsApp disconnect reasons");
+      console.log("WhatsApp runtime imports passed without pairing or network requests");
+    `], { cwd: directory });
+    if (smoke.status !== 0) fail(`${label}: reviewed gateway runtime imports failed`);
+  }
+
   const audit = run(bunBinary, ["audit", "--audit-level=low", "--json"], {
     cwd: directory, capture: true,
   });

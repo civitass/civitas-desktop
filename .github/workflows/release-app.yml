@@ -171,7 +171,7 @@ jobs:
         run: |
           node scripts/audit-consumer-design.mjs
           node --test scripts/validate-tauri-production-security.test.mjs
-          node --test scripts/validate-release-assets.test.mjs scripts/notarize-macos-dmg.test.mjs scripts/js-security-policy.test.mjs
+          node --test scripts/validate-release-assets.test.mjs scripts/notarize-macos-dmg.test.mjs scripts/js-security-policy.test.mjs crates/civitas-connect/src/whatsapp/http-boundary.test.mjs crates/civitas-connect/src/whatsapp/gateway.test.mjs
           node scripts/validate-tauri-production-security.mjs .
           node scripts/audit-publication.mjs .
 

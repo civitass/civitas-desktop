@@ -111,6 +111,7 @@ display.
 | Local first | Capture, media, SQLite/FTS indexes, graph data, feedback, and provider profile metadata live under your local Civitas data directory. |
 | Account-free | Capture, search, graph, export, deletion, local AI, and MCP do not require a Civitas login or subscription. |
 | No hidden cloud | Railway, Supabase auth, Civitas-hosted AI credits, fleet, team sync, and enterprise policy are not part of the consumer runtime. |
+| Remote access is optional | Fresh installs start in Local-only mode. Remote providers, external processes, downloads, and connections require the owner to enable remote features. |
 | Bring your own model | Use loopback Ollama-compatible inference or connect OpenAI, Anthropic, OpenRouter, Bedrock, or a compatible endpoint. |
 | Credentials stay protected | Persistent keys are encrypted with an OS-vault-backed key; an explicit session-only mode stays in process memory until quit. No plaintext fallback exists. |
 | Capture is controllable | The tray shows capturing/paused/private state and provides immediate, timed, and indefinite pause controls. Clipboard and raw typed-text persistence are off by default. |
@@ -209,6 +210,13 @@ sidecar and disabled lifecycle scripts; it never falls back to system npm or a
 global agent. Core capture, search, graph, export, and MCP features do not need
 this runtime. The same card can stop active assistant sessions and remove the
 managed packages without deleting work data, provider profiles, or credentials.
+
+Optional personal connections have separate boundaries. WhatsApp pairing
+installs a pinned, unofficial gateway only after an explicit action; startup
+cannot download its runtime. Its private transport sits behind the engine's
+authenticated connection routes. External MCP requests reject redirects so
+an endpoint cannot forward credentials or tool data elsewhere. See the
+[network boundary](docs/NETWORK_BOUNDARY.md) for destinations and limits.
 
 ## Install on macOS
 
