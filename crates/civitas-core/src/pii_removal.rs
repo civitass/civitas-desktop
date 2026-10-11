@@ -269,77 +269,101 @@ pub fn get_pii_type(text: &str) -> Option<String> {
 /// * `image_height` - Height of the image in pixels
 ///
 /// # Returns
-/// Vector of PiiRegion structs representing areas to redact
+/// Regions clipped to the image. Detected PII with unusable geometry produces
+/// a whole-image region so missing coordinates never silently expose it.
 pub fn detect_pii_regions(
     text_json: &[HashMap<String, String>],
     image_width: u32,
     image_height: u32,
 ) -> Vec<PiiRegion> {
+    if image_width == 0 || image_height == 0 {
+        return Vec::new();
+    }
     let mut regions = Vec::new();
 
     for entry in text_json {
-        let text = match entry.get("text") {
-            Some(t) => t,
-            None => continue,
+        let Some(text) = entry.get("text") else {
+            continue;
         };
-
-        // Check if this text contains PII
-        let pii_type = match get_pii_type(text) {
-            Some(t) => t,
-            None => continue,
+        let Some(pii_type) = get_pii_type(text) else {
+            continue;
         };
-
-        // Parse bounding box coordinates
-        let left = match entry.get("left").and_then(|v| v.parse::<f64>().ok()) {
-            Some(v) => v,
-            None => continue,
+        let Some((x, y, width, height)) = bounded_pii_box(entry, image_width, image_height) else {
+            // PII was detected but cannot be located reliably. Dropping this
+            // entry would expose the very content the caller asked to redact.
+            return vec![PiiRegion {
+                x: 0,
+                y: 0,
+                width: image_width,
+                height: image_height,
+                pii_type,
+            }];
         };
-        let top = match entry.get("top").and_then(|v| v.parse::<f64>().ok()) {
-            Some(v) => v,
-            None => continue,
-        };
-        let width = match entry.get("width").and_then(|v| v.parse::<f64>().ok()) {
-            Some(v) => v,
-            None => continue,
-        };
-        let height = match entry.get("height").and_then(|v| v.parse::<f64>().ok()) {
-            Some(v) => v,
-            None => continue,
-        };
-
-        // Determine if coordinates are normalized (0-1) or pixel values
-        // Apple OCR returns normalized, Tesseract returns pixels
-        let (x_px, y_px, w_px, h_px) = if left <= 1.0 && top <= 1.0 && width <= 1.0 && height <= 1.0
-        {
-            // Normalized coordinates (Apple OCR style)
-            // Note: Apple's coordinate system has origin at bottom-left, so we need to flip Y
-            let x = (left * image_width as f64) as u32;
-            let y = ((1.0 - top - height) * image_height as f64) as u32;
-            let w = (width * image_width as f64) as u32;
-            let h = (height * image_height as f64) as u32;
-            (x, y, w, h)
-        } else {
-            // Pixel coordinates (Tesseract style)
-            (left as u32, top as u32, width as u32, height as u32)
-        };
-
-        // Add some padding around the region for better coverage
-        let padding = 5u32;
-        let x_padded = x_px.saturating_sub(padding);
-        let y_padded = y_px.saturating_sub(padding);
-        let w_padded = (w_px + padding * 2).min(image_width - x_padded);
-        let h_padded = (h_px + padding * 2).min(image_height - y_padded);
-
         regions.push(PiiRegion {
-            x: x_padded,
-            y: y_padded,
-            width: w_padded,
-            height: h_padded,
+            x,
+            y,
+            width,
+            height,
             pii_type,
         });
     }
-
     regions
+}
+
+/// Convert OCR coordinates to an outward-rounded, padded intersection with the
+/// image. Invalid geometry is distinct from an image containing no PII.
+fn bounded_pii_box(
+    entry: &HashMap<String, String>,
+    image_width: u32,
+    image_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let number = |key: &str| entry.get(key)?.parse::<f64>().ok();
+    let (left, top, width, height) = (
+        number("left")?,
+        number("top")?,
+        number("width")?,
+        number("height")?,
+    );
+    if [left, top, width, height]
+        .iter()
+        .any(|value| !value.is_finite())
+        || left < 0.0
+        || top < 0.0
+        || width <= 0.0
+        || height <= 0.0
+    {
+        return None;
+    }
+
+    let image_w = f64::from(image_width);
+    let image_h = f64::from(image_height);
+    // Apple OCR is normalized with a bottom-left origin; Tesseract is pixels
+    // with a top-left origin. Preserve that established coordinate contract.
+    let (left, top, right, bottom) = if [left, top, width, height].iter().all(|value| *value <= 1.0)
+    {
+        (
+            left * image_w,
+            (1.0 - top - height) * image_h,
+            (left + width) * image_w,
+            (1.0 - top) * image_h,
+        )
+    } else {
+        (left, top, left + width, top + height)
+    };
+    let x0 = left.clamp(0.0, image_w).floor() as u32;
+    let y0 = top.clamp(0.0, image_h).floor() as u32;
+    let x1 = right.clamp(0.0, image_w).ceil() as u32;
+    let y1 = bottom.clamp(0.0, image_h).ceil() as u32;
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+
+    let padding = 5;
+    let x = x0.saturating_sub(padding);
+    let y = y0.saturating_sub(padding);
+    let right = x1.saturating_add(padding).min(image_width);
+    let bottom = y1.saturating_add(padding).min(image_height);
+    Some((x, y, right - x, bottom - y))
 }
 
 #[cfg(test)]
@@ -498,7 +522,105 @@ mod tests {
         ])];
 
         let regions = detect_pii_regions(&text_json, 1920, 1080);
-        assert!(regions.is_empty());
+        assert_eq!(regions.len(), 1);
+        assert_eq!(
+            (
+                regions[0].x,
+                regions[0].y,
+                regions[0].width,
+                regions[0].height
+            ),
+            (0, 0, 1920, 1080)
+        );
+    }
+
+    fn synthetic_pii_box(
+        left: &str,
+        top: &str,
+        width: &str,
+        height: &str,
+    ) -> HashMap<String, String> {
+        HashMap::from([
+            ("text".into(), "synthetic@example.com".into()),
+            ("left".into(), left.into()),
+            ("top".into(), top.into()),
+            ("width".into(), width.into()),
+            ("height".into(), height.into()),
+        ])
+    }
+
+    #[test]
+    fn malformed_or_off_image_pii_geometry_masks_the_whole_image() {
+        for geometry in [
+            ("NaN", "10", "20", "20"),
+            ("10", "inf", "20", "20"),
+            ("10", "10", "NaN", "20"),
+            ("10", "10", "20", "-inf"),
+            ("-1", "10", "20", "20"),
+            ("10", "10", "0", "20"),
+            ("1000", "10", "20", "20"),
+            ("10", "1000", "20", "20"),
+            ("not-a-number", "10", "20", "20"),
+        ] {
+            let regions = detect_pii_regions(
+                &[synthetic_pii_box(
+                    geometry.0, geometry.1, geometry.2, geometry.3,
+                )],
+                100,
+                100,
+            );
+            assert_eq!(regions.len(), 1);
+            assert_eq!(
+                (
+                    regions[0].x,
+                    regions[0].y,
+                    regions[0].width,
+                    regions[0].height
+                ),
+                (0, 0, 100, 100)
+            );
+        }
+    }
+
+    #[test]
+    fn pii_rectangles_are_clipped_rounded_outwards_and_cannot_overflow() {
+        let regions = detect_pii_regions(
+            &[synthetic_pii_box("90.5", "90.5", "4294967295", "1e308")],
+            100,
+            100,
+        );
+        assert_eq!(
+            (
+                regions[0].x,
+                regions[0].y,
+                regions[0].width,
+                regions[0].height
+            ),
+            (85, 85, 15, 15)
+        );
+        let normalized = detect_pii_regions(
+            &[synthetic_pii_box("0.251", "0.251", "0.101", "0.101")],
+            100,
+            100,
+        );
+        assert_eq!(
+            (
+                normalized[0].x,
+                normalized[0].y,
+                normalized[0].width,
+                normalized[0].height
+            ),
+            (20, 59, 21, 21)
+        );
+        let boundary = detect_pii_regions(
+            &[synthetic_pii_box("4294967280", "10", "100", "20")],
+            u32::MAX,
+            100,
+        );
+        assert_eq!(boundary[0].x + boundary[0].width, u32::MAX);
+        assert!(
+            detect_pii_regions(&[synthetic_pii_box("10", "10", "20", "20")], 0, 100).is_empty()
+        );
     }
 
     #[test]
@@ -887,7 +1009,7 @@ mod tests {
     #[test]
     fn test_stripe_key_detection() {
         // Stripe webhook secrets
-        let webhook_secret = concat!("whsec_", "BnlsS222bkRvslineRtsak70Nxo10467");
+        let webhook_secret = concat!("whsec_", "SYNTHETICFIXTURE0123456789");
         assert!(contains_pii(webhook_secret));
         assert_eq!(get_pii_type(webhook_secret), Some("STRIPE_KEY".to_string()));
 
@@ -940,8 +1062,7 @@ mod tests {
         let result = remove_pii(&format!("export STRIPE_SECRET_KEY={stripe_secret}"));
         assert!(
             result.contains("[ENV_SECRET]") || result.contains("[STRIPE_KEY]"),
-            "Result was: {}",
-            result
+            "synthetic value should be redacted"
         );
     }
 
@@ -960,8 +1081,7 @@ mod tests {
         let result = remove_pii(concat!("OPENAI_API_KEY=sk-proj-", "abc123def456ghi789jkl"));
         assert!(
             result.contains("[OPENAI_KEY]") || result.contains("[ENV_SECRET]"),
-            "Result was: {}",
-            result
+            "synthetic value should be redacted"
         );
     }
 
@@ -1001,8 +1121,7 @@ mod tests {
         let result = remove_pii("encryption password hesaasasdd");
         assert!(
             result.contains("[PASSWORD_FIELD]"),
-            "Result was: {}",
-            result
+            "synthetic value should be redacted"
         );
     }
 
@@ -1010,7 +1129,7 @@ mod tests {
     fn test_combined_new_patterns() {
         // Test multiple new patterns together
         let input = "JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc \
-                     Stripe: whsec_abc123def456ghi789 \
+                     Stripe: whsec_SYNTHETICFIXTURE0123456789 \
                      Supabase: sb_publishable_xyz789 \
                      Password: ••••••••";
 
@@ -1026,29 +1145,31 @@ mod tests {
     }
 
     #[test]
-    fn test_real_world_leaked_examples() {
-        // Based on actual leaks found in the user's data
+    fn test_synthetic_secret_ui_examples() {
+        // Synthetic format examples only; no captured user data or credentials.
 
-        // Stripe webhook secret from terminal
-        let _stripe_leak = "whsec BnlsS222bkRvslineRtsak70Nxo10467";
-        // Note: This has a space instead of underscore - edge case
-        // The pattern expects underscore, so let's test the proper format
-        let stripe_proper = "whsec_BnlsS222bkRvslineRtsak70Nxo10467";
-        assert!(contains_pii(stripe_proper));
+        let webhook = format!("whsec_{}", "SYNTHETICFIXTURE0123456789");
+        assert!(
+            contains_pii(&webhook),
+            "synthetic webhook format should be detected"
+        );
 
-        // Supabase JWT from dashboard
-        let _supabase_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
-        // This is truncated but should still match the pattern start
-        assert!(contains_pii(
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSJ9.abc123"
-        ));
+        // Base64-shaped sample, not a signed or usable token.
+        let token = [
+            "eyJhbGciOiJIUzI1NiJ9",
+            "c3ludGhldGljLWZpeHR1cmU",
+            "invalidsignature",
+        ]
+        .join(".");
+        assert!(
+            contains_pii(&token),
+            "synthetic JWT format should be detected"
+        );
 
-        // Password being typed in settings UI
-        let password_ui = "encryption password hesaasasdd";
+        let password_ui = "encryption password SyntheticFixture123";
         assert!(
             contains_pii(password_ui),
-            "Failed to detect password in UI: {}",
-            password_ui
+            "synthetic password UI should be detected"
         );
     }
 

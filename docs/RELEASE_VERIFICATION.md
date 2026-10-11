@@ -5,7 +5,9 @@ workflow from an immutable commit. The workflow is fail-closed per platform: it
 cannot complete the draft unless both macOS DMGs are Developer ID signed,
 notarized, and stapled, and — whenever the Windows leg runs — the Windows
 application and installer carry valid timestamped Authenticode signatures.
-Automation creates a **draft** GitHub Release; it cannot publish the release.
+Automation creates a **draft** GitHub Release and publishes it only after all
+required build, installation, signature, checksum, and provenance gates pass.
+Failed or incomplete runs leave the draft unpublished.
 
 ## Platform coverage
 
@@ -17,9 +19,18 @@ verified macOS artifacts while Windows signing is pending.
 
 When the Windows leg does not run, the workflow additionally verifies that no
 Windows installer or updater archive reached the draft and that `latest.json`
-carries no `windows-x86_64` entry — so an installed Windows client is never
+carries no Windows entry or alias — so an installed Windows client is never
 offered an update this release did not build. Check the release notes and the
 asset list for the platforms a given version actually covers.
+
+Before checksumming or attesting the final assets,
+`scripts/validate-release-assets.mjs` requires the exact versioned artifact set:
+one DMG and signed updater archive per macOS architecture, and the Windows
+installer/archive only when its signing job succeeded. It rejects unknown,
+empty, stale-version, symlinked, or non-file assets. Every updater platform and
+alias must point to its own verified archive under the exact release tag and
+carry that archive's verified detached signature. An extension count or a URL
+prefix alone is not sufficient evidence.
 
 While Windows releases are disabled, the Windows end-to-end leg is also
 non-blocking: it still runs and still reports its result, but a Windows-only
@@ -49,29 +60,41 @@ may mirror the exact bytes, but GitHub Releases is the primary public source.
 ## Preparing the release commit
 
 The release refuses to build a commit that lacks a successful run of every
-required workflow at that exact SHA. Two of those workflows will not start on
-their own for a typical release commit, so arrange them before tagging:
+required workflow at that exact SHA. Some workflows are conditional, so arrange
+them before tagging:
 
 - `e2e-test.yml` skips push runs unless the commit subject contains
   `[run-e2e]`. Put it in the subject of the release commit, or dispatch the
   workflow against the branch afterwards.
-- `test-frontend.yml` and `docs.yml` are path filtered. A release commit that
-  only bumps the version in `apps/civitas-app-tauri/src-tauri/Cargo.toml`
-  matches neither filter, so neither runs and the gate stalls with no way to
-  satisfy it from a push.
+- `ci.yml`, `test-frontend.yml`, and `docs.yml` are path filtered. A release
+  commit that only bumps the version in the Tauri Cargo manifest does not
+  trigger the frontend or documentation workflows.
 
 For anything they do not cover, dispatch the workflow against the branch whose
 tip is the release commit: a `workflow_dispatch` run records the branch tip as
 its head SHA, which is what the gate matches on. Confirm the tip is still the
 release commit at dispatch time.
 
+The required workflows are `ci.yml`, `style.yml`, `test-frontend.yml`,
+`secret-scan.yml`, `docs.yml`, and `e2e-test.yml`, plus `codeql.yml` when
+`CIVITAS_CODEQL_PRIVATE_ENABLED=true`. Both nightly E2E and manual E2E default
+to GitHub-hosted runners. Select `windows_runner=windows-desktop-test` only
+when the corresponding interactive self-hosted runner is registered and online.
+A successful scheduled run for an older SHA does not qualify a newer release.
+
+After the commit is pushed and its required checks have succeeded, create and
+push the matching `v<version>` tag. To retry an unpublished draft, rerun the
+failed workflow or dispatch `release-app.yml` with `source_ref` and
+`release_tag` both set to that existing immutable tag. Never move a release
+tag or replace an already published artifact.
+
 Do not weaken the gate to work around this. It exists so that a published
 binary is traceable to a commit that actually passed the full suite.
 
 ### Windows legs while Windows releases are disabled
 
-The Windows jobs of `ci.yml` and `e2e-test.yml` run on every commit and still
-report red in the checks list, but they do not fail their workflow while
+The Windows jobs of `ci.yml` and `e2e-test.yml` run when those checks are triggered
+and still report red in the checks list, but they do not fail their workflow while
 `CIVITAS_WINDOWS_RELEASE_ENABLED` is not `true`. A macOS-only release ships no
 Windows binary, so a Windows-only regression is not evidence about the
 artifacts being published, and blocking on it delays macOS security fixes.
@@ -122,6 +145,13 @@ checksum proves byte equality with the manifest, not authorship; also verify
 the GitHub provenance and Apple signature.
 
 ## Apple signature and notarization
+
+Release signing requires `APPLE_TEAM_ID` and the Developer ID certificate.
+Both the app and DMG support either a complete App Store Connect API key
+(`APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_PRIVATE_KEY`) or Apple ID
+notarization credentials (`APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`). API
+credentials take precedence when complete. A rejected submission fails the
+release; it does not silently switch accounts or bypass notarization.
 
 Before opening the DMG:
 
@@ -202,8 +232,9 @@ matches.
 The production configuration pins the Tauri updater public key and the GitHub
 Releases manifest endpoint. Test:
 
-- `latest.json` contains signed `darwin-aarch64`, `darwin-x86_64`, and
-  `windows-x86_64` entries that point only to the immutable release tag;
+- `latest.json` contains signed `darwin-aarch64` and `darwin-x86_64` entries,
+  with `windows-x86_64` only when Windows was built and verified; all entries
+  and aliases point to the corresponding archive under the immutable tag;
 
 - valid signed update from the stable channel;
 - tampered bundle rejection;
@@ -230,7 +261,12 @@ node scripts/audit-rust-security.mjs
 
 The JavaScript gate requires exact Bun `1.3.10`, reproduces every tracked
 `bun.lock` with frozen resolution and disabled lifecycle scripts, and audits
-at the low threshold. The Rust gate requires `cargo-audit 0.22.2`, audits both
+at the low threshold. Two unpatched upstream JavaScript advisories have
+repository-maintained fixes, verified by exact patch hashes, locked versions,
+and behavioral regressions; all other findings block. Direct `bun audit`
+continues to report their upstream versions. See
+[Dependency security maintenance](DEPENDENCY_SECURITY.md). The Rust gate
+requires `cargo-audit 0.22.2`, audits both
 Rust lockfiles, and fails if its reviewed advisory set, parent edges, or
 Apple-Silicon reachability changes. Do not replace either gate with a
 non-blocking Dependabot snapshot, suppress a finding without reachability
@@ -309,6 +345,15 @@ public write. It builds two separately reviewed artifacts:
   license, with npm provenance enabled;
 - a production-only `.mcpb` built in a clean staging directory with lifecycle
   scripts disabled.
+
+The MCP workflow uses the repository advisory gate, including the exact-byte
+local patch review described in [Dependency security](DEPENDENCY_SECURITY.md).
+Its frozen production install stages the reviewed patch files even for
+development-only dependencies because Bun validates all declared paths. After
+installation, the bundle removes build scripts, development dependency metadata,
+the source lockfile, and patch inputs. The installed production tree must not
+contain `node-forge`; the MCP packaging tool resolves the reviewed patched copy
+from its separate build environment.
 
 The workflow rejects source tests, build tools, development dependencies,
 unexpected native libraries/executables, and compressed MCP bundles over the

@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { classifyAudit, reviewedPatches, verifyPatch } from "./js-security-policy.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expectedBunVersion = "1.3.10";
@@ -91,7 +92,6 @@ for (const lockfile of lockfiles) {
       "install",
       "--frozen-lockfile",
       "--ignore-scripts",
-      "--lockfile-only",
       "--no-progress",
     ],
     { cwd: directory },
@@ -100,11 +100,60 @@ for (const lockfile of lockfiles) {
     fail(`${label}: package.json and bun.lock are out of sync`);
   }
 
-  const audit = run(bunBinary, ["audit", "--audit-level=low"], {
-    cwd: directory,
+  const reviews = reviewedPatches.filter((review) => review.project === label);
+  let verifiedPatches = [];
+  if (reviews.length > 0) {
+    const parsedLock = run(bunBinary, ["-e",
+      'console.log(JSON.stringify(Bun.JSONC.parse(await Bun.file("bun.lock").text())))'],
+      { cwd: directory, capture: true });
+    if (parsedLock.status !== 0) fail(`${label}: could not parse frozen lockfile`);
+    try {
+      const lock = JSON.parse(parsedLock.stdout);
+      verifiedPatches = reviews.map((review) => verifyPatch({
+        directory, manifest: packageJson, lock, review,
+      }));
+    } catch (error) {
+      fail(`${label}: ${error.message}`);
+    }
+    const regressions = run(bunBinary, [
+      "run", resolve(repoRoot, "scripts/test-js-security-patches.mjs"), label,
+    ], { cwd: repoRoot });
+    if (regressions.status !== 0) fail(`${label}: dependency patch regressions failed`);
+  }
+
+  if (packageJson.name === "@civitas/whatsapp-runtime") {
+    const smoke = run(bunBinary, ["--no-install", "-e", `
+      const baileys = await import("@whiskeysockets/baileys");
+      const pino = await import("pino");
+      const ws = await import("ws");
+      for (const fn of [baileys.default, baileys.useMultiFileAuthState,
+        baileys.fetchLatestBaileysVersion, pino.default, ws.default]) {
+        if (typeof fn !== "function") throw new Error("Incompatible WhatsApp runtime export");
+      }
+      if (!baileys.DisconnectReason) throw new Error("Missing WhatsApp disconnect reasons");
+      console.log("WhatsApp runtime imports passed without pairing or network requests");
+    `], { cwd: directory });
+    if (smoke.status !== 0) fail(`${label}: reviewed gateway runtime imports failed`);
+  }
+
+  const audit = run(bunBinary, ["audit", "--audit-level=low", "--json"], {
+    cwd: directory, capture: true,
   });
-  if (audit.status !== 0) {
-    fail(`${label}: Bun reported a blocking advisory`);
+  if (![0, 1].includes(audit.status)) fail(`${label}: Bun audit could not complete`);
+  try {
+    const { blocking, remediated } = classifyAudit(JSON.parse(audit.stdout), verifiedPatches);
+    if (blocking.length > 0) {
+      for (const finding of blocking) console.error(`${finding.name}: ${finding.title} (${finding.url})`);
+      fail(`${label}: Bun reported ${blocking.length} unremediated advisories`);
+    }
+    if (audit.status !== 0 && remediated.length === 0) {
+      fail(`${label}: Bun audit failed without a classified advisory`);
+    }
+    for (const finding of remediated) {
+      console.log(`✓ ${finding.name}: verified local remediation for ${finding.url}`);
+    }
+  } catch (error) {
+    fail(`${label}: invalid audit response: ${error.message}`);
   }
 
   console.log(`✓ ${label} Bun advisory gate passed`);

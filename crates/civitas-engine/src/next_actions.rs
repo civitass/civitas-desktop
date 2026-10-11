@@ -160,6 +160,22 @@ pub fn rank_candidate(
     mut input: CandidateInput,
     now: DateTime<Utc>,
 ) -> Result<RankedNextAction, RejectionReason> {
+    // NaN comparisons are false and clamping preserves NaN, which otherwise
+    // lets invalid inputs bypass both the evidence and minimum-score gates.
+    // Infinity is not evidence either; reject it instead of promoting it to 1.
+    if [
+        input.strength,
+        input.explicitness,
+        input.urgency,
+        input.relevance,
+        input.reversibility,
+    ]
+    .iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(RejectionReason::LowConfidence);
+    }
+
     input.title = compact_text(&input.title, 180);
     input.summary = compact_text(&input.summary, 420);
     input.why_now = compact_text(&input.why_now, 420);
@@ -646,9 +662,7 @@ fn rank_explanation(factors: &RankFactors) -> String {
     } else {
         "no material ambiguity or safety penalty"
     };
-    format!(
-        "{evidence} evidence · {recency} recency · {confidence} calibrated support · {penalties}"
-    )
+    format!("{evidence} evidence · {recency} recency · {confidence} ranking support · {penalties}")
 }
 
 fn factor_label(value: f64) -> &'static str {
@@ -704,6 +718,29 @@ mod tests {
             last_seen: "2026-07-25T12:00:00Z".to_string(),
             expires_at: "2026-09-08T12:00:00Z".to_string(),
             user_authored: false,
+        }
+    }
+
+    #[test]
+    fn nonfinite_factors_always_abstain() {
+        let now = DateTime::parse_from_rfc3339("2026-07-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for index in 0..5 {
+                let mut candidate = graph_candidate();
+                match index {
+                    0 => candidate.strength = value,
+                    1 => candidate.explicitness = value,
+                    2 => candidate.urgency = value,
+                    3 => candidate.relevance = value,
+                    _ => candidate.reversibility = value,
+                }
+                assert_eq!(
+                    rank_candidate(candidate, now).unwrap_err(),
+                    RejectionReason::LowConfidence
+                );
+            }
         }
     }
 

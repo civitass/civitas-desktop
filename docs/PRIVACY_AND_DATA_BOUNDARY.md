@@ -44,6 +44,20 @@ stopped, or degraded. The same surface provides:
 Persisted pause/private intent is reapplied on restart so the engine does not
 silently resume against the displayed state.
 
+## Requested frame redaction
+
+The local frame API supports an explicit `redact_pii=true` request. It uses
+stored OCR and pattern-based detection; it is not a guarantee that every kind
+of personal information will be recognized. Missing or malformed OCR and
+image-processing failures return an error instead of the original image.
+Detected regions receive opaque masks. When detected sensitive text has
+unusable coordinates, the entire frame is masked. Successfully inspected
+responses are not cached, including unchanged images with zero detected
+matches; the response reports the actual region count.
+
+Review media before sharing it. Text absent from OCR, unfamiliar formats, and
+non-text identifying details can remain undetected.
+
 ## Local data
 
 The default root is `~/.civitas` or the explicit `CIVITAS_DATA_DIR`.
@@ -62,6 +76,7 @@ Typical contents include:
 | Logs and crash remnants | local log/panic files | Redacted where implemented; review before sharing |
 | Local model weights | model/cache directories | Separate model licenses apply |
 | Optional assistant runtime | `pi-agent/` under the local data directory | Absent by default; installed or removed explicitly in **Settings → AI** without deleting work data |
+| Optional WhatsApp runtime and session | `whatsapp-runtime/` and `whatsapp-session/` below the local data directory | Runtime installation requires explicit pairing; disconnect removes the session |
 
 The application excludes its default data directory from Spotlight on macOS to
 avoid unnecessary indexing.
@@ -189,6 +204,12 @@ Bundled workflows use per-run tokens, declared API scopes, restricted
 filesystem roots, blocked external shell networking, bounded output, and
 approval boundaries. User-installed workflows are code and should be reviewed
 before enabling.
+
+Workflow identifiers are validated before joining managed paths. Installation
+and mutation reject symbolic links within the managed workflow tree, and
+package files are replaced atomically to avoid writing through existing hard
+links. This protects the application's path boundary; it does not sandbox a
+malicious process already running as the same OS user.
 
 Connection credentials are injected by a local proxy after scope checks.
 Explicit browser automation uses only the user-installed browser extension;

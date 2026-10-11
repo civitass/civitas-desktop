@@ -1,8 +1,8 @@
 # Consumer publication implementation status
 
-> Updated: 2026-08-08
+> Release status rechecked: 2026-10-11; initial cutover ledger: 2026-08-08
 > Working repository: `civitass/civitas-desktop`
-> Publication state: **public source; no binary release published**
+> Publication state: **public source; signed macOS releases published**
 > Verified clean-history checkpoint:
 > `civitass/civitas-desktop` at
 > `ece9f6912e2bf994325f820ffe673e84e32422e9`
@@ -14,6 +14,24 @@ authorized single-review source publication on 2026-08-08 after the clean-root
 cutover. Independent security review, two-person review, and counsel approval
 were not obtained and are not claimed. Binary releases remain fail-closed on
 signing, notarization, exact-commit CI, and installation evidence.
+
+## Current release evidence
+
+At the 2026-10-11 audit, the latest published desktop release is
+[2.8.0](https://github.com/civitass/civitas-desktop/releases/tag/v2.8.0), from
+commit `f6a6237b50f97eb393e95eb31b92a86054b857bb`. Its
+[release workflow](https://github.com/civitass/civitas-desktop/actions/runs/35476524881)
+succeeded and published Apple Silicon and Intel DMGs, signed updater archives,
+checksums, notices, and SBOM. This supersedes the initial cutover's lack of
+binary-release evidence; it does not retroactively claim independent security,
+legal, or human device review.
+
+Windows remains source-build-only: `CIVITAS_WINDOWS_RELEASE_ENABLED=false`
+and the required Authenticode secret names are absent. Subsequent releases must
+pass the same exact-commit and platform-specific gates in
+[Release verification](../RELEASE_VERIFICATION.md). The sections below retain
+the dated cutover record; their historical inventory and advisory counts are
+not a substitute for current release checks.
 
 ## Publication decision
 
@@ -132,9 +150,9 @@ old releases, service-side secrets, or legal rights.
   not contain them. An unsigned installer is intentionally not accepted as an
   official artifact.
 - The macOS and Windows download URLs intentionally target GitHub Releases.
-  They must not be described as available until a verified non-draft release
-  actually contains both dual-architecture DMGs and the signed Windows
-  installer.
+  Availability is evaluated per platform: dual-architecture signed DMGs now
+  exist, while Windows must not be advertised until its signed installer is
+  included in a verified published release.
 - A single technical reviewer can execute and record every automated and local
   verification in this repository, but that evidence is not truthfully an
   independent second-person, external security, or qualified legal review.
@@ -287,13 +305,14 @@ strong zero-egress claim.
 
 ### B5 — official desktop artifacts
 
-The matching Developer ID certificate was valid when last probed and its private
-key passed a disposable hardened-runtime/timestamp signing probe. Apple
-nevertheless reported an outstanding developer agreement during that probe.
+The initial cutover probe found a valid Developer ID certificate but an
+outstanding Apple developer agreement. Later successful public macOS release
+workflows, including 2.8.0 above, supersede that historical blocker. Each new
+release must still prove current signing and notarization access.
 The release workflow requires a successful live credential preflight,
 verification of the repository-held updater signing key, two architecture
 builds, Gatekeeper/signature/notarization checks, and installation evidence.
-After both platform lanes and the final checksum, updater, SBOM, and provenance
+After every enabled platform lane and the final checksum, updater, SBOM, and provenance
 gate pass, automation publishes the staged draft; a failed or missing gate
 leaves no advertised release. Source builds are not substitutes for official
 DMGs.

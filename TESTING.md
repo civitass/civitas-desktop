@@ -25,6 +25,7 @@ cd ../..
 node scripts/audit-consumer-design.mjs
 node scripts/validate-tauri-production-security.mjs .
 node scripts/audit-publication.mjs .
+node --test scripts/validate-release-assets.test.mjs scripts/notarize-macos-dmg.test.mjs
 ```
 
 - [ ] No ignored failure is introduced without a tracked reason and owner.
@@ -36,6 +37,9 @@ node scripts/audit-publication.mjs .
   gate, enterprise policy, fleet, or team-sync symbol.
 - [ ] Dependency/SBOM diff is reviewed for new native code, licenses, binaries,
   and network clients.
+- [ ] Release files and updater aliases match exactly the version and platforms
+  that passed signing; both supported notarization credential modes pass the
+  synthetic command tests. These tests do not contact Apple or use real keys.
 
 FFmpeg frame-extraction integration tests use runtime-generated synthetic
 media and are excluded from the default suite because FFmpeg is an external

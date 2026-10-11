@@ -137,7 +137,7 @@ export function useTimelineKeyboard(opts: {
 	// Cmd+Shift+C / Ctrl+Shift+C — copy current frame image
 	useEffect(() => {
 		const handleCopyFrame = (e: KeyboardEvent) => {
-			if (showSearchModal) return;
+			if (showSearchModal || matchingIndices?.length === 0) return;
 
 			const target = e.target as HTMLElement;
 			if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) {
@@ -172,7 +172,7 @@ export function useTimelineKeyboard(opts: {
 
 		window.addEventListener("keydown", handleCopyFrame);
 		return () => window.removeEventListener("keydown", handleCopyFrame);
-	}, [currentFrame, isMac, showSearchModal]);
+	}, [currentFrame, isMac, showSearchModal, matchingIndices]);
 
 	// Handle Escape: exit search review → close search modal → reset filters → close window
 	// In embedded mode, only handle closing the search modal (don't close the window)
@@ -191,7 +191,7 @@ export function useTimelineKeyboard(opts: {
 				return;
 			}
 			// If any filter is active, clear it instead of closing window
-			if (selectedDeviceIdRef.current !== "all" || selectedAppNameRef.current !== "all") {
+			if (matchingIndices !== null) {
 				resetFilters();
 				return;
 			}
@@ -228,7 +228,7 @@ export function useTimelineKeyboard(opts: {
 			unlisten.then((fn) => fn());
 			window.removeEventListener("keydown", handleKeyDown);
 		};
-	}, [showSearchModal, embedded, resetFilters, inSearchReviewMode, clearSearchHighlight, isMac, pausePlayback]);
+	}, [showSearchModal, embedded, resetFilters, inSearchReviewMode, clearSearchHighlight, isMac, pausePlayback, matchingIndices]);
 
 	// Handle arrow key navigation via JS keydown (no global hotkey stealing)
 	useEffect(() => {
@@ -257,6 +257,10 @@ export function useTimelineKeyboard(opts: {
 				return;
 			}
 
+			// Other keys must not clear search state or trigger navigation feedback.
+			if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+			if (matchingIndices?.length === 0) return;
+
 			// Dismiss search highlights on explicit arrow navigation
 			if (hasSearchHighlight) dismissSearchHighlight();
 
@@ -276,7 +280,7 @@ export function useTimelineKeyboard(opts: {
 						const currentApp = getFrameAppName(frames[prev]);
 						let i = prev + 1;
 						while (i < frames.length) {
-							if (getFrameAppName(frames[i]) !== currentApp) {
+							if ((matchingIndices === null || matchingIndices.includes(i)) && getFrameAppName(frames[i]) !== currentApp) {
 								if (frames[i]) {
 									setCurrentFrame(frames[i]);
 									if (isPlaying) seekPlayback(new Date(frames[i].timestamp).getTime());
@@ -307,7 +311,7 @@ export function useTimelineKeyboard(opts: {
 						const currentApp = getFrameAppName(frames[prev]);
 						let i = prev - 1;
 						while (i >= 0) {
-							if (getFrameAppName(frames[i]) !== currentApp) {
+							if ((matchingIndices === null || matchingIndices.includes(i)) && getFrameAppName(frames[i]) !== currentApp) {
 								if (frames[i]) {
 									setCurrentFrame(frames[i]);
 									if (isPlaying) seekPlayback(new Date(frames[i].timestamp).getTime());
@@ -338,6 +342,6 @@ export function useTimelineKeyboard(opts: {
 		// them in deps the listener keeps a stale findNextDevice after a filter
 		// change (its identity tracks selectedDeviceId/app/matchingIndices), so
 		// arrow nav would ignore the active filter until frames next change.
-	}, [frames, findNextDevice, setCurrentIndex, setCurrentFrame, showSearchModal, isPlaying, seekPlayback, pausePlayback, inSearchReviewMode, searchResultIndex, searchResults, hasSearchHighlight, dismissSearchHighlight]);
+	}, [frames, findNextDevice, setCurrentIndex, setCurrentFrame, showSearchModal, isPlaying, seekPlayback, pausePlayback, inSearchReviewMode, searchResultIndex, searchResults, hasSearchHighlight, dismissSearchHighlight, matchingIndices]);
 
 }

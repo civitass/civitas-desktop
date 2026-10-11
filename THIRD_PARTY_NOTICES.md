@@ -83,6 +83,27 @@ dependency graph and registry integrity values are recorded in
 embeds that lockfile and installs with dependency lifecycle scripts disabled.
 The release SBOM and lockfile are the authoritative full inventory.
 
+### Optional WhatsApp gateway runtime
+
+The personal WhatsApp connection uses the unofficial Baileys
+`7.0.0-rc14` runtime (MIT), pino `10.4.0` (MIT), and ws `8.22.0` (MIT).
+Its dependency graph includes libsignal `6.0.0` (GPL-3.0) and
+whatsapp-rust-bridge `0.5.4` (MIT). These optional packages are downloaded
+separately when the user explicitly pairs in **Settings → Connections**;
+they are not bundled into the application. Startup never installs them.
+
+The reviewed versions and registry integrity values are recorded in
+`crates/civitas-connect/assets/whatsapp-runtime/bun.lock`. Installation uses
+Bun `1.3.10`, a frozen lockfile, and disabled lifecycle scripts. Upstream
+source and licenses are available from
+[Baileys](https://github.com/WhiskeySockets/Baileys),
+[libsignal](https://www.npmjs.com/package/libsignal/v/6.0.0),
+[pino](https://github.com/pinojs/pino),
+[ws](https://github.com/websockets/ws), and
+[whatsapp-rust-bridge](https://github.com/jlucaso1/whatsapp-rust-bridge).
+This pre-release, unofficial protocol integration is optional and is not
+endorsed by WhatsApp.
+
 ## Windows build and runtime dependencies
 
 Official Windows builds stage these native components from versioned HTTPS
@@ -222,6 +243,23 @@ Rust and JavaScript dependencies are enumerated in `Cargo.lock` and the Bun
 lockfiles. Their package metadata and license expressions are captured in the
 release SBOM. Copyright and license notices contained in dependency source
 distributions remain applicable.
+
+The October 2026 dependency maintenance is catalogued in
+[Dependency security maintenance](docs/DEPENDENCY_SECURITY.md), including the
+exact installed versions and locally patched advisories. Next.js, ProseMirror,
+KaTeX, markdown-it, brace-expansion, undici, the MCP SDK, Hono, ip-address, and
+proxy-addr retain their MIT licenses. Argparse retains Python-2.0; sharp uses
+Apache-2.0; source-map-js and fast-uri use BSD-3-Clause; PostCSS Selector Parser
+uses MIT; DOMPurify offers MPL-2.0 OR Apache-2.0.
+
+The tracked patch to **braces 3.0.3** modifies MIT-licensed code by Jon
+Schlinkert and contributors. The patch to **node-forge 1.4.0** adapts the nested
+DigestAlgorithm validation correction proposed in
+[upstream PR 1152](https://github.com/digitalbazaar/forge/pull/1152); node-forge
+is copyright Digital Bazaar, Inc. and contributors and offers BSD-3-Clause OR
+GPL-2.0. Civitas uses the BSD-3-Clause option. Original copyright and license
+files remain in the installed packages. Both are development/build
+dependencies; the forge patch is not part of the MCP production module graph.
 
 ## Design review reference
 

@@ -6,6 +6,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { throttle } from "@/lib/utils/timing";
 import type { StreamTimeSeriesResponse } from "@/components/rewind/timeline";
+import { moveFilteredIndex } from "./filtered-navigation";
 import { useTimelineSelection } from "@/lib/hooks/use-timeline-selection";
 
 const MIN_ZOOM = 0.25;
@@ -167,17 +168,8 @@ export function useScrollZoom(opts: {
 					// keeps this safe to call without a rAF wrapper.
 					setCurrentIndex((prevIndex: number) => {
 						let newIndex: number;
-						if (matchingIndices) {
-							// Navigate in matching-frame space: find current position
-							// in the matching list, apply delta there, then map back.
-							let pos = 0;
-							let bestDist = Infinity;
-							for (let j = 0; j < matchingIndices.length; j++) {
-								const dist = Math.abs(matchingIndices[j] - prevIndex);
-								if (dist < bestDist) { bestDist = dist; pos = j; }
-							}
-							const newPos = Math.max(0, Math.min(pos + indexChange, matchingIndices.length - 1));
-							newIndex = matchingIndices[newPos];
+						if (matchingIndices !== null) {
+							newIndex = moveFilteredIndex(matchingIndices, prevIndex, indexChange);
 						} else {
 							newIndex = Math.min(
 								Math.max(0, Math.floor(prevIndex + indexChange)),
@@ -334,15 +326,8 @@ export function useScrollZoom(opts: {
 			// arrives at most once per OS scroll tick).
 			setCurrentIndex((prevIndex: number) => {
 				let newIndex: number;
-				if (matchingIndices) {
-					let pos = 0;
-					let bestDist = Infinity;
-					for (let j = 0; j < matchingIndices.length; j++) {
-						const dist = Math.abs(matchingIndices[j] - prevIndex);
-						if (dist < bestDist) { bestDist = dist; pos = j; }
-					}
-					const newPos = Math.max(0, Math.min(pos + indexChange, matchingIndices.length - 1));
-					newIndex = matchingIndices[newPos];
+				if (matchingIndices !== null) {
+							newIndex = moveFilteredIndex(matchingIndices, prevIndex, indexChange);
 				} else {
 					newIndex = Math.min(
 						Math.max(0, Math.floor(prevIndex + indexChange)),

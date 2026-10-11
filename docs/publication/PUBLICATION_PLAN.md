@@ -1,6 +1,8 @@
 # Civitas consumer publication program
 
-> Status: implementation plan and release gate
+> Status: original publication design and acceptance plan; consult
+> [Implementation status](IMPLEMENTATION_STATUS.md) for completed work and
+> [Release verification](../RELEASE_VERIFICATION.md) for current release gates.
 > Audit date: 2026-07-26
 > Target public repository: `civitass/civitas-desktop`
 > Target product: a local-first personal work memory, knowledge graph, query

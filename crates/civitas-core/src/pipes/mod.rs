@@ -553,13 +553,21 @@ const PID_FILE_NAME: &str = "run.pid";
 
 /// Write the child PID to `{pipes_dir}/{pipe_name}/run.pid`.
 fn write_pid_file(pipes_dir: &Path, pipe_name: &str, pid: u32) {
-    let path = pipes_dir.join(pipe_name).join(PID_FILE_NAME);
-    let _ = std::fs::write(&path, pid.to_string());
+    let Ok(dir) = managed_pipe_dir(pipes_dir, pipe_name) else {
+        return;
+    };
+    let path = dir.join(PID_FILE_NAME);
+    if validate_managed_pipe_path(pipes_dir, &path).is_ok() {
+        let _ = atomic_write(&path, &pid.to_string());
+    }
 }
 
 /// Read and parse the PID from `{pipes_dir}/{pipe_name}/run.pid`.
 fn read_pid_file(pipes_dir: &Path, pipe_name: &str) -> Option<u32> {
-    let path = pipes_dir.join(pipe_name).join(PID_FILE_NAME);
+    let path = managed_pipe_dir(pipes_dir, pipe_name)
+        .ok()?
+        .join(PID_FILE_NAME);
+    validate_managed_pipe_path(pipes_dir, &path).ok()?;
     std::fs::read_to_string(&path)
         .ok()?
         .trim()
@@ -569,8 +577,13 @@ fn read_pid_file(pipes_dir: &Path, pipe_name: &str) -> Option<u32> {
 
 /// Remove the PID file for a pipe.
 fn remove_pid_file(pipes_dir: &Path, pipe_name: &str) {
-    let path = pipes_dir.join(pipe_name).join(PID_FILE_NAME);
-    let _ = std::fs::remove_file(&path);
+    let Ok(dir) = managed_pipe_dir(pipes_dir, pipe_name) else {
+        return;
+    };
+    let path = dir.join(PID_FILE_NAME);
+    if validate_managed_pipe_path(pipes_dir, &path).is_ok() {
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 /// Check if a process with the given PID is still alive.
@@ -1472,8 +1485,9 @@ async fn record_scheduler_preflight_failure(
         degrade_log_for_persistence(&mut log, &persistence_errors);
     }
 
-    let log_dir = pipes_dir.join(name).join("logs");
     let disk_result = (|| -> Result<()> {
+        let log_dir = managed_pipe_dir(pipes_dir, name)?.join("logs");
+        validate_managed_pipe_path(pipes_dir, &log_dir)?;
         std::fs::create_dir_all(&log_dir)?;
         let log_file = log_dir.join(format!("{}.json", now.format("%Y%m%d_%H%M%S")));
         let json = serde_json::to_string_pretty(&log)?;
@@ -2101,6 +2115,7 @@ impl PipeManager {
 
     /// Scan `pipes_dir` for `*/pipe.md` and load configs.
     pub async fn load_pipes(&self) -> Result<()> {
+        validate_managed_pipe_path(&self.pipes_dir, &self.pipes_dir)?;
         let entries = match std::fs::read_dir(&self.pipes_dir) {
             Ok(e) => e,
             Err(e) => {
@@ -2131,6 +2146,12 @@ impl PipeManager {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+            if validate_pipe_name(&dir_name).is_err()
+                || validate_managed_pipe_path(&self.pipes_dir, &pipe_md).is_err()
+            {
+                warn!("skipping unsafe workflow directory entry");
+                continue;
+            }
             match std::fs::read_to_string(&pipe_md) {
                 Ok(content) => match parse_frontmatter(&content) {
                     Ok((mut config, body)) => {
@@ -2159,6 +2180,7 @@ impl PipeManager {
     /// state (running flags, logs, execution IDs).
     /// Debounced: skips disk scan if last reload was < 2 seconds ago.
     pub async fn reload_pipes(&self) -> Result<()> {
+        validate_managed_pipe_path(&self.pipes_dir, &self.pipes_dir)?;
         {
             let last = self.last_reload.lock().await;
             if last.elapsed() < std::time::Duration::from_secs(2) {
@@ -2196,6 +2218,12 @@ impl PipeManager {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+            if validate_pipe_name(&dir_name).is_err()
+                || validate_managed_pipe_path(&self.pipes_dir, &pipe_md).is_err()
+            {
+                warn!("skipping unsafe workflow directory entry");
+                continue;
+            }
             found_on_disk.insert(dir_name.clone());
 
             match std::fs::read_to_string(&pipe_md) {
@@ -2376,7 +2404,13 @@ impl PipeManager {
     /// Build a diagnostic error when a pipe name isn't in the in-memory map.
     /// Checks the filesystem to explain *why* it wasn't loaded.
     fn pipe_not_found_error(&self, name: &str) -> anyhow::Error {
-        let pipe_dir = self.pipes_dir.join(name);
+        let pipe_dir = match managed_pipe_dir(&self.pipes_dir, name) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        if let Err(error) = validate_managed_pipe_path(&self.pipes_dir, &pipe_dir.join("pipe.md")) {
+            return error;
+        }
         if !pipe_dir.exists() {
             return anyhow!(
                 "pipe '{}' not found — directory does not exist: {}\nhint: install it first with `civitas pipe install <source>`",
@@ -2417,6 +2451,7 @@ impl PipeManager {
     /// NOTE: this blocks for the entire execution — avoid calling while
     /// holding the outer PipeManager mutex from an API handler.
     pub async fn run_pipe(&self, name: &str) -> Result<PipeRunLog> {
+        managed_pipe_dir(&self.pipes_dir, name)?;
         self.run_pipe_with_trigger(name, "manual").await
     }
 
@@ -2425,6 +2460,8 @@ impl PipeManager {
     /// in a spawned tokio task.  Use this from API handlers to avoid holding
     /// the PipeManager mutex for the entire execution duration.
     pub async fn start_pipe_background(&self, name: &str) -> Result<()> {
+        let pipe_dir = managed_pipe_dir(&self.pipes_dir, name)?;
+        validate_managed_pipe_path(&self.pipes_dir, &pipe_dir.join("pipe.md"))?;
         let (config, body, _raw) = {
             let pipes = self.pipes.lock().await;
             match pipes.get(name).cloned() {
@@ -2528,8 +2565,6 @@ impl PipeManager {
             .get("history")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-
-        let pipe_dir = self.pipes_dir.clone().join(name);
 
         let pipe_system_prompt = render_pipe_system_prompt(
             &body,
@@ -2851,7 +2886,8 @@ impl PipeManager {
             }
 
             let disk_result = (|| -> Result<()> {
-                let log_dir = pipes_dir_for_log.join(&log.pipe_name).join("logs");
+                let log_dir = managed_pipe_dir(&pipes_dir_for_log, &log.pipe_name)?.join("logs");
+                validate_managed_pipe_path(&pipes_dir_for_log, &log_dir)?;
                 std::fs::create_dir_all(&log_dir)?;
                 let log_file =
                     log_dir.join(format!("{}.json", log.started_at.format("%Y%m%d_%H%M%S")));
@@ -2916,6 +2952,8 @@ impl PipeManager {
         retry_depth: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PipeRunLog>> + Send + 'a>> {
         Box::pin(async move {
+            let pipe_dir = managed_pipe_dir(&self.pipes_dir, name)?;
+            validate_managed_pipe_path(&self.pipes_dir, &pipe_dir.join("pipe.md"))?;
             let (config, body, _raw) = {
                 let pipes = self.pipes.lock().await;
                 match pipes.get(name).cloned() {
@@ -3022,8 +3060,6 @@ impl PipeManager {
             write_pid_file(&self.pipes_dir, name, 0);
 
             let started_at = Utc::now();
-            let pipe_dir = self.pipes_dir.join(name);
-
             let exec_id = match create_running_execution(
                 self.store.as_ref(),
                 name,
@@ -3113,48 +3149,45 @@ impl PipeManager {
                     warn!("failed to pre-configure pi provider: {}", e);
                 }
 
-                pipe_token = match setup_pipe_permissions(
-                    &self.pipes_dir.join(name),
-                    &config,
-                    self.token_registry.as_ref(),
-                )
-                .await
-                {
-                    Ok(token) => token,
-                    Err(error) => {
-                        let message = format!(
-                            "pipe '{}' permission boundary setup failed: {error:#}",
-                            name
-                        );
-                        self.running.lock().await.remove(name);
-                        self.running_execution_ids.lock().await.remove(name);
-                        remove_pid_file(&self.pipes_dir, name);
-                        let persistence_errors = persist_terminal_execution(
-                            self.store.as_ref(),
-                            exec_id,
-                            name,
-                            TerminalExecution {
-                                status: "failed",
-                                stdout: "",
-                                stderr: &message,
-                                exit_code: None,
-                                error_type: Some("configuration"),
-                                error_message: Some(&message),
-                                session_path: None,
-                                scheduler_success: false,
-                            },
-                        )
-                        .await;
-                        if persistence_errors.is_empty() {
-                            return Err(anyhow!(message));
+                pipe_token =
+                    match setup_pipe_permissions(&pipe_dir, &config, self.token_registry.as_ref())
+                        .await
+                    {
+                        Ok(token) => token,
+                        Err(error) => {
+                            let message = format!(
+                                "pipe '{}' permission boundary setup failed: {error:#}",
+                                name
+                            );
+                            self.running.lock().await.remove(name);
+                            self.running_execution_ids.lock().await.remove(name);
+                            remove_pid_file(&self.pipes_dir, name);
+                            let persistence_errors = persist_terminal_execution(
+                                self.store.as_ref(),
+                                exec_id,
+                                name,
+                                TerminalExecution {
+                                    status: "failed",
+                                    stdout: "",
+                                    stderr: &message,
+                                    exit_code: None,
+                                    error_type: Some("configuration"),
+                                    error_message: Some(&message),
+                                    session_path: None,
+                                    scheduler_success: false,
+                                },
+                            )
+                            .await;
+                            if persistence_errors.is_empty() {
+                                return Err(anyhow!(message));
+                            }
+                            return Err(anyhow!(
+                                "{}; persistence errors: {}",
+                                message,
+                                persistence_errors.join("; ")
+                            ));
                         }
-                        return Err(anyhow!(
-                            "{}; persistence errors: {}",
-                            message,
-                            persistence_errors.join("; ")
-                        ));
-                    }
-                };
+                    };
             }
 
             // Run with timeout + streaming
@@ -3436,7 +3469,8 @@ impl PipeManager {
 
     /// Enable or disable a pipe (writes back to pipe.md front-matter).
     pub async fn enable_pipe(&self, name: &str, enabled: bool) -> Result<()> {
-        let pipe_md = self.pipes_dir.join(name).join("pipe.md");
+        let pipe_md = managed_pipe_dir(&self.pipes_dir, name)?.join("pipe.md");
+        validate_managed_pipe_path(&self.pipes_dir, &pipe_md)?;
         if !pipe_md.exists() {
             return Err(self.pipe_not_found_error(name));
         }
@@ -3481,7 +3515,8 @@ impl PipeManager {
         name: &str,
         updates: HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        let pipe_md = self.pipes_dir.join(name).join("pipe.md");
+        let pipe_md = managed_pipe_dir(&self.pipes_dir, name)?.join("pipe.md");
+        validate_managed_pipe_path(&self.pipes_dir, &pipe_md)?;
         if !pipe_md.exists() {
             return Err(anyhow!("pipe '{}' not found", name));
         }
@@ -3650,8 +3685,9 @@ impl PipeManager {
                 };
                 validate_pipe_name(&name)?;
 
-                let dest_dir = self.pipes_dir.join(&name);
+                let dest_dir = managed_pipe_dir(&self.pipes_dir, &name)?;
                 let dest_file = dest_dir.join("pipe.md");
+                validate_managed_pipe_path(&self.pipes_dir, &dest_file)?;
                 let dest_canonical = dest_file
                     .canonicalize()
                     .unwrap_or_else(|_| dest_file.clone());
@@ -3675,7 +3711,7 @@ impl PipeManager {
                 // a file onto itself can truncate it to 0 bytes on some platforms.
                 if source_canonical != dest_canonical {
                     std::fs::create_dir_all(&dest_dir)?;
-                    std::fs::copy(source_path, &dest_file)?;
+                    copy_workflow_file(&self.pipes_dir, source_path, &dest_file)?;
                 }
                 // Clear any tombstone — user is explicitly re-installing
                 remove_tombstone(&self.pipes_dir, &name)?;
@@ -3692,7 +3728,7 @@ impl PipeManager {
                     .to_string_lossy()
                     .to_string();
                 validate_pipe_name(&name)?;
-                let dest_dir = self.pipes_dir.join(&name);
+                let dest_dir = managed_pipe_dir(&self.pipes_dir, &name)?;
                 let dest_canonical = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.clone());
 
                 // Validate the registry before changing installation state.
@@ -3713,7 +3749,10 @@ impl PipeManager {
                 // Skip copy if source and destination are the same directory —
                 // copying a directory onto itself can clobber file contents.
                 if source_canonical != dest_canonical {
-                    copy_dir_recursive(source_path, &dest_dir)?;
+                    // Reject every unsafe destination before copying the first
+                    // file, including links nested in an existing installation.
+                    validate_workflow_copy_destination(&self.pipes_dir, source_path, &dest_dir)?;
+                    copy_dir_recursive(&self.pipes_dir, source_path, &dest_dir)?;
                 }
                 remove_tombstone(&self.pipes_dir, &name)?;
                 self.load_pipes().await?;
@@ -3731,7 +3770,8 @@ impl PipeManager {
     /// Delete a pipe and its folder.
     /// Writes a tombstone so a bundled workflow is not silently restored.
     pub async fn delete_pipe(&self, name: &str) -> Result<()> {
-        let dir = self.pipes_dir.join(name);
+        let dir = managed_pipe_dir(&self.pipes_dir, name)?;
+        validate_managed_pipe_path(&self.pipes_dir, &dir.join("pipe.md"))?;
         if !dir.exists() {
             return Err(self.pipe_not_found_error(name));
         }
@@ -3813,7 +3853,7 @@ impl PipeManager {
 
     /// Clear a pipe's chat history by deleting its Pi session files.
     pub async fn clear_pipe_history(&self, name: &str) -> Result<()> {
-        let pipe_dir = self.pipes_dir.join(name);
+        let pipe_dir = managed_pipe_dir(&self.pipes_dir, name)?;
         if !pipe_dir.exists() {
             return Err(anyhow!("pipe '{}' not found", name));
         }
@@ -3824,6 +3864,7 @@ impl PipeManager {
 
     /// Stop a running pipe.
     pub async fn stop_pipe(&self, name: &str) -> Result<()> {
+        validate_pipe_name(name)?;
         let handle = {
             let mut running = self.running.lock().await;
             running.remove(name)
@@ -4104,6 +4145,22 @@ impl PipeManager {
                         }
                     }
 
+                    // Recheck loaded entries before each run: the owner may
+                    // have replaced a workflow directory since the last scan.
+                    let pipe_dir = match managed_pipe_dir(&pipes_dir, name).and_then(|dir| {
+                        validate_managed_pipe_path(&pipes_dir, &dir.join("pipe.md"))?;
+                        Ok(dir)
+                    }) {
+                        Ok(dir) => dir,
+                        Err(error) => {
+                            warn!(
+                                "scheduler: refusing unsafe workflow path '{}': {}",
+                                name, error
+                            );
+                            continue;
+                        }
+                    };
+
                     // Setup-mode gate: pipes whose declared `connections` aren't
                     // all configured (`enabled && credentials present`) must not
                     // run on schedule or event. Mirrors the manual-run gate in
@@ -4280,7 +4337,7 @@ impl PipeManager {
                         }
 
                         pipe_token = match setup_pipe_permissions(
-                            &pipes_dir.join(name),
+                            &pipe_dir,
                             config,
                             token_registry.as_ref(),
                         )
@@ -4317,8 +4374,6 @@ impl PipeManager {
                         .get("history")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-
-                    let pipe_dir = pipes_dir.join(name);
 
                     let pipe_system_prompt = render_pipe_system_prompt(
                         body,
@@ -4691,7 +4746,9 @@ impl PipeManager {
                         }
 
                         let disk_result = (|| -> Result<()> {
-                            let log_dir = pipes_dir_for_log.join(&log.pipe_name).join("logs");
+                            let log_dir =
+                                managed_pipe_dir(&pipes_dir_for_log, &log.pipe_name)?.join("logs");
+                            validate_managed_pipe_path(&pipes_dir_for_log, &log_dir)?;
                             std::fs::create_dir_all(&log_dir)?;
                             let log_file = log_dir
                                 .join(format!("{}.json", log.started_at.format("%Y%m%d_%H%M%S")));
@@ -4878,8 +4935,9 @@ impl PipeManager {
         )?;
 
         for (name, content) in builtins {
-            let dir = self.pipes_dir.join(name);
+            let dir = managed_pipe_dir(&self.pipes_dir, name)?;
             let pipe_md = dir.join("pipe.md");
+            validate_managed_pipe_path(&self.pipes_dir, &pipe_md)?;
             if !pipe_md.exists() {
                 // Check tombstone — user may have intentionally deleted this pipe
                 if let Some(entry) = tombstones.get(name) {
@@ -4939,7 +4997,8 @@ impl PipeManager {
     }
 
     fn write_log_to_disk(&self, name: &str, log: &PipeRunLog) -> Result<()> {
-        let log_dir = self.pipes_dir.join(name).join("logs");
+        let log_dir = managed_pipe_dir(&self.pipes_dir, name)?.join("logs");
+        validate_managed_pipe_path(&self.pipes_dir, &log_dir)?;
         std::fs::create_dir_all(&log_dir)?;
         let log_file = log_dir.join(format!("{}.json", log.started_at.format("%Y%m%d_%H%M%S")));
         let json = serde_json::to_string_pretty(log)?;
@@ -5687,7 +5746,106 @@ fn validate_pipe_package(root: &Path) -> Result<()> {
     visit(root, 0, &mut file_count, &mut total_bytes)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+/// Reject symlinks/reparse points in the managed root and every existing
+/// descendant. Ancestors of the configured root belong to the owner's chosen
+/// data location; do not reject macOS's standard /var -> /private/var mapping.
+fn validate_managed_pipe_path(root: &Path, target: &Path) -> Result<()> {
+    let relative = target
+        .strip_prefix(root)
+        .map_err(|_| anyhow!("workflow path is outside the managed directory"))?;
+    let mut paths = vec![root.to_path_buf()];
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(anyhow!("workflow path contains an invalid component"));
+        };
+        paths.push(paths.last().expect("managed root exists").join(name));
+    }
+    for (index, path) in paths.iter().enumerate() {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                let linked = metadata.file_type().is_symlink();
+                #[cfg(windows)]
+                let linked = {
+                    use std::os::windows::fs::MetadataExt;
+                    linked || metadata.file_attributes() & 0x400 != 0
+                };
+                if linked {
+                    return Err(anyhow!(
+                        "workflow managed paths cannot contain symbolic links or reparse points"
+                    ));
+                }
+                if !metadata.is_dir() && (index == 0 || index + 1 < paths.len()) {
+                    return Err(anyhow!("workflow path ancestor is not a directory"));
+                }
+                if !metadata.is_dir() && !metadata.is_file() {
+                    return Err(anyhow!(
+                        "workflow managed path is not a regular file or directory"
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn managed_pipe_dir(root: &Path, name: &str) -> Result<PathBuf> {
+    validate_pipe_name(name)?;
+    let path = root.join(name);
+    validate_managed_pipe_path(root, &path)?;
+    Ok(path)
+}
+
+fn validate_workflow_copy_destination(root: &Path, src: &Path, dst: &Path) -> Result<()> {
+    reject_symlink(src)?;
+    validate_managed_pipe_path(root, dst)?;
+    if let Ok(destination_metadata) = std::fs::symlink_metadata(dst) {
+        if src.is_dir() != destination_metadata.is_dir() {
+            return Err(anyhow!(
+                "workflow source and destination entry types differ"
+            ));
+        }
+    }
+    if src.is_dir() {
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            validate_workflow_copy_destination(root, &entry.path(), &dst.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Replace the destination atomically, rather than truncating through a hard
+/// link. The source may be binary; the installer has already bounded its size.
+fn copy_workflow_file(root: &Path, src: &Path, dst: &Path) -> Result<()> {
+    use std::io::Write;
+    reject_symlink(src)?;
+    if !std::fs::symlink_metadata(src)?.is_file() {
+        return Err(anyhow!("workflow source is not a regular file"));
+    }
+    validate_managed_pipe_path(root, dst)?;
+    let parent = dst
+        .parent()
+        .ok_or_else(|| anyhow!("workflow destination has no parent"))?;
+    let mut input = std::fs::File::open(src)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut input, &mut temporary)?;
+    temporary.flush()?;
+    // Keep executable scripts executable without broadening source access.
+    temporary
+        .as_file()
+        .set_permissions(input.metadata()?.permissions())?;
+    temporary.as_file().sync_all()?;
+    validate_managed_pipe_path(root, dst)?;
+    temporary.persist(dst)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn copy_dir_recursive(root: &Path, src: &Path, dst: &Path) -> Result<()> {
+    validate_managed_pipe_path(root, dst)?;
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -5695,9 +5853,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         let dst_path = dst.join(entry.file_name());
         reject_symlink(&src_path)?;
         if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
+            copy_dir_recursive(root, &src_path, &dst_path)?;
         } else {
-            std::fs::copy(&src_path, &dst_path)?;
+            copy_workflow_file(root, &src_path, &dst_path)?;
         }
     }
     Ok(())
@@ -5789,6 +5947,235 @@ mod tests {
         std::fs::create_dir(&pipes_dir).expect("create pipes directory");
         let store_path = temp.path().join("store.bin");
         (temp, pipes_dir, store_path)
+    }
+
+    const PATH_TEST_PIPE: &str = "---\nschedule: manual\nenabled: false\n---\n\nSynthetic workflow";
+
+    #[tokio::test]
+    async fn workflow_path_mutations_reject_untrusted_ids_before_touching_disk() {
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let victim = temp.path().join("victim");
+        std::fs::create_dir(&victim).unwrap();
+        std::fs::write(victim.join("pipe.md"), PATH_TEST_PIPE).unwrap();
+        let manager = PipeManager::new(pipes_dir.clone(), HashMap::new(), None, 0);
+        for id in [
+            "../victim",
+            "..",
+            ".",
+            "bad/name",
+            "bad\\name",
+            "%2e%2e",
+            "",
+        ]
+        .into_iter()
+        .chain(std::iter::once(victim.to_str().unwrap()))
+        {
+            assert!(manager.enable_pipe(id, true).await.is_err(), "enable {id}");
+            assert!(
+                manager.update_config(id, HashMap::new()).await.is_err(),
+                "update {id}"
+            );
+            assert!(manager.delete_pipe(id).await.is_err(), "delete {id}");
+            assert!(
+                manager.clear_pipe_history(id).await.is_err(),
+                "history {id}"
+            );
+            assert!(manager.run_pipe(id).await.is_err(), "run {id}");
+            assert!(
+                manager.start_pipe_background(id).await.is_err(),
+                "start {id}"
+            );
+            assert!(manager.stop_pipe(id).await.is_err(), "stop {id}");
+            assert_eq!(
+                std::fs::read_to_string(victim.join("pipe.md")).unwrap(),
+                PATH_TEST_PIPE
+            );
+        }
+        assert!(!pipes_dir.join(TOMBSTONES_FILE).exists());
+        assert!(!pipes_dir.join(LOCAL_OVERRIDES_FILE).exists());
+    }
+
+    #[tokio::test]
+    async fn workflow_path_explicit_local_install_and_binary_update_remain_supported() {
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let manager = PipeManager::new(pipes_dir.clone(), HashMap::new(), None, 0);
+        let source = temp.path().join("notes.md");
+        std::fs::write(&source, PATH_TEST_PIPE).unwrap();
+        assert_eq!(
+            manager
+                .install_pipe(source.to_str().unwrap())
+                .await
+                .unwrap(),
+            "notes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(pipes_dir.join("notes/pipe.md")).unwrap(),
+            PATH_TEST_PIPE
+        );
+        let package = temp.path().join("package");
+        std::fs::create_dir_all(package.join("assets")).unwrap();
+        std::fs::write(package.join("pipe.md"), PATH_TEST_PIPE).unwrap();
+        std::fs::write(package.join("assets/sample.bin"), [0, 255, 1, 128]).unwrap();
+        manager
+            .install_pipe(package.to_str().unwrap())
+            .await
+            .unwrap();
+        std::fs::write(pipes_dir.join("package/local-result.txt"), "keep").unwrap();
+        std::fs::write(package.join("assets/sample.bin"), [9, 0, 255]).unwrap();
+        manager
+            .install_pipe(package.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(pipes_dir.join("package/assets/sample.bin")).unwrap(),
+            [9, 0, 255]
+        );
+        assert_eq!(
+            std::fs::read_to_string(pipes_dir.join("package/local-result.txt")).unwrap(),
+            "keep"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workflow_path_install_rejects_linked_destinations_without_partial_writes() {
+        use std::os::unix::fs::symlink;
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let manager = PipeManager::new(pipes_dir.clone(), HashMap::new(), None, 0);
+        let source = temp.path().join("notes.md");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("pipe.md"), "untouched").unwrap();
+        std::fs::write(&source, PATH_TEST_PIPE).unwrap();
+        symlink(&outside, pipes_dir.join("notes")).unwrap();
+        assert!(manager
+            .install_pipe(source.to_str().unwrap())
+            .await
+            .is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("pipe.md")).unwrap(),
+            "untouched"
+        );
+        std::fs::remove_file(pipes_dir.join("notes")).unwrap();
+        std::fs::create_dir(pipes_dir.join("notes")).unwrap();
+        symlink(outside.join("pipe.md"), pipes_dir.join("notes/pipe.md")).unwrap();
+        assert!(manager
+            .install_pipe(source.to_str().unwrap())
+            .await
+            .is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("pipe.md")).unwrap(),
+            "untouched"
+        );
+
+        let package = temp.path().join("package");
+        std::fs::create_dir_all(package.join("assets")).unwrap();
+        std::fs::write(package.join("pipe.md"), PATH_TEST_PIPE).unwrap();
+        std::fs::write(package.join("assets/new.txt"), "replacement").unwrap();
+        std::fs::create_dir(pipes_dir.join("package")).unwrap();
+        std::fs::write(pipes_dir.join("package/pipe.md"), "original").unwrap();
+        symlink(&outside, pipes_dir.join("package/assets")).unwrap();
+        assert!(manager
+            .install_pipe(package.to_str().unwrap())
+            .await
+            .is_err());
+        assert!(!outside.join("new.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(pipes_dir.join("package/pipe.md")).unwrap(),
+            "original"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workflow_path_mutations_and_discovery_reject_linked_entries() {
+        use std::os::unix::fs::symlink;
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("pipe.md"), PATH_TEST_PIPE).unwrap();
+        symlink(&outside, pipes_dir.join("linked")).unwrap();
+        let manager = PipeManager::new(pipes_dir.clone(), HashMap::new(), None, 0);
+        assert!(manager.enable_pipe("linked", true).await.is_err());
+        assert!(manager
+            .update_config("linked", HashMap::new())
+            .await
+            .is_err());
+        assert!(manager.delete_pipe("linked").await.is_err());
+        assert!(manager.clear_pipe_history("linked").await.is_err());
+        manager.load_pipes().await.unwrap();
+        assert!(manager.get_pipe("linked").await.is_none());
+        manager.reload_pipes().await.unwrap();
+        assert!(manager.get_pipe("linked").await.is_none());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("pipe.md")).unwrap(),
+            PATH_TEST_PIPE
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_path_rejects_dangling_links_roots_and_linked_pid_files() {
+        use std::os::unix::fs::symlink;
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(&outside, temp.path().join("linked-root")).unwrap();
+        assert!(managed_pipe_dir(&temp.path().join("linked-root"), "test").is_err());
+        symlink(temp.path().join("missing"), pipes_dir.join("dangling")).unwrap();
+        assert!(managed_pipe_dir(&pipes_dir, "dangling").is_err());
+        std::fs::create_dir(pipes_dir.join("test")).unwrap();
+        let outside_pid = outside.join("pid");
+        std::fs::write(&outside_pid, "42").unwrap();
+        symlink(&outside_pid, pipes_dir.join("test/run.pid")).unwrap();
+        assert_eq!(read_pid_file(&pipes_dir, "test"), None);
+        write_pid_file(&pipes_dir, "test", 99);
+        remove_pid_file(&pipes_dir, "test");
+        assert_eq!(std::fs::read_to_string(outside_pid).unwrap(), "42");
+    }
+
+    #[test]
+    fn workflow_path_atomic_copy_does_not_truncate_hard_link_targets() {
+        let (temp, pipes_dir, _) = preset_test_paths();
+        std::fs::create_dir(pipes_dir.join("test")).unwrap();
+        let outside = temp.path().join("outside.txt");
+        let source = temp.path().join("source.txt");
+        let destination = pipes_dir.join("test/asset.txt");
+        std::fs::write(&outside, "keep original").unwrap();
+        std::fs::write(&source, "new contents").unwrap();
+        std::fs::hard_link(&outside, &destination).unwrap();
+        copy_workflow_file(&pipes_dir, &source, &destination).unwrap();
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep original");
+        assert_eq!(
+            std::fs::read_to_string(destination).unwrap(),
+            "new contents"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_path_atomic_copy_preserves_modes_and_rejects_nonregular_sources() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let (temp, pipes_dir, _) = preset_test_paths();
+        let source = temp.path().join("script.sh");
+        let destination = pipes_dir.join("script.sh");
+        std::fs::write(&source, "#!/bin/sh\nexit 0\n").unwrap();
+        for mode in [0o700, 0o750, 0o600, 0o640] {
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(mode)).unwrap();
+            copy_workflow_file(&pipes_dir, &source, &destination).unwrap();
+            assert_eq!(
+                std::fs::metadata(&destination)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                mode
+            );
+        }
+        let linked_source = temp.path().join("linked.sh");
+        symlink(&source, &linked_source).unwrap();
+        assert!(copy_workflow_file(&pipes_dir, &linked_source, &destination).is_err());
+        assert!(copy_workflow_file(&pipes_dir, temp.path(), &destination).is_err());
     }
 
     #[test]

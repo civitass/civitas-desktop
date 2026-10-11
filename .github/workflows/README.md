@@ -50,6 +50,14 @@ gh workflow run "E2E Tests" --ref <your-branch>
 gh workflow run "Windows CLI Integration Test" --ref <your-branch>
 ```
 
+Nightly and manual E2E runs use GitHub-hosted Windows by default. The optional
+`windows_runner=windows-desktop-test` input requires an online, interactive
+self-hosted Windows runner; choose it explicitly for capture fidelity checks.
+Queued self-hosted jobs do not start their timeout until a runner accepts
+them, so an unavailable machine must never be the default release-evidence
+path. Main pushes with `[run-e2e]` have their own commit-scoped concurrency
+group and do not wait behind a scheduled run.
+
 To collect exact-commit E2E evidence without local GitHub CLI authorization,
 use `[run-e2e]` only in the final commit message after all local gates pass.
 
@@ -68,6 +76,13 @@ from unrelated PRs and don't count against the "core 6" goal:
 
 `release-*.yml`, `benchmark.yml`, `test-signing.yml`, `test-cli-npm.yml`, and
 `e2e-macos.yml` are triggered by tags, schedules, or manual dispatch.
+
+Apple OCR benchmarks default to the hosted `macos-26` image. A maintainer can
+explicitly select `macos_runner=macos-test` for the dedicated machine; results
+from different hardware must not be compared as a performance regression.
+The signed desktop finalizer tests and enforces the exact artifact/manifest
+allowlist before checksums, provenance, and publication. The code-quality
+workflow runs those portable release-boundary tests on every change.
 
 `release-browser-extension.yml` is intentionally a package-only workflow. It
 tests the Manifest V3 boundary, creates a reproducibly ordered ZIP plus
