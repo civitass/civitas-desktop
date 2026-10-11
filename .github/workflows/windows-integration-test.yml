@@ -236,6 +236,9 @@ jobs:
           # This isolated CI profile explicitly consents to all monitors so the
           # journey exercises real Windows capture instead of only UIA events.
           "--use-all-monitors",
+          # Consent to the synthetic playback stimulus on system output only;
+          # microphone capture stays disabled in this isolated CI profile.
+          "--capture-system-audio",
           "--audio-transcription-engine",
           "disabled",
           "--data-dir",
