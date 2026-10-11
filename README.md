@@ -77,14 +77,15 @@ display.
 
 ## Start in three steps
 
-1. If a signed version is present, download the verified macOS DMG — or the
-   Windows installer, once a release covers it — from
+1. Download the signed macOS DMG — or the Windows installer, when a release
+   covers it — from
    [GitHub Releases](https://github.com/civitass/civitas-desktop/releases).
-   Otherwise, [build from source](docs/BUILDING.md).
+   For other supported development platforms, [build from source](docs/BUILDING.md).
 2. Choose exactly what Civitas may capture. Screen and microphone permissions
    remain separate, and capture can be paused immediately from the tray.
-3. Search locally first. If you want AI answers, add a local model or one of
-   your own provider credentials under **Settings → AI**.
+3. Search locally first. For Ask and Chat, review and install the optional
+   assistant runtime under **Settings → AI**, then connect a local model or
+   your own provider credentials.
 
 ## What you can do
 
@@ -264,14 +265,16 @@ bun install --frozen-lockfile
 bun run tauri dev
 ```
 
-An optimized local bundle:
+An optimized, locally signed macOS bundle:
 
 ```bash
 cd apps/civitas-app-tauri
-bun run tauri build
+./scripts/build_macos.sh --bundles app
 ```
 
-Platform prerequisites, feature flags, generated bindings, and release-vs-source
+The helper applies and verifies the development signature after building.
+This local app is not a notarized official release. Platform prerequisites,
+Windows/Linux commands, feature flags, generated bindings, and release-vs-source
 differences are in [Building](docs/BUILDING.md).
 
 ## Connect an MCP client

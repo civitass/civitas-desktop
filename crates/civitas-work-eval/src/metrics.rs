@@ -48,7 +48,7 @@ pub struct BucketF1 {
     pub precision: f32,
     pub recall: f32,
     pub f1: f32,
-    /// Number of ground-truth episodes in this bucket.
+    /// Number of ground-truth leading boundaries in this bucket (first span excluded).
     pub count: usize,
 }
 
@@ -62,9 +62,9 @@ pub struct EvalMetrics {
     pub bucket_f1: Vec<BucketF1>,
     /// WindowDiff score (lower = better; 0 = perfect segmentation).
     pub window_diff: f32,
-    /// Resume precision: among predicted resumes, fraction that matched a GT resume.
+    /// Count-only upper bound on resume precision; individual resumes are not aligned.
     pub resume_precision: f32,
-    /// Resume recall: among GT resumes, fraction that were predicted.
+    /// Count-only upper bound on resume recall; individual resumes are not aligned.
     pub resume_recall: f32,
     /// Episode coverage: fraction of active (non-idle) ground-truth time that
     /// falls inside a mined episode.
@@ -176,42 +176,45 @@ pub fn optimal_match_count(
     gt: &[DateTime<Utc>],
     tol_secs: i64,
 ) -> usize {
-    if predicted.is_empty() || gt.is_empty() {
-        return 0;
+    optimal_matches(predicted, gt, tol_secs).len()
+}
+
+/// Match sorted points with two advancing cursors: O(n log n + m log m)
+/// including sorting, then O(n + m), without rescanning consumed references.
+/// Return original indices so duration buckets share the aggregate alignment.
+fn optimal_matches(
+    predicted: &[DateTime<Utc>],
+    gt: &[DateTime<Utc>],
+    tol_secs: i64,
+) -> Vec<(usize, usize)> {
+    if tol_secs < 0 {
+        return vec![];
     }
-
-    // Sort both (callers should already sort, but defensive).
-    let mut pred: Vec<DateTime<Utc>> = predicted.to_vec();
-    let mut g: Vec<DateTime<Utc>> = gt.to_vec();
-    pred.sort();
-    g.sort();
-
-    // used[i] tracks whether gt[i] has been consumed.
-    let mut used = vec![false; g.len()];
-    let mut matched = 0usize;
-
-    for p in &pred {
-        // Find the first un-used gt point within tolerance; among those,
-        // the earliest deadline (smallest gt value) comes first since g is sorted.
-        let lo = p.timestamp_millis() - tol_secs * 1000;
-        let hi = p.timestamp_millis() + tol_secs * 1000;
-        for (i, gp) in g.iter().enumerate() {
-            if used[i] {
-                continue;
-            }
-            let gm = gp.timestamp_millis();
-            if gm < lo {
-                continue;
-            }
-            if gm > hi {
-                break; // g is sorted; no later point can match
-            }
-            used[i] = true;
-            matched += 1;
-            break;
+    let mut pred: Vec<_> = predicted.iter().enumerate().collect();
+    let mut reference: Vec<_> = gt.iter().enumerate().collect();
+    pred.sort_by_key(|&(index, time)| (*time, index));
+    reference.sort_by_key(|&(index, time)| (*time, index));
+    let tolerance = i128::from(tol_secs) * 1_000_000_000;
+    let (mut p, mut g) = (0, 0);
+    let mut matches = Vec::new();
+    while p < pred.len() && g < reference.len() {
+        let delta = timestamp_nanos(*pred[p].1) - timestamp_nanos(*reference[g].1);
+        if delta.abs() <= tolerance {
+            matches.push((pred[p].0, reference[g].0));
+            p += 1;
+            g += 1;
+        } else if delta < 0 {
+            p += 1;
+        } else {
+            g += 1;
         }
     }
-    matched
+    matches
+}
+
+// i128 covers chrono's full date range, avoiding overflow and subsecond loss.
+fn timestamp_nanos(time: DateTime<Utc>) -> i128 {
+    i128::from(time.timestamp()) * 1_000_000_000 + i128::from(time.timestamp_subsec_nanos())
 }
 
 /// Compute precision, recall, F1 from raw counts.
@@ -275,12 +278,25 @@ fn compute_bucket_f1(predicted: &[DateTime<Utc>], gt_spans: &[GroundTruthSpan]) 
         bucket_data[b as usize].0.push(bdy);
     }
 
-    // Assign predicted boundaries to buckets by matching them to gt_spans.
-    for p in predicted {
+    let gt_boundaries: Vec<_> = gt_spans.iter().skip(1).map(|span| span.start).collect();
+    let mut matched_bucket = vec![None; predicted.len()];
+    for (pred_index, gt_index) in optimal_matches(predicted, &gt_boundaries, TOLERANCE_SECS) {
+        let span = &gt_spans[gt_index + 1];
+        matched_bucket[pred_index] = Some(bucket_for_secs((span.end - span.start).num_seconds()));
+    }
+
+    // Matched predictions inherit the reference's bucket, including predictions
+    // just before a transition. Otherwise a perfect boundary at a shared end/start
+    // was assigned to the preceding span and counted as wrong in both buckets.
+    for (index, p) in predicted.iter().enumerate() {
+        if let Some(bucket) = matched_bucket[index] {
+            bucket_data[bucket as usize].1.push(*p);
+            continue;
+        }
         // Find the gt_span that contains or immediately follows this boundary.
         let mut assigned = false;
         for span in gt_spans {
-            if *p >= span.start && *p <= span.end {
+            if *p >= span.start && *p < span.end {
                 let dur = (span.end - span.start).num_seconds();
                 let b = bucket_for_secs(dur);
                 bucket_data[b as usize].1.push(*p);
@@ -408,49 +424,58 @@ fn resume_prf(predicted_count: u32, gt_count: u32) -> (f32, f32) {
 /// Active = any GT span that is NOT kind=="idle".
 /// Covered = that time overlaps with at least one mined episode's action span.
 fn coverage(gt_spans: &[GroundTruthSpan], outcome: &MineOutcome) -> f32 {
-    let active_spans: Vec<&GroundTruthSpan> =
-        gt_spans.iter().filter(|s| s.kind != "idle").collect();
-    if active_spans.is_empty() {
-        return 1.0;
-    }
+    let active = merged_intervals(
+        gt_spans
+            .iter()
+            .filter(|span| span.kind != "idle")
+            .map(|span| (timestamp_nanos(span.start), timestamp_nanos(span.end))),
+    );
+    let mined = merged_intervals(outcome.actions.iter().map(|action| {
+        (
+            timestamp_nanos(action.action.ts_start),
+            timestamp_nanos(action.action.ts_end),
+        )
+    }));
+    interval_coverage(&active, &mined)
+}
 
-    // Build mined time ranges from actions.
-    let mined_intervals: Vec<(i64, i64)> = outcome
-        .actions
-        .iter()
-        .map(|a| (a.action.ts_start.timestamp(), a.action.ts_end.timestamp()))
-        .collect();
-
-    let total_active_secs: i64 = active_spans
-        .iter()
-        .map(|s| (s.end - s.start).num_seconds().max(0))
-        .sum();
-    if total_active_secs == 0 {
-        return 1.0;
-    }
-
-    // For each active GT second, check if it overlaps any mined action.
-    // Coarse: sample at 10-second granularity.
-    let step = 10i64;
-    let mut covered = 0i64;
-    let mut total = 0i64;
-
-    for span in &active_spans {
-        let s = span.start.timestamp();
-        let e = span.end.timestamp();
-        let mut t = s;
-        while t <= e {
-            total += 1;
-            if mined_intervals.iter().any(|(ms, me)| t >= *ms && t <= *me) {
-                covered += 1;
+/// Union of positive-duration, half-open intervals. Duplicate or overlapping
+/// annotations and actions must not double-count time; point events cover no
+/// duration, and invalid reversed ranges contribute nothing.
+fn merged_intervals(intervals: impl Iterator<Item = (i128, i128)>) -> Vec<(i128, i128)> {
+    let mut intervals: Vec<_> = intervals.filter(|(start, end)| start < end).collect();
+    intervals.sort_unstable();
+    let mut merged: Vec<(i128, i128)> = Vec::new();
+    for (start, end) in intervals {
+        if let Some(previous) = merged.last_mut() {
+            if start <= previous.1 {
+                previous.1 = previous.1.max(end);
+                continue;
             }
-            t += step;
         }
+        merged.push((start, end));
     }
+    merged
+}
+
+fn interval_coverage(active: &[(i128, i128)], mined: &[(i128, i128)]) -> f32 {
+    let total: i128 = active.iter().map(|(start, end)| end - start).sum();
     if total == 0 {
         return 1.0;
     }
-    covered as f32 / total as f32
+    let (mut a, mut m) = (0, 0);
+    let mut covered = 0i128;
+    while a < active.len() && m < mined.len() {
+        let start = active[a].0.max(mined[m].0);
+        let end = active[a].1.min(mined[m].1);
+        covered += (end - start).max(0);
+        if active[a].1 <= mined[m].1 {
+            a += 1;
+        } else {
+            m += 1;
+        }
+    }
+    (covered as f64 / total as f64) as f32
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +533,47 @@ mod tests {
         }
         rec(0, 0, pred, gt, tol, 0, &mut best);
         best
+    }
+
+    #[test]
+    fn matching_is_exact_at_subsecond_tolerance_and_extreme_tolerances() {
+        let origin = t(0);
+        assert_eq!(optimal_match_count(&[origin], &[t(30)], 30), 1);
+        assert_eq!(
+            optimal_match_count(&[origin], &[t(30) + chrono::Duration::nanoseconds(1)], 30),
+            0
+        );
+        assert_eq!(optimal_match_count(&[origin], &[origin], -1), 0);
+        assert_eq!(
+            optimal_match_count(
+                &[DateTime::<Utc>::MIN_UTC],
+                &[DateTime::<Utc>::MAX_UTC],
+                i64::MAX
+            ),
+            1
+        );
+        assert_eq!(optimal_match_count(&[t(0), t(0)], &[t(0)], 0), 1);
+    }
+
+    #[test]
+    fn matching_agrees_with_exhaustive_oracle_for_small_point_sets() {
+        for pred_mask in 0..32 {
+            for gt_mask in 0..32 {
+                let pred: Vec<_> = (0..5)
+                    .filter(|i| pred_mask & (1 << i) != 0)
+                    .map(|i| t(i * 30))
+                    .collect();
+                let gt: Vec<_> = (0..5)
+                    .filter(|i| gt_mask & (1 << i) != 0)
+                    .map(|i| t(i * 30))
+                    .rev()
+                    .collect();
+                assert_eq!(
+                    optimal_match_count(&pred, &gt, 30),
+                    brute_force_match(&pred, &gt, 30)
+                );
+            }
+        }
     }
 
     #[test]
@@ -636,6 +702,57 @@ mod tests {
     }
 
     // ---- bucket assignment ----
+
+    #[test]
+    fn matched_boundaries_inherit_the_later_spans_duration_bucket() {
+        let spans = vec![
+            GroundTruthSpan {
+                start: t(0),
+                end: t(100),
+                kind: "short".into(),
+                expects_resume: false,
+            },
+            GroundTruthSpan {
+                start: t(100),
+                end: t(500),
+                kind: "medium".into(),
+                expects_resume: false,
+            },
+            GroundTruthSpan {
+                start: t(500),
+                end: t(2000),
+                kind: "long".into(),
+                expects_resume: false,
+            },
+        ];
+        for predicted in [vec![t(100), t(500)], vec![t(90), t(490)]] {
+            let buckets = compute_bucket_f1(&predicted, &spans);
+            assert_eq!(buckets[0].count, 0);
+            assert_eq!(buckets[1].count, 1);
+            assert_eq!(buckets[2].count, 1);
+            assert!(buckets.iter().all(|bucket| bucket.f1 == 1.0));
+        }
+    }
+
+    #[test]
+    fn coverage_measures_duration_instead_of_sampling_points() {
+        let active = merged_intervals([(0, 9), (20, 21)].into_iter());
+        let mined = merged_intervals([(0, 1), (20, 21)].into_iter());
+        assert!((interval_coverage(&active, &mined) - 0.2).abs() < 1e-6);
+        let point_events = merged_intervals([(0, 0), (5, 5), (20, 20)].into_iter());
+        assert_eq!(interval_coverage(&active, &point_events), 0.0);
+    }
+
+    #[test]
+    fn coverage_unions_overlaps_and_ignores_reversed_ranges() {
+        let active = merged_intervals([(10, 30), (0, 20), (0, 20), (50, 40)].into_iter());
+        let mined = merged_intervals([(25, 35), (5, 15), (10, 25)].into_iter());
+        assert_eq!(active, vec![(0, 30)]);
+        assert_eq!(mined, vec![(5, 35)]);
+        assert!((interval_coverage(&active, &mined) - 25.0 / 30.0).abs() < 1e-6);
+        assert_eq!(interval_coverage(&[], &mined), 1.0);
+        assert_eq!(interval_coverage(&active, &[]), 0.0);
+    }
 
     #[test]
     fn bucket_assignment_correct() {

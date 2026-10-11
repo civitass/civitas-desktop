@@ -223,6 +223,23 @@ lockfiles. Their package metadata and license expressions are captured in the
 release SBOM. Copyright and license notices contained in dependency source
 distributions remain applicable.
 
+The October 2026 dependency maintenance is catalogued in
+[Dependency security maintenance](docs/DEPENDENCY_SECURITY.md), including the
+exact installed versions and locally patched advisories. Next.js, ProseMirror,
+KaTeX, markdown-it, brace-expansion, undici, the MCP SDK, Hono, ip-address, and
+proxy-addr retain their MIT licenses. Argparse retains Python-2.0; sharp uses
+Apache-2.0; source-map-js and fast-uri use BSD-3-Clause; PostCSS Selector Parser
+uses MIT; DOMPurify offers MPL-2.0 OR Apache-2.0.
+
+The tracked patch to **braces 3.0.3** modifies MIT-licensed code by Jon
+Schlinkert and contributors. The patch to **node-forge 1.4.0** adapts the nested
+DigestAlgorithm validation correction proposed in
+[upstream PR 1152](https://github.com/digitalbazaar/forge/pull/1152); node-forge
+is copyright Digital Bazaar, Inc. and contributors and offers BSD-3-Clause OR
+GPL-2.0. Civitas uses the BSD-3-Clause option. Original copyright and license
+files remain in the installed packages. Both are development/build
+dependencies; the forge patch is not part of the MCP production module graph.
+
 ## Design review reference
 
 The repository's non-runtime design-review heuristics were informed by

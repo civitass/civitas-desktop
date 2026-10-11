@@ -788,31 +788,26 @@ pub fn run_scenario(s: &EvalScenario, config: &MinerConfig) -> ScenarioResult {
     }
 }
 
-/// Count how many distinct episodes were resumed this tick.
+/// Count resume occurrences, matching the ground truth's per-span annotations.
 ///
 /// Two cases:
 /// 1. `ExistingEpisode { id }` — the episode had a DB-assigned id when this
 ///    tick started (multi-tick flow, cross-tick resumes).
 /// 2. `NewEpisode { index }` — the episode was created within this tick (no
-///    DB id yet); it is a resume when `seg_index > 0` on any of its segments
+///    DB id yet); a segment is a resume when `seg_index > 0`
 ///    (meaning a second or later segment was assigned to it within the tick).
-fn count_predicted_resumes(outcome: &civitas_mining::MineOutcome) -> u32 {
+pub(crate) fn count_predicted_resumes(outcome: &civitas_mining::MineOutcome) -> u32 {
     use civitas_mining::EpisodeAssignment;
-    let mut seen_existing: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    let mut seen_new_resumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
-
-    for seg in &outcome.new_segments {
-        match seg.episode {
-            EpisodeAssignment::ExistingEpisode { id } => {
-                seen_existing.insert(id);
-            }
-            EpisodeAssignment::NewEpisode { index } if seg.seg_index > 0 => {
-                seen_new_resumed.insert(index);
-            }
-            _ => {}
-        }
-    }
-    (seen_existing.len() + seen_new_resumed.len()) as u32
+    outcome
+        .new_segments
+        .iter()
+        .filter(|segment| {
+            matches!(segment.episode, EpisodeAssignment::ExistingEpisode { .. })
+                || segment.seg_index > 0
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 // ---------------------------------------------------------------------------

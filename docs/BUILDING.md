@@ -285,6 +285,7 @@ cd ../..
 node scripts/audit-consumer-design.mjs
 node scripts/validate-tauri-production-security.mjs .
 node scripts/audit-publication.mjs .
+node --test scripts/validate-release-assets.test.mjs scripts/notarize-macos-dmg.test.mjs
 ```
 
 Platform capture and clean-install tests cannot be replaced by unit tests.

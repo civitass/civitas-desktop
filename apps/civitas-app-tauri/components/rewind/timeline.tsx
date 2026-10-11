@@ -9,7 +9,6 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   Loader2,
   X,
-  Sparkles,
   Globe,
   Lock,
   ExternalLink,
@@ -58,6 +57,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import posthog from "posthog-js";
 import { toast } from "@/components/ui/use-toast";
 import { DailySummaryCard } from "@/components/rewind/daily-summary";
+import { TimelineFilterEmptyState } from "@/components/rewind/timeline-filter-empty-state";
 import { useTimelineFilters } from "@/components/rewind/hooks/use-timeline-filters";
 import { useScrollZoom } from "@/components/rewind/hooks/use-scroll-zoom";
 import { useDateNavigation } from "@/components/rewind/hooks/use-date-navigation";
@@ -354,6 +354,8 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
     meetings,
   });
 
+  const hasNoFilterMatches = matchingIndices?.length === 0;
+
   // Audio playback engine
   const {
     isPlaying,
@@ -372,6 +374,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
     setCurrentIndex,
     setCurrentFrame,
   });
+
+  useEffect(() => {
+    if (hasNoFilterMatches) pausePlayback();
+  }, [hasNoFilterMatches, pausePlayback]);
 
   const {
     navigateDirectToDate,
@@ -764,14 +770,14 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
     ) {
       return;
     }
-    if (!currentFrame && frames.length > 0) {
+    if (!currentFrame && frames.length > 0 && !hasNoFilterMatches) {
       let first = snapToDevice(0);
       first = snapToFiltered(first);
       setCurrentFrame(frames[first]);
       setCurrentIndex(first);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frames.length, currentFrame, setCurrentFrame, seekingTimestamp]);
+  }, [frames.length, currentFrame, setCurrentFrame, seekingTimestamp, hasNoFilterMatches]);
 
   // Track timeline opened and setup session tracking
   useEffect(() => {
@@ -1222,8 +1228,8 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
           <div className="mx-auto mb-6 w-16 h-16 rounded-full bg-muted/50 border border-border flex items-center justify-center">
             <MonitorOff className="w-8 h-8 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-mono font-semibold uppercase tracking-wide mb-2">
-            Timeline Disabled
+          <h3 className="text-lg font-semibold mb-2">
+            Timeline is disabled
           </h3>
           <p className="text-sm font-mono text-muted-foreground leading-relaxed">
             The timeline is turned off in settings. Re-enable it under Display
@@ -1255,7 +1261,9 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
           className="absolute inset-0 z-10 bg-background"
           onWheel={onContainerWheel}
         >
-          {currentFrame ? (
+          {hasNoFilterMatches ? (
+            <TimelineFilterEmptyState onReset={resetFilters} />
+          ) : currentFrame ? (
             <CurrentFrameTimeline
               currentFrame={currentFrame}
               isPlaying={isPlaying}
@@ -1352,7 +1360,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
           !error &&
           frames.length === 0 &&
           (!isLoading || screenPermissionNeedsAttention) ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-background via-background to-muted/20">
+            <div className="absolute inset-0 flex items-center justify-center bg-background">
               {screenPermissionNeedsAttention ? (
                 <ScreenPermissionState
                   bundleIdentifier={appIdentifier}
@@ -1388,52 +1396,17 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
                 </div>
               ) : (
                 <div className="text-center p-8 max-w-md">
-                  {/* Animated icon */}
-                  <div className="relative mx-auto mb-8 w-24 h-24">
-                    {/* Pulsing rings */}
-                    <div
-                      className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"
-                      style={{ animationDuration: "3s" }}
-                    />
-                    <div
-                      className="absolute inset-2 rounded-full border-2 border-primary/30 animate-ping"
-                      style={{
-                        animationDuration: "3s",
-                        animationDelay: "0.5s",
-                      }}
-                    />
-                    <div
-                      className="absolute inset-4 rounded-full border-2 border-primary/40 animate-ping"
-                      style={{ animationDuration: "3s", animationDelay: "1s" }}
-                    />
-                    {/* Center icon */}
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-16 h-16 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center">
-                        <Sparkles className="w-8 h-8 text-primary animate-pulse" />
-                      </div>
-                    </div>
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                    <MonitorOff className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                   </div>
-
-                  <h3 className="text-xl font-semibold text-foreground mb-3">
-                    Building Your Memory
+                  <h3 className="mb-2 text-xl font-semibold text-foreground">
+                    No frames for this date
                   </h3>
-                  <p className="text-muted-foreground mb-6 leading-relaxed">
-                    Civitas is recording your screen activity. Your timeline
-                    will appear here as frames are captured.
+                  <p className="mb-4 text-sm leading-relaxed text-muted-foreground">
+                    Choose another date to browse saved activity. New frames appear
+                    after screen recording is enabled and capture is running.
                   </p>
-
-                  {/* Friendly suggestion */}
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted/50 rounded-full border border-border text-sm text-muted-foreground">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
-                    </span>
-                    Recording in progress
-                  </div>
-
-                  <p className="text-xs text-muted-foreground mt-6">
-                    Check back in a few minutes
-                  </p>
+                  <TimelineEmptyStatus frameStatus={health?.frame_status} />
                 </div>
               )}
             </div>
@@ -1476,8 +1449,8 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
             embedded={embedded}
             isPlaying={isPlaying}
             playbackSpeed={playbackSpeed}
-            hasAudioNearby={hasAudioNearby}
-            onTogglePlayPause={togglePlayPause}
+            hasAudioNearby={hasAudioNearby && !hasNoFilterMatches}
+            onTogglePlayPause={() => { if (!hasNoFilterMatches) togglePlayPause(); }}
             onCycleSpeed={cycleSpeed}
             isNavigating={isNavigating}
             activeDevices={activeDevices}
@@ -1517,7 +1490,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
         {/* Browser URL bar — at top of frame, above nav */}
         {(() => {
           const browserUrl = currentFrame?.devices?.[0]?.metadata?.browser_url;
-          if (!browserUrl) return null;
+          if (!browserUrl || hasNoFilterMatches) return null;
           // browser_url from civitas often lacks a protocol (e.g. "github.com/foo");
           // both tauri shell.open and window.open reject/misroute schemeless inputs.
           const openableUrl = browserUrl.includes("://")
@@ -1559,7 +1532,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
         <div
           className={`absolute ${embedded ? "top-16" : "top-[calc(env(safe-area-inset-top)+96px)]"} left-4 right-4 z-[35]`}
         >
-          <SubtitleBar
+          {!hasNoFilterMatches && <SubtitleBar
             frames={frames}
             currentIndex={currentIndex}
             isPlaying={isPlaying}
@@ -1569,7 +1542,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
               !!health?.audio_pipeline?.meeting_app
             }
             meetingApp={health?.audio_pipeline?.meeting_app}
-          />
+          />}
         </div>
 
         {/* Loading/Error States - Progressive loading: only block when no frames yet */}
@@ -1585,8 +1558,8 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
                 <X className="w-4 h-4 text-muted-foreground" />
               </button>
             )}
-            <div className="bg-card text-foreground p-6 rounded-2xl text-center space-y-3 max-w-md mx-4">
-              <h3 className="text-sm font-medium">Loading Timeline</h3>
+            <div className="bg-card text-foreground p-6 rounded-lg border border-border text-center space-y-3 max-w-md mx-4">
+              <h3 className="text-sm font-medium">Loading timeline</h3>
               <p className="text-sm text-foreground">
                 Fetching your recorded frames...
               </p>
@@ -1621,7 +1594,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
         )}
 
         {/* Full transcript panel — only shown on demand */}
-        {showAudioTranscript && currentFrame && (
+        {showAudioTranscript && currentFrame && !hasNoFilterMatches && (
           <div className="absolute bottom-28 left-4 right-4 z-[35]">
             <AudioTranscript
               frames={frames}
@@ -1737,7 +1710,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
               onRunPipe={(pipe) => sendSelectionToChat(pipe)}
               templatePipes={promptPipes}
               isPlaying={isPlaying}
-              onTogglePlayPause={togglePlayPause}
+              onTogglePlayPause={() => { if (!hasNoFilterMatches) togglePlayPause(); }}
               selectedDeviceId={selectedDeviceId}
               allDeviceIds={allDeviceIds}
               onDeviceChange={handleDeviceChange}
