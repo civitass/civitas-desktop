@@ -27,6 +27,11 @@ OPENAPI_METHODS = {
     "patch",
     "trace",
 }
+OPENAPI_OPERATION_KEYS = {
+    "tags", "summary", "description", "externalDocs", "operationId",
+    "parameters", "requestBody", "responses", "callbacks", "deprecated",
+    "security", "servers",
+}
 PROXY_PATH = "/connections/{id}/proxy/{path}"
 PROXY_ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH"}
 
@@ -305,10 +310,20 @@ class EnrichOpenApiTests(unittest.TestCase):
             for method, operation in path_item.items():
                 if method not in OPENAPI_METHODS:
                     continue
+                self.assertFalse(
+                    {
+                        key for key in operation
+                        if key not in OPENAPI_OPERATION_KEYS and not key.startswith("x-")
+                    },
+                    f"{method} {path} has misplaced or invalid operation fields",
+                )
                 operation_ids.append(operation["operationId"])
                 self.assertTrue(operation.get("summary"), f"{method} {path}")
                 self.assertTrue(operation.get("tags"), f"{method} {path}")
                 self.assertTrue(operation.get("responses"), f"{method} {path}")
+                for status, response in operation["responses"].items():
+                    self.assertRegex(status, r"^(?:default|[1-5](?:[0-9]{2}|XX))$")
+                    self.assertTrue(response.get("description"), f"{method} {path} {status}")
                 self.assertIn("403", operation["responses"], f"{method} {path}")
                 if path != "/connections/browser/ws":
                     self.assertIn("429", operation["responses"], f"{method} {path}")

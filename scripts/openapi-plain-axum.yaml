@@ -1385,6 +1385,276 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+  /connections/whatsapp/contacts:
+    get:
+      operationId: connections_whatsapp_contacts
+      summary: List WhatsApp contacts
+      description: Lists synced contacts with a known phone number, sorted by display name. Requires an owner bearer or a
+        workflow bearer authorized for this WhatsApp read. A declared WhatsApp connection grants GET access only. Local-only
+        mode rejects the operation; responses contain only the current gateway session’s in-memory data.
+      tags:
+      - Connections
+      responses:
+        '200':
+          description: Gateway result; private gateway credentials are never included.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WhatsAppContact'
+          headers:
+            Cache-Control:
+              description: Content is not cached.
+              schema:
+                type: string
+                enum:
+                - no-store
+        '403':
+          description: Bearer authentication, workflow permission, or the remote-network policy denies this operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: The bounded local API or shared connection-proxy concurrency limit is occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '502':
+          description: The gateway transport failed, redirected, returned invalid JSON, or exceeded the 2 MiB response limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: The gateway is not running, its private transport is unavailable, or WhatsApp is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /connections/whatsapp/chats:
+    get:
+      operationId: connections_whatsapp_chats
+      summary: List WhatsApp chats
+      description: Lists synced chats with recent-message summaries, sorted by latest activity. Requires an owner bearer or
+        a workflow bearer authorized for this WhatsApp read. A declared WhatsApp connection grants GET access only. Local-only
+        mode rejects the operation; responses contain only the current gateway session’s in-memory data.
+      tags:
+      - Connections
+      responses:
+        '200':
+          description: Gateway result; private gateway credentials are never included.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WhatsAppChat'
+          headers:
+            Cache-Control:
+              description: Content is not cached.
+              schema:
+                type: string
+                enum:
+                - no-store
+        '403':
+          description: Bearer authentication, workflow permission, or the remote-network policy denies this operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: The bounded local API or shared connection-proxy concurrency limit is occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '502':
+          description: The gateway transport failed, redirected, returned invalid JSON, or exceeded the 2 MiB response limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: The gateway is not running, its private transport is unavailable, or WhatsApp is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /connections/whatsapp/messages:
+    get:
+      operationId: connections_whatsapp_messages
+      summary: Read recent WhatsApp messages
+      description: Provide exactly one of phone or jid. Unknown or duplicate query fields are rejected. Returns at most 200
+        retained messages for that chat, in chronological order. Requires an owner bearer or a workflow bearer authorized
+        for this WhatsApp read. A declared WhatsApp connection grants GET access only. Local-only mode rejects the operation;
+        responses contain only the current gateway session’s in-memory data.
+      tags:
+      - Connections
+      responses:
+        '200':
+          description: Gateway result; private gateway credentials are never included.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatsAppMessagesResponse'
+          headers:
+            Cache-Control:
+              description: Content is not cached.
+              schema:
+                type: string
+                enum:
+                - no-store
+        '403':
+          description: Bearer authentication, workflow permission, or the remote-network policy denies this operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: The bounded local API or shared connection-proxy concurrency limit is occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '502':
+          description: The gateway transport failed, redirected, returned invalid JSON, or exceeded the 2 MiB response limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: The gateway is not running, its private transport is unavailable, or WhatsApp is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '400':
+          description: Query parsing failed, fields are unknown or duplicated, both/neither recipient selector is present,
+            or a recipient/limit is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+            text/plain:
+              schema:
+                type: string
+      x-civitas-exclusive-query-parameters:
+      - phone
+      - jid
+      parameters:
+      - in: query
+        name: phone
+        required: false
+        description: Recipient phone number instead of jid; at most 64 UTF-8 bytes, containing 5–15 digits with an optional
+          leading plus, spaces, parentheses, periods, or hyphens.
+        schema:
+          type: string
+          maxLength: 64
+          x-maxBytes: 64
+      - in: query
+        name: jid
+        required: false
+        description: Chat identifier instead of phone; local part uses ASCII letters, digits, dots, underscores, colons, pluses,
+          or hyphens, followed by @ and a nonempty ASCII letter/digit/dot/hyphen domain.
+        schema:
+          type: string
+          maxLength: 254
+          pattern: ^[A-Za-z0-9._:+-]+@[A-Za-z0-9.-]+$
+      - in: query
+        name: limit
+        required: false
+        description: Maximum retained messages to return.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+  /connections/whatsapp/send:
+    post:
+      operationId: connections_whatsapp_send
+      summary: Send a WhatsApp text message
+      description: 'Requires an owner bearer or an explicit workflow POST permission for this route; declaring the WhatsApp
+        connection alone does not authorize sending. Local-only mode rejects the operation. The JSON body is limited to 65536
+        bytes and text to 16384 UTF-8 bytes. Requests are never retried automatically: a timeout or gateway failure may occur
+        after delivery, so verify delivery before retrying.'
+      tags:
+      - Connections
+      responses:
+        '200':
+          description: Gateway result; private gateway credentials are never included.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatsAppSendResponse'
+          headers:
+            Cache-Control:
+              description: Content is not cached.
+              schema:
+                type: string
+                enum:
+                - no-store
+        '403':
+          description: Bearer authentication, workflow permission, or the remote-network policy denies this operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: The bounded local API or shared connection-proxy concurrency limit is occupied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '502':
+          description: The gateway transport failed, redirected, returned invalid JSON, or exceeded the 2 MiB response limit.
+            For sends, delivery may be unknown; the proxy never retries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '503':
+          description: The gateway is not running, its private transport is unavailable, or WhatsApp is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '400':
+          description: Malformed JSON, invalid recipient phone number, empty text, or text over 16384 UTF-8 bytes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+            text/plain:
+              schema:
+                type: string
+        '413':
+          description: The JSON body exceeds 65536 bytes.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '415':
+          description: Content-Type is missing or is neither application/json nor application/*+json.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '422':
+          description: Required string to/text fields are missing, have an invalid type, or an unknown field is present.
+          content:
+            text/plain:
+              schema:
+                type: string
+      requestBody:
+        required: true
+        x-maxBytes: 65536
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WhatsAppSendRequest'
   /connections/whatsapp/disconnect:
     post:
       operationId: connections_whatsapp_disconnect
@@ -1394,7 +1664,7 @@ paths:
       - Connections
       responses:
         '200':
-          description: Local gateway logged out and session cleanup was requested.
+          description: Local gateway stopped and the saved session directory was removed or was already absent.
           content:
             application/json:
               schema:
@@ -1411,6 +1681,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+        '500':
+          description: The gateway stopped, but saved-session removal failed. It may reconnect after restart; retry disconnect or
+            unlink this device in WhatsApp.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatsAppDisconnectFailure'
   /connections/obsidian/notes:
     post:
       operationId: connections_obsidian_note_append
@@ -3035,4 +3312,148 @@ components:
         error:
           $ref: '#/components/schemas/McpErrorDetail'
       required:
+      - error
+    WhatsAppContact:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+      required:
+      - id
+      - name
+      - phone
+    WhatsAppMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+          description: Message identifier when provided by WhatsApp; absent or null IDs are retained without deduplication.
+        fromMe:
+          type: boolean
+        from:
+          type: string
+        text:
+          type: string
+          nullable: true
+        mediaType:
+          type: string
+          nullable: true
+        timestamp:
+          type: number
+          description: Unix timestamp in seconds.
+        pushName:
+          type: string
+          nullable: true
+      required:
+      - fromMe
+      - from
+      - text
+      - mediaType
+      - timestamp
+      - pushName
+    WhatsAppChat:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        lastMessage:
+          type: object
+          properties:
+            text:
+              type: string
+              nullable: true
+            timestamp:
+              type: number
+              description: Unix timestamp in seconds.
+            fromMe:
+              type: boolean
+          required:
+          - text
+          - timestamp
+          - fromMe
+          nullable: true
+        messageCount:
+          type: integer
+          minimum: 0
+          maximum: 200
+        updatedAt:
+          type: number
+          description: Unix timestamp in seconds.
+          nullable: true
+      required:
+      - id
+      - name
+      - lastMessage
+      - messageCount
+      - updatedAt
+    WhatsAppMessagesResponse:
+      type: object
+      properties:
+        jid:
+          type: string
+        name:
+          type: string
+        messages:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/WhatsAppMessage'
+      required:
+      - jid
+      - name
+      - messages
+    WhatsAppSendRequest:
+      type: object
+      properties:
+        to:
+          type: string
+          maxLength: 64
+          x-maxBytes: 64
+          description: Phone number containing 5–15 digits; optional leading plus and spaces, parentheses, periods, or hyphens
+            are accepted.
+        text:
+          type: string
+          minLength: 1
+          x-maxBytes: 16384
+          description: Non-whitespace text, limited to 16384 UTF-8 bytes.
+      required:
+      - to
+      - text
+      additionalProperties: false
+    WhatsAppSendResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        to:
+          type: string
+          description: Normalized recipient JID used for delivery.
+      required:
+      - success
+      - to
+    WhatsAppDisconnectFailure:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum:
+          - false
+        gateway_stopped:
+          type: boolean
+          enum:
+          - true
+        error:
+          type: string
+      required:
+      - success
+      - gateway_stopped
       - error
