@@ -1427,7 +1427,9 @@ export const TimelineSlider = ({
 				className="w-full overflow-x-auto overflow-y-visible scrollbar-hide bg-gradient-to-t from-background/90 via-background/50 to-transparent outline-none"
 				style={{
 					paddingTop: "60px", // Space for tooltips above
-					paddingBottom: "24px", // Space for time axis below
+					// The active bar scales its hour label too. Reserve enough room
+					// for that transform and every supported Display font size.
+					paddingBottom: "calc(2em + 0.5rem)",
 				}}
 			>
 				<motion.div

@@ -386,13 +386,29 @@ describe("Publication demo surfaces", function () {
       },
     );
     expect(await currentImage.isDisplayed()).toBe(true);
+    await settlePublicationFrame();
     await assertPublicationViewport();
     await assertFullyVisible('[data-testid="timeline-slider"]');
+    if (REQUIRE_PUBLICATION_GEOMETRY) {
+      const completeAxis = await browser.execute(() => {
+        const slider = document.querySelector<HTMLElement>('[data-testid="timeline-slider"]');
+        if (!slider) return false;
+        const viewport = slider.getBoundingClientRect();
+        const labels = Array.from(slider.querySelectorAll('[data-timestamp] .top-full'))
+          .map((label) => label.getBoundingClientRect())
+          .filter((bounds) => bounds.width > 0 && bounds.right > viewport.left && bounds.left < viewport.right);
+        return labels.length > 0 && labels.every((bounds) =>
+          bounds.top >= viewport.top && bounds.bottom <= Math.min(viewport.bottom, window.innerHeight),
+        );
+      });
+      expect(completeAxis).toBe(true);
+    }
     const filepath = await saveScreenshot("publication-timeline");
     expect(existsSync(filepath)).toBe(true);
   });
 
   it("captures the real provider setup interface without a credential", async () => {
+    await browser.setWindowSize(1120, 1000);
     await openSettingsSection("ai");
     const choices = await $('[role="radiogroup"][aria-label="AI provider"]');
     await choices.waitForExist({ timeout: t(10_000) });
@@ -416,12 +432,29 @@ describe("Publication demo surfaces", function () {
 
     await assertPublicationViewport();
     await assertFullyVisible('[role="radiogroup"][aria-label="AI provider"]');
+    if (REQUIRE_PUBLICATION_GEOMETRY) {
+      const completeSetup = await browser.execute(() => {
+        const save = Array.from(document.querySelectorAll("button"))
+          .find((button) => button.textContent?.trim() === "Save and use");
+        const bounds = save?.getBoundingClientRect();
+        return !!bounds && bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+      });
+      expect(completeSetup).toBe(true);
+    }
     const filepath = await saveScreenshot("publication-ai-settings");
     expect(existsSync(filepath)).toBe(true);
   });
 
   it("captures the complete native Privacy controls without revealing the local key", async () => {
+    await browser.setWindowSize(1120, 1000);
     await openSettingsSection("privacy");
+    await browser.waitUntil(
+      async () => (await browser.execute(() => {
+        const content = document.querySelector<HTMLElement>('[data-testid="settings-content"][data-section="privacy"]');
+        return content?.scrollTop === 0;
+      })) as boolean,
+      { timeout: t(5_000), timeoutMsg: "A new Settings section must start at the top" },
+    );
     const boundary = await $('[role="radiogroup"][aria-label="Network boundary"]');
     await boundary.waitForExist({ timeout: t(10_000) });
     const local = await boundary.$("button*=Local-only");
@@ -442,7 +475,8 @@ describe("Publication demo surfaces", function () {
     );
     expect(await $('[data-testid="privacy-api-key-reveal"]').getAttribute("title")).toBe("Reveal key");
     expect(await $('[data-testid="privacy-api-auth-status"]').getAttribute("data-state")).toBe("locked-on");
-    await settlePublicationFrame({ anchorHeading: "Privacy" });
+    await $("h3=Secure credential storage").waitForDisplayed({ timeout: t(10_000) });
+    await settlePublicationFrame();
     await assertPublicationViewport();
     await assertFullyVisible('[role="radiogroup"][aria-label="Network boundary"]');
     await assertFullyVisible('[data-testid="privacy-api-auth-status"]');

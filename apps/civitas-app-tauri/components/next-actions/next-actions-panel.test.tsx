@@ -268,6 +268,33 @@ beforeEach(() => {
 });
 
 describe("NextActionsPanel safety contract", () => {
+  it.each([
+    commitmentCandidate.title,
+    "  Send\t the Northstar\n launch\u00a0brief  ",
+  ])("shows a commitment title once when its summary repeats it: %j", async (summary) => {
+    mocks.localFetch.mockResolvedValueOnce(
+      pullResponse([{ ...commitmentCandidate, summary }]),
+    );
+    render(<NextActionsPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Show next actions" }));
+
+    await screen.findByRole("heading", { name: commitmentCandidate.title });
+    expect(screen.getAllByText(commitmentCandidate.title)).toHaveLength(1);
+    expect(screen.getByText(commitmentCandidate.whyNow)).toBeInTheDocument();
+  });
+
+  it("keeps a distinct commitment summary alongside its title", async () => {
+    const summary = `${commitmentCandidate.title} after reviewing the rollback owner.`;
+    mocks.localFetch.mockResolvedValueOnce(
+      pullResponse([{ ...commitmentCandidate, summary }]),
+    );
+    render(<NextActionsPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Show next actions" }));
+
+    expect(await screen.findByRole("heading", { name: commitmentCandidate.title })).toBeInTheDocument();
+    expect(screen.getByText(summary)).toBeInTheDocument();
+  });
+
   it("is pull-only and renders evidence, uncertainty, and exact data boundaries", async () => {
     mocks.localFetch.mockResolvedValueOnce(pullResponse([candidate]));
 

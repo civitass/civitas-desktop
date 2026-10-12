@@ -331,8 +331,13 @@ function SettingsContent() {
           <h2 className="text-sm font-medium text-foreground">{currentLabel}</h2>
         </div>
 
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        {/* Each section starts at its own top; search can then reveal a field. */}
+        <div
+          key={section}
+          data-testid="settings-content"
+          data-section={section}
+          className="flex-1 overflow-y-auto p-6"
+        >
           {renderSection()}
         </div>
       </div>

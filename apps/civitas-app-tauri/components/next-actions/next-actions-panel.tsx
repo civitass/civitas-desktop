@@ -612,10 +612,8 @@ export function NextActionsPanel() {
             </h1>
           </div>
           <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-            Evidence-backed continuations from your commitments, deadlines,
-            routines, saved-search follow-ups, open loops, blockers, decisions
-            awaiting follow-through, threads you left open, and repeated local
-            work.
+            Review the evidence behind suggested next steps. You choose what
+            happens next.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -969,6 +967,10 @@ function ActionCard({
   onPrepare: () => void;
   onOpenEvidence: (item: NextActionEvidence) => void;
 }) {
+  const summaryRepeatsTitle =
+    candidate.summary.replace(/\s+/g, " ").trim() ===
+    candidate.title.replace(/\s+/g, " ").trim();
+
   return (
     <article
       data-testid="next-action-card"
@@ -1011,9 +1013,11 @@ function ActionCard({
           <h2 className="mt-2 text-xl font-semibold leading-snug tracking-[-0.018em] text-foreground">
             {candidate.title}
           </h2>
-          <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
-            {candidate.summary}
-          </p>
+          {!summaryRepeatsTitle && (
+            <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
+              {candidate.summary}
+            </p>
+          )}
 
           <div className="mt-4">
             <p className="text-xs font-medium text-foreground/80">Why now</p>

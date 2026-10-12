@@ -172,7 +172,12 @@ jobs:
               "platform": "macOS",
               "build_outcome": os.environ["PUBLICATION_BUILD_OUTCOME"],
               "capture_outcome": os.environ["PUBLICATION_CAPTURE_OUTCOME"],
-              "requested_window": {"width": 1120, "height": 900},
+              "requested_windows": {
+                  "next-actions": {"width": 1120, "height": 900},
+                  "timeline": {"width": 1120, "height": 900},
+                  "ai-providers": {"width": 1120, "height": 1000},
+                  "privacy": {"width": 1120, "height": 1000},
+              },
               "seed": "onboarding,no-recording",
               "captures": captures,
           }

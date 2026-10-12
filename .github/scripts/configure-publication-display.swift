@@ -5,10 +5,11 @@
 import CoreGraphics
 import Foundation
 
-// The publication app window is 1120 × 900 points. Reserve space for the
-// menu bar, Dock and window chrome instead of accepting a cropped viewport.
+// Publication windows are 1120 × 900 points, or 1120 × 1000 for Settings.
+// Reserve space for the menu bar, Dock and window chrome instead of accepting
+// a cropped viewport.
 let minimumWidth = 1280
-let minimumHeight = 1024
+let minimumHeight = 1120
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard arguments == ["--inspect"] || arguments == ["--configure"] else {
     fputs("Usage: swift configure-publication-display.swift --inspect|--configure\n", stderr)
@@ -64,7 +65,7 @@ var report: [String: Any] = [
     "minimum_logical_width": minimumWidth,
     "minimum_logical_height": minimumHeight,
     "required_app_window_width": 1120,
-    "required_app_window_height": 900,
+    "required_app_window_height": 1000,
     "change_applied": false,
     "available_modes": modes.map(describe),
 ]
