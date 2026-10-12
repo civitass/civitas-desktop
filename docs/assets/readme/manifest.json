@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "source_commit": "eb15b2af8e25780af405a18fd030784ab08da01b",
+  "workflow_run": "https://github.com/civitass/civitas-desktop/actions/runs/38182251850",
+  "platform": "macOS",
+  "capture_policy": "Isolated native E2E profile; synthetic examples; raw captures are unmodified. Presentation only crops and uniformly scales pixels.",
+  "renderer": "scripts/generate-readme-visuals.mjs",
+  "captures": {
+    "next-actions": {
+      "sha256": "203090b120911361006414e16dccb31ee1fbaf64e9ffd1b4a27c564dcdfbd8ed",
+      "artifact": "publication-next-actions.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/next-actions.png",
+      "width": 1600,
+      "height": 677
+    },
+    "timeline": {
+      "sha256": "224d4eab0345b439d735f8e681b825ce68e90d1ed7252e436671a64e498f2467",
+      "artifact": "publication-timeline.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/timeline.png",
+      "width": 1600,
+      "height": 677
+    },
+    "ai-providers": {
+      "sha256": "480f4d6f2b9e1e8f9f1b6db0adcfecfb2615cf55f2d8d596b330e5d6357ae304",
+      "artifact": "publication-ai-settings.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/ai-providers.png",
+      "width": 1600,
+      "height": 677
+    },
+    "privacy": {
+      "sha256": "7c60e522a93edf4d9c2ad29e5a1f6942ef66df488157bfcba2f4b80f40a244f8",
+      "artifact": "settings-privacy.png",
+      "scenario": "settings-sections.spec.ts",
+      "path": "docs/assets/demo/privacy.png",
+      "width": 1600,
+      "height": 677
+    }
+  },
+  "outputs": {
+    "hero-light.svg": {
+      "width": 1280,
+      "height": 142,
+      "bytes": 20145,
+      "sha256": "0c4893b8846530e0f915adc22c040dd21a811475b54b35d601d959ead9c1bbc1",
+      "native_regions": []
+    },
+    "hero-dark.svg": {
+      "width": 1280,
+      "height": 142,
+      "bytes": 20145,
+      "sha256": "579fb168cb9b93d9e0fe056cffbe8c5a3a448c73f7c2c0ed692544c045f1830f",
+      "native_regions": []
+    },
+    "shot-next-actions.svg": {
+      "width": 1280,
+      "height": 820,
+      "bytes": 155994,
+      "sha256": "5930098ce8dce6fbaa684d9419712d6667a09d1e20e7d1c98766f9ee47590bc9",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/next-actions.png",
+          "crop": {
+            "x": 520,
+            "y": 209,
+            "width": 785,
+            "height": 366
+          },
+          "placement": {
+            "x": 52,
+            "y": 205,
+            "width": 1176,
+            "height": 548.3006369426752
+          }
+        }
+      ]
+    },
+    "scene-timeline.svg": {
+      "width": 1280,
+      "height": 774,
+      "bytes": 440253,
+      "sha256": "8484dd9201a4169f8b4c4b85b4ae72fab26b35e0e8db80050c9b9ada33066295",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/timeline.png",
+          "crop": {
+            "x": 0,
+            "y": 0,
+            "width": 1600,
+            "height": 677
+          },
+          "placement": {
+            "x": 32,
+            "y": 205,
+            "width": 1216,
+            "height": 514.52
+          }
+        }
+      ]
+    },
+    "shot-privacy.svg": {
+      "width": 1280,
+      "height": 674,
+      "bytes": 164423,
+      "sha256": "3ee4ed4ebac28d4dcafe936fadc04a4d89546fe696a52a3c943b5daeb587d69a",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/privacy.png",
+          "crop": {
+            "x": 272,
+            "y": 239,
+            "width": 638,
+            "height": 86
+          },
+          "placement": {
+            "x": 70,
+            "y": 264,
+            "width": 1140,
+            "height": 153.66771159874608
+          }
+        },
+        {
+          "source": "docs/assets/demo/privacy.png",
+          "crop": {
+            "x": 278,
+            "y": 491,
+            "width": 753,
+            "height": 39
+          },
+          "placement": {
+            "x": 70,
+            "y": 530,
+            "width": 1140,
+            "height": 59.04382470119522
+          }
+        }
+      ]
+    },
+    "shot-ai-providers.svg": {
+      "width": 1280,
+      "height": 730,
+      "bytes": 164992,
+      "sha256": "356b8c05c82a129785dab67f7347e2f65654641d7766b745454d88d996d220d0",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/ai-providers.png",
+          "crop": {
+            "x": 463,
+            "y": 65,
+            "width": 897,
+            "height": 351
+          },
+          "placement": {
+            "x": 52,
+            "y": 205,
+            "width": 1176,
+            "height": 460.17391304347825
+          }
+        }
+      ]
+    },
+    "how-it-works-light.svg": {
+      "width": 1280,
+      "height": 690,
+      "bytes": 5151,
+      "sha256": "4860007f1efc8bab5a522d5f90b3ef66772ad1fc9536de6c86e5520c6024982d",
+      "native_regions": []
+    },
+    "how-it-works-dark.svg": {
+      "width": 1280,
+      "height": 690,
+      "bytes": 5151,
+      "sha256": "a0929529806a8b4c19aac4876b467706f4f06744046132a7e3ea70ecbf79cca1",
+      "native_regions": []
+    },
+    "share-context.svg": {
+      "width": 1200,
+      "height": 630,
+      "bytes": 175685,
+      "sha256": "88eca5e41e0161898c0f812ebe48bd0a5a0e86ef77790ba7779b9c7dd3fdad8c",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/next-actions.png",
+          "crop": {
+            "x": 520,
+            "y": 209,
+            "width": 785,
+            "height": 366
+          },
+          "placement": {
+            "x": 152,
+            "y": 167,
+            "width": 896,
+            "height": 417.75286624203824
+          }
+        }
+      ]
+    },
+    "share-context.png": {
+      "width": 1200,
+      "height": 630,
+      "bytes": 83226,
+      "sha256": "9bf97ebaf00b8310721f24c1b2278ca6a7828937748b9492cf3a981afbeb6eba",
+      "rendered_from": "share-context.svg"
+    },
+    "share-privacy.svg": {
+      "width": 1200,
+      "height": 630,
+      "bytes": 183957,
+      "sha256": "c934ed8ee930bc41d18f8ae6fa905633f794b58e8fee1181c97baf9e4abd1a0b",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/privacy.png",
+          "crop": {
+            "x": 272,
+            "y": 239,
+            "width": 638,
+            "height": 86
+          },
+          "placement": {
+            "x": 62,
+            "y": 344,
+            "width": 1076,
+            "height": 145.04075235109718
+          }
+        }
+      ]
+    },
+    "share-privacy.png": {
+      "width": 1200,
+      "height": 630,
+      "bytes": 74495,
+      "sha256": "ff894887849c11915da73581c07e80207836e6b90aaefc31be12e89004188b3f",
+      "rendered_from": "share-privacy.svg"
+    }
+  }
+}

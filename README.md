@@ -1,15 +1,15 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
-    <img src="docs/assets/readme/hero-light.svg" alt="Civitas Desktop — the memory behind your next move">
+    <img src="docs/assets/readme/hero-light.svg" alt="Civitas Desktop">
   </picture>
 </p>
 
-<h3 align="center">Remember the moment. Understand the why. Continue with confidence.</h3>
+<h1 align="center">Pick up where you left off.</h1>
 
 <p align="center">
-  Civitas rewinds a private Timeline of your day, recovers why decisions were made,<br>
-  and drafts evidence-linked next actions — all on your computer.
+  Civitas turns the work you choose to capture into a searchable Timeline and evidence-linked next actions.
+  Local-first and account-free, with optional AI you configure.
 </p>
 
 <p align="center">
@@ -24,56 +24,56 @@
 
 <p align="center">
   <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-7a5f48?style=flat&labelColor=2b2b2e"></a>
-  <img alt="Platforms" src="https://img.shields.io/badge/macOS%20·%20Windows-1d1d1f?style=flat&labelColor=2b2b2e">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-7a5f48?style=flat&labelColor=2b2b2e">
   <img alt="Bring your own model" src="https://img.shields.io/badge/bring%20your%20own%20model-1d1d1f?style=flat&labelColor=2b2b2e">
 </p>
 
-<br>
-
-<p align="center">
-  <img src="docs/assets/readme/scene-timeline.svg" alt="The Civitas Desktop Timeline rewinding a real moment of work — this repository's own GitHub commit history — on a photographed workspace display">
-</p>
-
-<p align="center"><sub><strong>Timeline</strong> — rewind to a real moment of work: this repository's own commit history, replayed in the Civitas Timeline with the day's scrubber below. Presentation composite. <em>Workspace photograph: DESIGNECOLOGIST, Unsplash.</em></sub></p>
-
-## From the moment to the next move
-
-| Remember | Understand | Continue |
-| --- | --- | --- |
-| Rewind the exact screen, app, meeting, or local transcript. | Reconstruct projects, people, decisions, reasons, blockers, and procedures in an evidence-linked graph. | Review ranked commitments and open loops with reason, evidence age, uncertainty, and safety state visible. |
-
-Civitas is designed for one person recovering context across apps—not for
-employee monitoring, fleet administration, or a company control plane. Capture,
-search, Timeline, graph, feedback, and profile metadata stay on your computer by
-default. AI is either loopback-local or a provider you explicitly connect.
-
-<br>
+## Choose what comes next
 
 <p align="center">
   <a href="docs/assets/demo/next-actions.png">
-    <img src="docs/assets/readme/shot-next-actions.svg" alt="The actual Civitas Desktop Next Actions view showing ranked privacy-safe launch commitments with evidence and safety state">
+    <img src="docs/assets/readme/shot-next-actions.svg" alt="Civitas Next Actions showing a synthetic commitment to confirm the migration rollback owner, its reason, a collapsed evidence control, and feedback buttons">
   </a>
 </p>
 
-<p align="center"><sub><strong>Next Actions</strong> — ranked continuations remain reviewable drafts; nothing executes by itself.</sub></p>
+**Next Actions** ranks commitments and follow-ups for you to review. Open the
+evidence, inspect why a suggestion appeared, and choose what deserves your
+attention. Suggestions never execute automatically.
 
-The Next Actions and AI-settings shots frame unretouched captures of the real
-desktop application: the publication E2E suite creates an isolated local
-profile and deterministic synthetic content—never founder, contributor, or
-customer data—then verifies the same user-visible surfaces before saving the
-screenshots, and each shot links to its raw PNG. The Timeline scene above is a
-designed presentation composite: the real Timeline surface replaying a live
-capture of this repository's public commit history, shown on a photographed
-display.
+These images use genuine native-app captures from an isolated test profile.
+Example work is synthetic; the presentation frames and detail crops link to
+their original, unretouched screenshots.
 
-## Three everyday wins
+## Find the moment
 
-| When you need to… | Civitas helps you… | Without hiding… |
-| --- | --- | --- |
-| Recover a decision | Search across apps and time, then open the supporting local moment | the source, evidence age, or uncertainty |
-| Re-enter a project | Reconstruct people, state changes, blockers, procedures, and reasons | where the graph inferred a relationship |
-| Close open loops | Review ranked commitments and follow-ups in Next Actions | confidence, safety state, or your feedback controls |
+<p align="center">
+  <a href="docs/assets/demo/timeline.png">
+    <img src="docs/assets/readme/scene-timeline.svg" alt="The native Civitas Timeline displaying a synthetic Northstar launch board with its app context and time scrubber">
+  </a>
+</p>
+
+**Timeline** lets you scrub back to a captured screen and its app context. The
+Northstar board shown inside the captured screen is example work content, not
+a Civitas dashboard.
+
+## Keep the boundary visible
+
+<p align="center">
+  <a href="docs/assets/demo/privacy.png">
+    <img src="docs/assets/readme/shot-privacy.svg" alt="Two separate details from Civitas Privacy settings: the selected Local-only option and the explanation of OS-vault-backed API-key encryption">
+  </a>
+</p>
+
+These two details from **Privacy settings** show the selected Local-only mode
+and secure credential storage. Remote features require a separate choice;
+persistent provider keys use OS-vault-backed protection.
+
+[Visual sources and shareable artwork](docs/assets/readme/README.md)
+
+Civitas is built for one person recovering context across apps. Capture,
+search, Timeline, graph, feedback, and profile metadata stay on your computer
+by default. Remote AI requests send prompts and selected evidence to the
+provider you explicitly configure.
 
 ## Start in three steps
 
@@ -92,7 +92,7 @@ display.
 - **Remember the day.** Search screen text, accessibility context, and local
   transcripts across time, apps, projects, and people, with local multilingual
   OCR including explicit Simplified and Traditional Chinese support.
-- **Predict the next move.** Pull a ranked set of evidence-backed commitments
+- **Choose the next move.** Pull a ranked set of evidence-backed commitments
   and open loops, inspect why each one appeared, and choose Done, Not now, or
   Dismiss. Suggestions never execute by themselves.
 - **Ask with evidence.** Get an answer that separates direct evidence,
@@ -128,9 +128,16 @@ display.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/how-it-works-dark.svg">
-    <img src="docs/assets/readme/how-it-works-light.svg" alt="Diagram: chosen apps and meetings flow into local capture, a local SQLite store, Timeline and knowledge graph, then Ask, Next Actions, and MCP. AI runs against a loopback local model, or a remote provider only after explicit opt-in.">
+    <img src="docs/assets/readme/how-it-works-light.svg" alt="Diagram: chosen capture flows into local memory, then Timeline, search, graph, Next Actions and read-only MCP. Optional Ask and Chat use a loopback model or an explicitly configured remote provider.">
   </picture>
 </p>
+
+[Open the full-size diagram](docs/assets/readme/how-it-works-light.svg).
+
+Capture you choose stays in local media and indexed text. Timeline, search,
+and Next Actions use that local memory; search and action ranking need no AI
+model. Ask and Chat optionally use a loopback model, or send the prompt and
+selected evidence to a remote provider you configure.
 
 The desktop app and engine run on the user's computer. The engine binds its
 authenticated API to `127.0.0.1:3030`; there is no LAN setting or service
@@ -186,15 +193,15 @@ opens a browser, or invokes an integration automatically.
 | Amazon Bedrock | Short-term key, AWS profile, or temporary access keys | Region-pinned Bedrock Runtime | You manage models and access in AWS |
 | Compatible endpoint | Optional API key | Exact HTTPS or loopback host shown in Settings | You operate a trusted OpenAI-compatible server |
 
-<br>
-
 <p align="center">
   <a href="docs/assets/demo/ai-providers.png">
-    <img src="docs/assets/readme/shot-ai-providers.svg" alt="The actual Civitas Desktop AI settings showing local inference and supported bring-your-own-provider choices">
+    <img src="docs/assets/readme/shot-ai-providers.svg" alt="Native Civitas AI provider selection grid showing local and remote choices, with Amazon Bedrock selected for the setup example">
   </a>
 </p>
 
-<p align="center"><sub><strong>Settings → AI</strong> — choose the boundary first; add a credential only when a remote provider is intentional.</sub></p>
+**Settings → AI** lets you choose a loopback model or configure your own
+provider. Review the destination and data boundary before adding a remote
+credential.
 
 The app provides save, replace, test, activate, and delete flows. Diagnostics
 use the fixed prompt `Reply with OK.` and never return the credential.

@@ -16,6 +16,11 @@ on:
       - 'apps/civitas-app-tauri/tsconfig*.json'
       - 'apps/civitas-app-tauri/e2e/**/tsconfig*.json'
       - '.github/workflows/test-frontend.yml'
+      - 'docs/assets/readme/**'
+      - 'docs/assets/demo/**'
+      - 'docs/assets/civitas-desktop-wordmark.svg'
+      - 'scripts/generate-readme-visuals.mjs'
+      - 'scripts/lib/readme-diagram.mjs'
   pull_request:
     paths:
       - 'apps/civitas-app-tauri/**/*.ts'
@@ -27,6 +32,11 @@ on:
       - 'apps/civitas-app-tauri/tsconfig*.json'
       - 'apps/civitas-app-tauri/e2e/**/tsconfig*.json'
       - '.github/workflows/test-frontend.yml'
+      - 'docs/assets/readme/**'
+      - 'docs/assets/demo/**'
+      - 'docs/assets/civitas-desktop-wordmark.svg'
+      - 'scripts/generate-readme-visuals.mjs'
+      - 'scripts/lib/readme-diagram.mjs'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}
@@ -64,6 +74,10 @@ jobs:
         # also catches but ~5x slower. Runs first because a TS error makes
         # the test run useless.
         run: bun run typecheck
+
+      - name: Verify native README artwork and capture provenance
+        working-directory: .
+        run: bun scripts/generate-readme-visuals.mjs --check
 
       - name: Type-check WebDriver specs and Bun updater harness
         run: bun run typecheck:e2e
