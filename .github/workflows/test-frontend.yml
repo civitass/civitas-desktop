@@ -21,6 +21,7 @@ on:
       - 'docs/assets/civitas-desktop-wordmark.svg'
       - 'scripts/generate-readme-visuals.mjs'
       - 'scripts/lib/readme-diagram.mjs'
+      - 'scripts/lib/readme-art-direction.mjs'
   pull_request:
     paths:
       - 'apps/civitas-app-tauri/**/*.ts'
@@ -37,6 +38,7 @@ on:
       - 'docs/assets/civitas-desktop-wordmark.svg'
       - 'scripts/generate-readme-visuals.mjs'
       - 'scripts/lib/readme-diagram.mjs'
+      - 'scripts/lib/readme-art-direction.mjs'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}

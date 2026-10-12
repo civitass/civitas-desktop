@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { renderDiagram } from "./lib/readme-diagram.mjs";
+import { renderArtwork } from "./lib/readme-art-direction.mjs";
 
 // This renderer composes native screenshots; it never redraws product UI.
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -20,23 +21,54 @@ if (args.some((arg) => arg !== "--check") || args.length > 1) {
 }
 const checking = args.includes("--check");
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
-const escape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
-const sourceCommit = "eb15b2af8e25780af405a18fd030784ab08da01b";
-const workflow = "https://github.com/civitass/civitas-desktop/actions/runs/38182251850";
+const sourceCommit = "609b58e29bc6da90e4d144c4395d2b0e2f52a21b";
+const workflow = "https://github.com/civitass/civitas-desktop/actions/runs/38205609866";
 const captures = {
-  "next-actions": { sha256: "203090b120911361006414e16dccb31ee1fbaf64e9ffd1b4a27c564dcdfbd8ed", artifact: "publication-next-actions.png", scenario: "publication-demo.spec.ts" },
-  timeline: { sha256: "224d4eab0345b439d735f8e681b825ce68e90d1ed7252e436671a64e498f2467", artifact: "publication-timeline.png", scenario: "publication-demo.spec.ts" },
-  "ai-providers": { sha256: "480f4d6f2b9e1e8f9f1b6db0adcfecfb2615cf55f2d8d596b330e5d6357ae304", artifact: "publication-ai-settings.png", scenario: "publication-demo.spec.ts" },
-  privacy: { sha256: "7c60e522a93edf4d9c2ad29e5a1f6942ef66df488157bfcba2f4b80f40a244f8", artifact: "settings-privacy.png", scenario: "settings-sections.spec.ts" },
+  "next-actions": {
+    "sha256": "794d737ad04ca0c09df4b27f526b6864940f3d22748b806d9654d7a1a1b3b8d6",
+    "width": 1120,
+    "height": 900,
+    "artifact": "publication-next-actions.png",
+    "scenario": "publication-demo.spec.ts"
+  },
+  "next-actions-dark": {
+    "sha256": "009b82d6c3e364ba62473346e12d27944581094c8b3c2432e2c8a21aac7a1f9c",
+    "width": 1120,
+    "height": 900,
+    "artifact": "publication-next-actions-dark.png",
+    "scenario": "publication-demo.spec.ts"
+  },
+  "timeline": {
+    "sha256": "3931daa289204428dec662efddac12c05bc774c97371deee1d784ccea8b7203f",
+    "width": 1120,
+    "height": 900,
+    "artifact": "publication-timeline.png",
+    "scenario": "publication-demo.spec.ts"
+  },
+  "privacy": {
+    "sha256": "b6f722dfca71a3d41a83e63f786e61af6b3781900b7c4dea85cfc68750907643",
+    "width": 1120,
+    "height": 1000,
+    "artifact": "publication-privacy.png",
+    "scenario": "publication-demo.spec.ts"
+  },
+  "ai-providers": {
+    "sha256": "24e9f881aa4ecfc510fb2162920842a4d9ccef8f9a9b1e8319154dcd272add4f",
+    "width": 1120,
+    "height": 1000,
+    "artifact": "publication-ai-settings.png",
+    "scenario": "publication-demo.spec.ts"
+  }
 };
-const raw = {};
+const sources = {};
 for (const [name, source] of Object.entries(captures)) {
   const relative = `docs/assets/demo/${name}.png`;
-  raw[name] = await fs.readFile(path.join(root, relative));
-  if (sha256(raw[name]) !== source.sha256) throw new Error(`Native source changed: ${relative}. Verify and update its capture provenance first.`);
-  const metadata = await sharp(raw[name]).metadata();
-  if (metadata.width !== 1600 || metadata.height !== 677) throw new Error(`Unexpected native capture size: ${relative}`);
+  const bytes = await fs.readFile(path.join(root, relative));
+  if (sha256(bytes) !== source.sha256) throw new Error(`Native source changed: ${relative}. Verify and update its capture provenance first.`);
+  const metadata = await sharp(bytes).metadata();
+  if (metadata.format !== "png" || metadata.width !== source.width || metadata.height !== source.height) throw new Error(`Unexpected native capture size: ${relative}`);
   Object.assign(source, { path: relative, width: metadata.width, height: metadata.height });
+  sources[name] = { bytes, width: metadata.width, height: metadata.height };
 }
 const wordmark = await fs.readFile(path.join(root, "docs/assets/civitas-desktop-wordmark.svg"), "utf8");
 // MIME-style wrapping keeps opaque binary data out of enormous diff lines.
@@ -45,107 +77,51 @@ const uri = (buffer, mime = "image/png") => {
   const encoded = Buffer.from(buffer).toString("base64");
   return `data:${mime};base64,\n${encoded.match(/.{1,48}/g).join("\n")}\n`;
 };
-const ink = "#1d1d1f", secondary = "#66666b", sepia = "#7a5f48";
-const text = (x, y, size, content, options = {}) => `<text x="${x}" y="${y}" font-size="${size}" font-weight="${options.weight ?? 400}" fill="${options.fill ?? ink}"${options.anchor ? ` text-anchor="${options.anchor}"` : ""}>${escape(content)}</text>`;
-const picture = (x, y, width, height, data, mime) => `<image x="${x}" y="${y}" width="${width}" height="${height}" xlink:href="${uri(data, mime)}"/>`;
-const brand = (x, y) => `<svg x="${x}" y="${y}" width="164" height="44" viewBox="183 60 298 80" overflow="hidden">${picture(0, 0, 920, 200, wordmark, "image/svg+xml")}</svg>`;
-const uses = {};
-let currentOutput;
-function crop(source, rectangle, x, y, width) {
-  const [left, top, w, h] = rectangle;
-  if (![left, top, w, h, x, y, width].every(Number.isFinite) || left < 0 || top < 0 || w <= 0 || h <= 0 || left + w > 1600 || top + h > 677 || width <= 0) throw new Error(`Invalid crop: ${source} ${rectangle}`);
-  (uses[currentOutput] ??= []).push({ source: captures[source].path, crop: { x: left, y: top, width: w, height: h }, placement: { x, y, width, height: width * h / w } });
-  return `<svg x="${x}" y="${y}" width="${width}" height="${width * h / w}" viewBox="${rectangle.join(" ")}" overflow="hidden"><use xlink:href="#native-${source}"/></svg>`;
-}
-function svg(width, height, title, description, body, background = "#f5f5f7") {
-  const sources = [...new Set((uses[currentOutput] ?? []).map((item) => path.basename(item.source, ".png")))];
-  return `<!-- Generated by scripts/generate-readme-visuals.mjs. Native pixels remain unretouched. -->\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title description">\n<title id="title">${escape(title)}</title><desc id="description">${escape(description)}</desc>\n<defs>${sources.map((name) => `<image id="native-${name}" width="1600" height="677" xlink:href="${uri(raw[name])}"/>`).join("")}</defs>\n<rect width="${width}" height="${height}" rx="20" fill="${background}"/>\n<g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">${body}</g>\n</svg>\n`;
-}
-const outputs = new Map();
-function compose(name, builder) { currentOutput = name; outputs.set(name, Buffer.from(builder())); }
-const footer = (y, label) => text(52, y, 16, label, { fill: secondary });
-
+const outputs = new Map(Object.entries(renderArtwork({ sources, wordmark, uri }))
+  .map(([name, svg]) => [name, Buffer.from(svg)]));
 for (const theme of ["light", "dark"]) {
-  compose(`hero-${theme}.svg`, () => {
-    const themed = theme === "dark" ? wordmark.replaceAll("#1D1D1F", "#F5F5F5").replaceAll("#6E6E73", "#AEAEB2") : wordmark;
-    return svg(1280, 142, "Civitas Desktop", "The Civitas Desktop wordmark.", picture(180, -29, 920, 200, themed, "image/svg+xml"), "none");
-  });
+  outputs.set(`how-it-works-${theme}.svg`, Buffer.from(renderDiagram(theme)));
 }
-compose("shot-next-actions.svg", () => svg(1280, 820,
-  "Your next move, with context.",
-  "A complete Next Actions card cropped from the real desktop app. A synthetic commitment shows its reason, evidence disclosure, safety boundary and feedback controls. Nothing executes automatically.",
-  text(52, 48, 19, "Next actions / Real desktop interface", { fill: sepia, weight: 500 }) +
-  text(52, 112, 48, "Your next move, with context.", { weight: 600 }) +
-  text(52, 157, 25, "Ranked locally. Reviewed by you.", { fill: secondary }) +
-  crop("next-actions", [520, 209, 785, 366], 52, 205, 1176) +
-  footer(789, "Native macOS capture · Synthetic example · Suggestions stay drafts")));
 
-compose("scene-timeline.svg", () => svg(1280, 774,
-  "Return to the moment.",
-  "The full native Civitas Timeline shows its sidebar, date and time scrubber. The Northstar launch board inside the recalled screen is synthetic example content, not a Civitas dashboard.",
-  text(52, 48, 19, "Timeline / Real desktop interface", { fill: sepia, weight: 500 }) +
-  text(52, 112, 48, "Return to the moment.", { weight: 600 }) +
-  text(52, 157, 25, "A captured screen. Its context. A place in time.", { fill: secondary }) +
-  crop("timeline", [0, 0, 1600, 677], 32, 205, 1216) +
-  footer(746, "Native macOS capture · The board is example captured content")));
-
-compose("shot-privacy.svg", () => svg(1280, 674,
-  "Your work stays on your computer by default.",
-  "Two separately labelled detail crops of the native Privacy settings: Local-only is selected, and persistent API keys use OS-vault-backed encryption. These are excerpts, not a reconstructed settings screen.",
-  text(52, 48, 19, "Privacy / Two native interface details", { fill: sepia, weight: 500 }) +
-  text(52, 112, 48, "Local by default.", { weight: 600 }) +
-  text(52, 157, 25, "Remote features require a separate choice.", { fill: secondary }) +
-  text(52, 224, 20, "01  Network boundary", { weight: 500, fill: sepia }) +
-  `<rect x="52" y="246" width="1176" height="190" rx="16" fill="#ffffff"/>` +
-  crop("privacy", [272, 239, 638, 86], 70, 264, 1140) +
-  `<line x1="52" x2="1228" y1="444" y2="444" stroke="#d8d8dc"/>` +
-  text(52, 489, 20, "02  Credential storage", { weight: 500, fill: sepia }) +
-  `<rect x="52" y="512" width="1176" height="96" rx="16" fill="#ffffff"/>` +
-  crop("privacy", [278, 491, 753, 39], 70, 530, 1140) +
-  footer(646, "Native macOS capture · API-key encryption is separate from captured-data storage")));
-
-compose("shot-ai-providers.svg", () => svg(1280, 730,
-  "Your model. Your choice.",
-  "The real AI provider selection grid, cropped without changing its state. Amazon Bedrock is selected for this setup example; no credential is entered. Remote requests send prompts and selected evidence to that provider.",
-  text(52, 48, 19, "AI models / Real desktop interface", { fill: sepia, weight: 500 }) +
-  text(52, 112, 48, "Your model. Your choice.", { weight: 600 }) +
-  text(52, 157, 25, "Use a local model or connect your own provider.", { fill: secondary }) +
-  crop("ai-providers", [463, 65, 897, 351], 52, 205, 1176) +
-  footer(698, "Native macOS capture · Bedrock setup example · No credential entered")));
-
-for (const theme of ["light", "dark"]) compose(`how-it-works-${theme}.svg`, () => renderDiagram(theme));
-
-compose("share-context.svg", () => svg(1200, 630,
-  "Civitas — pick up where you left off.",
-  "Shareable artwork built around an unretouched Next Actions card from the native macOS app. Synthetic example. Suggestions never execute automatically.",
-  brand(44, 30) +
-  text(1156, 57, 18, "Local-first · Account-free", { anchor: "end", fill: secondary }) +
-  text(44, 128, 43, "Pick up where you left off.", { weight: 600 }) +
-  crop("next-actions", [520, 209, 785, 366], 152, 167, 896) +
-  text(44, 610, 16, "Real desktop interface · Synthetic example · Suggestions stay drafts", { fill: secondary }) +
-  text(1156, 610, 18, "civitas.team", { anchor: "end", fill: sepia })));
-
-compose("share-privacy.svg", () => svg(1200, 630,
-  "Civitas — local by default.",
-  "Shareable artwork showing the actual selected Local-only privacy control in an isolated native app profile. Remote features require a separate owner choice.",
-  brand(44, 30) +
-  text(1156, 57, 18, "Local-first · Account-free", { anchor: "end", fill: secondary }) +
-  text(44, 155, 55, "Your work, on your computer.", { weight: 600 }) +
-  text(44, 205, 27, "Remote features require a separate choice.", { fill: secondary }) +
-  text(44, 296, 20, "Settings → Privacy / Network boundary", { fill: sepia, weight: 500 }) +
-  `<rect x="44" y="326" width="1112" height="184" rx="16" fill="#ffffff"/>` +
-  crop("privacy", [272, 239, 638, 86], 62, 344, 1076) +
-  text(44, 555, 24, "Capture only what you choose. Keep the boundary visible.", { fill: secondary }) +
-  text(44, 610, 16, "Real desktop interface · Isolated demonstration profile", { fill: secondary }) +
-  text(1156, 610, 18, "civitas.team", { anchor: "end", fill: sepia })));
+function nativeRegions(buffer, canvas) {
+  const svg = buffer.toString("utf8");
+  const regions = [];
+  for (const match of svg.matchAll(/<image\b[^>]*data-source="([^"]+)"[^>]*>/g)) {
+    const [element, name] = match;
+    const source = captures[name];
+    if (!source || !element.includes('data-full-capture="true"')) {
+      throw new Error(`Artwork must use a complete, known capture: ${name}`);
+    }
+    const number = (attribute) => {
+      const value = element.match(new RegExp(`\\b${attribute}="([^"]+)"`))?.[1];
+      if (value === undefined || !Number.isFinite(Number(value))) {
+        throw new Error(`Invalid native image ${attribute}: ${name}`);
+      }
+      return Number(value);
+    };
+    const placement = Object.fromEntries(["x", "y", "width", "height"].map((key) => [key, number(key)]));
+    const { x, y, width, height } = placement;
+    if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+        x + width > canvas.width || y + height > canvas.height ||
+        Math.abs(height - width * source.height / source.width) > 0.002) {
+      throw new Error(`Native image is cropped, distorted, or outside the canvas: ${name}`);
+    }
+    const encoded = element.match(/xlink:href="data:image\/png;base64,([^"]+)"/)?.[1];
+    if (!encoded || sha256(Buffer.from(encoded, "base64")) !== source.sha256) {
+      throw new Error(`Embedded interface differs from its original native capture: ${name}`);
+    }
+    regions.push({ source: source.path, full_capture: true, placement });
+  }
+  return regions;
+}
 
 const previous = checking ? JSON.parse(await fs.readFile(path.join(directory, "manifest.json"), "utf8")) : null;
 const manifest = {
-  schema_version: 1,
+  schema_version: 2,
   source_commit: sourceCommit,
   workflow_run: workflow,
   platform: "macOS",
-  capture_policy: "Isolated native E2E profile; synthetic examples; raw captures are unmodified. Presentation only crops and uniformly scales pixels.",
+  capture_policy: "Isolated native E2E profile; synthetic examples; raw captures are unmodified. Presentation uniformly scales complete app windows; no product pixel is cropped, retouched, or covered.",
   renderer: "scripts/generate-readme-visuals.mjs",
   captures,
   outputs: {},
@@ -157,7 +133,7 @@ for (const [name, buffer] of outputs) {
     const actual = await fs.readFile(path.join(directory, name));
     if (!actual.equals(buffer)) throw new Error(`Stale artwork: ${name}. Run the renderer.`);
   } else await fs.writeFile(path.join(directory, name), buffer);
-  manifest.outputs[name] = { width: metadata.width, height: metadata.height, bytes: buffer.length, sha256: sha256(buffer), native_regions: uses[name] ?? [] };
+  manifest.outputs[name] = { width: metadata.width, height: metadata.height, bytes: buffer.length, sha256: sha256(buffer), native_regions: nativeRegions(buffer, metadata) };
   if (!name.startsWith("share-")) continue;
   const pngName = name.replace(/\.svg$/, ".png");
   const png = checking ? await fs.readFile(path.join(directory, pngName)) : await sharp(buffer).png({ compressionLevel: 9 }).toBuffer();

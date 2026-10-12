@@ -2,69 +2,69 @@
   <title id="diagram-title">Local memory, with optional AI connections</title>
   <desc id="diagram-description">After OS permission and an explicit start, selected screen, audio, and accessibility capture enters local storage. Timeline, search, work graph, Next Actions, and read-only MCP use that local memory. Search, Next Actions, and basic MCP do not require an AI model. Optional Ask and Chat can use selected evidence with a loopback local model, or send it to a configured remote provider only after explicit opt-in. Provider credentials use OS-vault-backed encryption; the diagram does not claim capture media is encrypted.</desc>
   <defs>
-    <marker id="local-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c0bec0"/></marker>
-    <marker id="remote-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c3a17c"/></marker>
+    <marker id="local-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c5b6a6"/></marker>
+    <marker id="remote-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d0ac80"/></marker>
   </defs>
-  <rect width="1280" height="690" rx="24" fill="#171719"/>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f5f5f7">
-    <rect x="28" y="28" width="1224" height="486" rx="24" fill="#222224" stroke="#494749"/>
-    <circle cx="66" cy="73" r="6" fill="#c3a17c"/>
-    <text x="84" y="82" font-size="29" font-weight="650">Your computer</text>
-    <text x="1208" y="80" text-anchor="end" font-size="22" fill="#c0bec0">Local by default</text>
+  <rect width="1280" height="690" rx="24" fill="#24211e"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f6f0e6">
+    <rect x="28" y="28" width="1224" height="486" rx="20" fill="#302a25" stroke="#756451"/>
+    <circle cx="66" cy="73" r="6" fill="#d0ac80"/>
+    <text x="84" y="86" font-family="Georgia, 'Times New Roman', serif" font-size="40">Your computer</text>
+    <text x="1208" y="80" text-anchor="end" font-size="22" font-weight="500" fill="#d0ac80">Local by default</text>
 
     <g transform="translate(64 134)">
-      <circle cx="16" cy="16" r="16" fill="#3a322b"/>
-      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#c3a17c">1</text>
-      <text x="48" y="24" font-size="28" font-weight="650">Capture you choose</text>
+      <circle cx="16" cy="16" r="16" fill="#504131"/>
+      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#d0ac80">1</text>
+      <text x="48" y="24" font-size="30" font-weight="650">Capture you choose</text>
       <text x="0" y="73" font-size="22">Screen · audio · accessibility</text>
-      <text x="0" y="108" font-size="21" fill="#c0bec0">Permission, then Start recording.</text>
-      <text x="0" y="141" font-size="21" fill="#c0bec0">Visible and immediately pausable.</text>
+      <text x="0" y="108" font-size="21" fill="#c5b6a6">Permission, then Start recording.</text>
+      <text x="0" y="141" font-size="21" fill="#c5b6a6">Visible and immediately pausable.</text>
     </g>
 
     <g transform="translate(478 134)">
-      <circle cx="16" cy="16" r="16" fill="#3a322b"/>
-      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#c3a17c">2</text>
-      <text x="48" y="24" font-size="28" font-weight="650">Local memory</text>
+      <circle cx="16" cy="16" r="16" fill="#504131"/>
+      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#d0ac80">2</text>
+      <text x="48" y="24" font-size="30" font-weight="650">Local memory</text>
       <text x="0" y="73" font-size="22">Media, text, and linked evidence</text>
-      <text x="0" y="108" font-size="21" fill="#c0bec0">Stored and indexed on your device.</text>
+      <text x="0" y="108" font-size="21" fill="#c5b6a6">Stored and indexed on your device.</text>
     </g>
 
     <g transform="translate(893 134)">
-      <circle cx="16" cy="16" r="16" fill="#3a322b"/>
-      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#c3a17c">3</text>
-      <text x="48" y="24" font-size="28" font-weight="650">Recover context</text>
+      <circle cx="16" cy="16" r="16" fill="#504131"/>
+      <text x="16" y="23" text-anchor="middle" font-size="20" font-weight="600" fill="#d0ac80">3</text>
+      <text x="48" y="24" font-size="30" font-weight="650">Recover context</text>
       <text x="0" y="73" font-size="22">Timeline · search · work graph</text>
       <text x="0" y="108" font-size="22">Next Actions · read-only MCP</text>
-      <text x="0" y="141" font-size="21" fill="#c0bec0">Actions remain reviewable drafts.</text>
+      <text x="0" y="141" font-size="21" fill="#c5b6a6">Actions remain reviewable drafts.</text>
     </g>
 
-    <g fill="none" stroke="#c0bec0" stroke-width="2" marker-end="url(#local-arrow)">
-      <path d="M 403 150 H 458"/>
+    <g fill="none" stroke="#c5b6a6" stroke-width="2.5" marker-end="url(#local-arrow)">
+      <path d="M 418 150 H 458"/>
       <path d="M 815 150 H 873"/>
       <path d="M 641 262 V 342"/>
     </g>
-    <path d="M 64 313 H 614 M 668 313 H 1216" stroke="#494749"/>
+    <path d="M 64 313 H 614 M 668 313 H 1216" stroke="#756451"/>
 
-    <rect x="64" y="357" width="337" height="117" rx="16" fill="#2c2c2e" stroke="#494749"/>
-    <text x="89" y="397" font-size="27" font-weight="650">Local model</text>
-    <text x="89" y="432" font-size="21" fill="#c0bec0">Ollama-compatible · loopback</text>
-    <text x="89" y="458" font-size="19" fill="#c0bec0">Prompts stay on this computer.</text>
+    <rect x="64" y="357" width="337" height="117" rx="14" fill="#3b322a" stroke="#756451"/>
+    <text x="89" y="397" font-size="28" font-weight="650">Local model</text>
+    <text x="89" y="432" font-size="21" fill="#c5b6a6">Ollama-compatible · loopback</text>
+    <text x="89" y="458" font-size="19" fill="#c5b6a6">Prompts stay on this computer.</text>
 
-    <rect x="488" y="357" width="307" height="117" rx="16" fill="#2c2c2e" stroke="#494749"/>
+    <rect x="488" y="357" width="307" height="117" rx="14" fill="#3b322a" stroke="#756451"/>
     <text x="513" y="397" font-size="27" font-weight="650">Optional Ask / Chat</text>
-    <text x="513" y="433" font-size="21" fill="#c0bec0">Selected prompt + evidence</text>
-    <path d="M 488 416 H 416" fill="none" stroke="#c0bec0" stroke-width="2" marker-end="url(#local-arrow)"/>
+    <text x="513" y="433" font-size="21" fill="#c5b6a6">Selected prompt + evidence</text>
+    <path d="M 488 416 H 416" fill="none" stroke="#c5b6a6" stroke-width="2.5" marker-end="url(#local-arrow)"/>
 
-    <text x="907" y="376" font-size="22" font-weight="600" fill="#c3a17c">Remote opt-in</text>
-    <text x="873" y="404" font-size="19" fill="#c0bec0">Review the destination first.</text>
-    <path d="M 795 434 H 1041 V 547" fill="none" stroke="#c3a17c" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#remote-arrow)"/>
-    <text x="64" y="501" font-size="20" fill="#c0bec0">Provider credentials: OS-vault-backed encryption or session-only storage.</text>
+    <text x="907" y="376" font-size="22" font-weight="600" fill="#d0ac80">Remote opt-in</text>
+    <text x="873" y="404" font-size="19" fill="#c5b6a6">Review the destination first.</text>
+    <path d="M 795 434 H 1041 V 547" fill="none" stroke="#d0ac80" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#remote-arrow)"/>
+    <text x="64" y="501" font-size="20" fill="#c5b6a6">Provider credentials: OS-vault-backed encryption or session-only storage.</text>
 
-    <rect x="867" y="561" width="349" height="101" rx="16" fill="#2c2c2e" stroke="#494749"/>
-    <text x="892" y="603" font-size="27" font-weight="650">Remote provider</text>
-    <text x="892" y="637" font-size="21" fill="#c0bec0">The provider you connect</text>
+    <rect x="867" y="561" width="349" height="101" rx="14" fill="#3b322a" stroke="#756451"/>
+    <text x="892" y="603" font-size="28" font-weight="650">Remote provider</text>
+    <text x="892" y="637" font-size="21" fill="#c5b6a6">The provider you connect</text>
 
-    <text x="64" y="603" font-size="24" font-weight="600">Works without AI</text>
-    <text x="64" y="637" font-size="22" fill="#c0bec0">Search · Next Actions · basic MCP</text>
+    <text x="64" y="603" font-size="28" font-weight="650">Works without AI</text>
+    <text x="64" y="637" font-size="22" fill="#c5b6a6">Search · Next Actions · basic MCP</text>
   </g>
 </svg>

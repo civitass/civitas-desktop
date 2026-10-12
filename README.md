@@ -1,15 +1,20 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
-    <img src="docs/assets/readme/hero-light.svg" alt="Civitas Desktop">
-  </picture>
+  <a href="docs/assets/demo/next-actions.png">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
+      <img src="docs/assets/readme/hero-light.svg" alt="Civitas Desktop — a memory for your work. The complete Next Actions window shows a synthetic launch commitment, its evidence, and review controls.">
+    </picture>
+  </a>
 </p>
 
-<h1 align="center">Pick up where you left off.</h1>
+<p align="center">
+  Original capture: <a href="docs/assets/demo/next-actions.png">Light</a> ·
+  <a href="docs/assets/demo/next-actions-dark.png">Dark</a> · Synthetic example work
+</p>
 
 <p align="center">
-  Civitas turns the work you choose to capture into a searchable Timeline and evidence-linked next actions.
-  Local-first and account-free, with optional AI you configure.
+  A local-first memory for the work you choose to capture.<br>
+  Find the source, recover the context, and review what comes next. No account required.
 </p>
 
 <p align="center">
@@ -17,63 +22,60 @@
   &nbsp;·&nbsp;
   <a href="docs/BUILDING.md">Build from source</a>
   &nbsp;·&nbsp;
-  <a href="docs/BYOK.md">Connect your AI</a>
+  <a href="docs/assets/readme/README.md">Visual gallery</a>
   &nbsp;·&nbsp;
   <a href="docs/PRIVACY_AND_DATA_BOUNDARY.md">Privacy boundary</a>
 </p>
 
-<p align="center">
-  <a href="LICENSE.md"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-7a5f48?style=flat&labelColor=2b2b2e"></a>
-  <img alt="Local first" src="https://img.shields.io/badge/local--first-7a5f48?style=flat&labelColor=2b2b2e">
-  <img alt="Bring your own model" src="https://img.shields.io/badge/bring%20your%20own%20model-1d1d1f?style=flat&labelColor=2b2b2e">
-</p>
+Work moves between documents, conversations, meetings, and browser tabs.
+Civitas keeps the history you choose to record on your computer, so you can
+return to a source instead of reconstructing the day from memory.
+**Next Actions**, shown above, brings commitments and unfinished work back for
+review, with evidence and reasons. You decide what to do; suggestions never
+execute automatically.
 
-## Choose what comes next
+## Recover the context
 
-<p align="center">
-  <a href="docs/assets/demo/next-actions.png">
-    <img src="docs/assets/readme/shot-next-actions.svg" alt="Civitas Next Actions showing a synthetic commitment to confirm the migration rollback owner, its reason, a collapsed evidence control, and feedback buttons">
-  </a>
-</p>
-
-**Next Actions** ranks commitments and follow-ups for you to review. Open the
-evidence, inspect why a suggestion appeared, and choose what deserves your
-attention. Suggestions never execute automatically.
-
-These images use genuine native-app captures from an isolated test profile.
-Example work is synthetic; the presentation frames and detail crops link to
-their original, unretouched screenshots.
-
-## Find the moment
+Revisit a captured screen, see which app it came from, and move through the
+day with **Timeline**. Search the local text to find a phrase or narrow the
+history by time and app.
 
 <p align="center">
   <a href="docs/assets/demo/timeline.png">
-    <img src="docs/assets/readme/scene-timeline.svg" alt="The native Civitas Timeline displaying a synthetic Northstar launch board with its app context and time scrubber">
+    <img src="docs/assets/readme/scene-timeline.svg" alt="The complete Civitas Timeline window, including navigation and time scrubber, displays a synthetic Northstar launch brief as recalled work.">
   </a>
 </p>
 
-**Timeline** lets you scrub back to a captured screen and its app context. The
-Northstar board shown inside the captured screen is example work content, not
-a Civitas dashboard.
+## Keep control of the boundary
 
-## Keep the boundary visible
+Capture starts with your permission and can be paused from the tray.
+**Settings → Privacy** keeps the network choice, local API authentication,
+and credential protection visible together. Fresh installs start Local-only;
+remote features require a separate choice.
 
 <p align="center">
   <a href="docs/assets/demo/privacy.png">
-    <img src="docs/assets/readme/shot-privacy.svg" alt="Two separate details from Civitas Privacy settings: the selected Local-only option and the explanation of OS-vault-backed API-key encryption">
+    <img src="docs/assets/readme/shot-privacy.svg" alt="The complete native Privacy settings window shows Local-only selected, local API authentication enabled, and credential-storage controls.">
   </a>
 </p>
 
-These two details from **Privacy settings** show the selected Local-only mode
-and secure credential storage. Remote features require a separate choice;
-persistent provider keys use OS-vault-backed protection.
+## Choose where AI runs
 
-[Visual sources and shareable artwork](docs/assets/readme/README.md)
+Local search and action ranking work without an AI model. When you want
+conversational Ask or Chat, configure a loopback model or connect your own
+provider in **Settings → AI**. Remote requests send the prompt and selected
+evidence to the provider you choose; review that destination before activation.
 
-Civitas is built for one person recovering context across apps. Capture,
-search, Timeline, graph, feedback, and profile metadata stay on your computer
-by default. Remote AI requests send prompts and selected evidence to the
-provider you explicitly configure.
+<p align="center">
+  <a href="docs/assets/demo/ai-providers.png">
+    <img src="docs/assets/readme/shot-ai-providers.svg" alt="The complete native AI settings window shows Local only selected alongside optional provider choices and their setup controls.">
+  </a>
+</p>
+
+Every product image preserves a complete native app window. The example work,
+including the launch document recalled in Timeline, is synthetic. Open an image
+in the feature sections for its original capture, or browse the
+[gallery and source record](docs/assets/readme/README.md).
 
 ## Start in three steps
 
@@ -182,7 +184,7 @@ Marking a commitment done also marks the memory you wrote done, so Memories
 and Next Actions never disagree. No suggestion sends a message, edits a file,
 opens a browser, or invokes an integration automatically.
 
-## Choose where AI runs
+## AI providers and setup
 
 | Choice | Credential | Destination | Useful when |
 | --- | --- | --- | --- |
@@ -192,16 +194,6 @@ opens a browser, or invokes an integration automatically.
 | OpenRouter | OpenRouter API key | `openrouter.ai` and the chosen upstream route | You want a routed model catalog |
 | Amazon Bedrock | Short-term key, AWS profile, or temporary access keys | Region-pinned Bedrock Runtime | You manage models and access in AWS |
 | Compatible endpoint | Optional API key | Exact HTTPS or loopback host shown in Settings | You operate a trusted OpenAI-compatible server |
-
-<p align="center">
-  <a href="docs/assets/demo/ai-providers.png">
-    <img src="docs/assets/readme/shot-ai-providers.svg" alt="Native Civitas AI provider selection grid showing local and remote choices, with Amazon Bedrock selected for the setup example">
-  </a>
-</p>
-
-**Settings → AI** lets you choose a loopback model or configure your own
-provider. Review the destination and data boundary before adding a remote
-credential.
 
 The app provides save, replace, test, activate, and delete flows. Diagnostics
 use the fixed prompt `Reply with OK.` and never return the credential.
@@ -413,7 +405,8 @@ For vulnerabilities, do not open a public issue; follow [SECURITY.md](SECURITY.m
 ## Contributors
 
 Civitas is shaped by [Chuyue Wang and Eric Bi](CONTRIBUTORS.md), alongside the
-open-source work acknowledged in [NOTICE.md](NOTICE.md).
+open-source work acknowledged in [NOTICE.md](NOTICE.md). The project is
+[MIT licensed](LICENSE.md).
 
 <br>
 

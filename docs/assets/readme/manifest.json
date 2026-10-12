@@ -1,199 +1,175 @@
 {
-  "schema_version": 1,
-  "source_commit": "eb15b2af8e25780af405a18fd030784ab08da01b",
-  "workflow_run": "https://github.com/civitass/civitas-desktop/actions/runs/38182251850",
+  "schema_version": 2,
+  "source_commit": "609b58e29bc6da90e4d144c4395d2b0e2f52a21b",
+  "workflow_run": "https://github.com/civitass/civitas-desktop/actions/runs/38205609866",
   "platform": "macOS",
-  "capture_policy": "Isolated native E2E profile; synthetic examples; raw captures are unmodified. Presentation only crops and uniformly scales pixels.",
+  "capture_policy": "Isolated native E2E profile; synthetic examples; raw captures are unmodified. Presentation uniformly scales complete app windows; no product pixel is cropped, retouched, or covered.",
   "renderer": "scripts/generate-readme-visuals.mjs",
   "captures": {
     "next-actions": {
-      "sha256": "203090b120911361006414e16dccb31ee1fbaf64e9ffd1b4a27c564dcdfbd8ed",
+      "sha256": "794d737ad04ca0c09df4b27f526b6864940f3d22748b806d9654d7a1a1b3b8d6",
+      "width": 1120,
+      "height": 900,
       "artifact": "publication-next-actions.png",
       "scenario": "publication-demo.spec.ts",
-      "path": "docs/assets/demo/next-actions.png",
-      "width": 1600,
-      "height": 677
+      "path": "docs/assets/demo/next-actions.png"
+    },
+    "next-actions-dark": {
+      "sha256": "009b82d6c3e364ba62473346e12d27944581094c8b3c2432e2c8a21aac7a1f9c",
+      "width": 1120,
+      "height": 900,
+      "artifact": "publication-next-actions-dark.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/next-actions-dark.png"
     },
     "timeline": {
-      "sha256": "224d4eab0345b439d735f8e681b825ce68e90d1ed7252e436671a64e498f2467",
+      "sha256": "3931daa289204428dec662efddac12c05bc774c97371deee1d784ccea8b7203f",
+      "width": 1120,
+      "height": 900,
       "artifact": "publication-timeline.png",
       "scenario": "publication-demo.spec.ts",
-      "path": "docs/assets/demo/timeline.png",
-      "width": 1600,
-      "height": 677
-    },
-    "ai-providers": {
-      "sha256": "480f4d6f2b9e1e8f9f1b6db0adcfecfb2615cf55f2d8d596b330e5d6357ae304",
-      "artifact": "publication-ai-settings.png",
-      "scenario": "publication-demo.spec.ts",
-      "path": "docs/assets/demo/ai-providers.png",
-      "width": 1600,
-      "height": 677
+      "path": "docs/assets/demo/timeline.png"
     },
     "privacy": {
-      "sha256": "7c60e522a93edf4d9c2ad29e5a1f6942ef66df488157bfcba2f4b80f40a244f8",
-      "artifact": "settings-privacy.png",
-      "scenario": "settings-sections.spec.ts",
-      "path": "docs/assets/demo/privacy.png",
-      "width": 1600,
-      "height": 677
+      "sha256": "b6f722dfca71a3d41a83e63f786e61af6b3781900b7c4dea85cfc68750907643",
+      "width": 1120,
+      "height": 1000,
+      "artifact": "publication-privacy.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/privacy.png"
+    },
+    "ai-providers": {
+      "sha256": "24e9f881aa4ecfc510fb2162920842a4d9ccef8f9a9b1e8319154dcd272add4f",
+      "width": 1120,
+      "height": 1000,
+      "artifact": "publication-ai-settings.png",
+      "scenario": "publication-demo.spec.ts",
+      "path": "docs/assets/demo/ai-providers.png"
     }
   },
   "outputs": {
     "hero-light.svg": {
-      "width": 1280,
-      "height": 142,
-      "bytes": 20554,
-      "sha256": "940f7d30cb75c6ba98f2b27e86d1b7bccea286e47ad5bec56f20312e4d23b7bb",
-      "native_regions": []
-    },
-    "hero-dark.svg": {
-      "width": 1280,
-      "height": 142,
-      "bytes": 20554,
-      "sha256": "37aa56d876de3918c49b131768b46324adebe44b58b8aab8bbdb2e08c61029d0",
-      "native_regions": []
-    },
-    "shot-next-actions.svg": {
-      "width": 1280,
-      "height": 820,
-      "bytes": 159216,
-      "sha256": "ca2b5ea140f06306b6453c78b1c245b18afc268084028e791d9708a452b58c1b",
+      "width": 1600,
+      "height": 1554,
+      "bytes": 203133,
+      "sha256": "34d50805d34a67433142e6a743e0f7c13d37aac1833fb558c978984e17040f72",
       "native_regions": [
         {
           "source": "docs/assets/demo/next-actions.png",
-          "crop": {
-            "x": 520,
-            "y": 209,
-            "width": 785,
-            "height": 366
-          },
+          "full_capture": true,
           "placement": {
-            "x": 52,
-            "y": 205,
-            "width": 1176,
-            "height": 548.3006369426752
+            "x": 72,
+            "y": 300,
+            "width": 1456,
+            "height": 1170
+          }
+        }
+      ]
+    },
+    "hero-dark.svg": {
+      "width": 1600,
+      "height": 1554,
+      "bytes": 205407,
+      "sha256": "8b8a37a0c9d941c6a69ac9542947c02330756146257572a7074625ce7a95a75a",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/next-actions-dark.png",
+          "full_capture": true,
+          "placement": {
+            "x": 72,
+            "y": 300,
+            "width": 1456,
+            "height": 1170
           }
         }
       ]
     },
     "scene-timeline.svg": {
-      "width": 1280,
-      "height": 774,
-      "bytes": 449398,
-      "sha256": "f6a4891344c1c6b89d3644be88ca51c5d9a1ce8226e864f61f34e7eed74f066a",
+      "width": 1600,
+      "height": 1476,
+      "bytes": 305880,
+      "sha256": "03d78a3a683dd6a5fb5fd92e8b33569affaeffd8ba01f3756edc5d0d9f6b8865",
       "native_regions": [
         {
           "source": "docs/assets/demo/timeline.png",
-          "crop": {
-            "x": 0,
-            "y": 0,
-            "width": 1600,
-            "height": 677
-          },
+          "full_capture": true,
           "placement": {
-            "x": 32,
-            "y": 205,
-            "width": 1216,
-            "height": 514.52
+            "x": 72,
+            "y": 233,
+            "width": 1456,
+            "height": 1170
+          }
+        }
+      ]
+    },
+    "shot-next-actions.svg": {
+      "width": 1600,
+      "height": 1476,
+      "bytes": 183128,
+      "sha256": "6855011a9d49147f753e7454425c9c9eb0412d94cf3f421f7b86acfa70082e07",
+      "native_regions": [
+        {
+          "source": "docs/assets/demo/next-actions.png",
+          "full_capture": true,
+          "placement": {
+            "x": 72,
+            "y": 233,
+            "width": 1456,
+            "height": 1170
           }
         }
       ]
     },
     "shot-privacy.svg": {
-      "width": 1280,
-      "height": 674,
-      "bytes": 167809,
-      "sha256": "74468e9d5af12188ccd0f20ab8727f66866677200e6a2af396ac738aea819163",
+      "width": 1600,
+      "height": 1606,
+      "bytes": 254813,
+      "sha256": "36d87f3a68725dae4f0477fb9a228d8e8cc55d394ae957303a8aba1c024497a7",
       "native_regions": [
         {
           "source": "docs/assets/demo/privacy.png",
-          "crop": {
-            "x": 272,
-            "y": 239,
-            "width": 638,
-            "height": 86
-          },
+          "full_capture": true,
           "placement": {
-            "x": 70,
-            "y": 264,
-            "width": 1140,
-            "height": 153.66771159874608
-          }
-        },
-        {
-          "source": "docs/assets/demo/privacy.png",
-          "crop": {
-            "x": 278,
-            "y": 491,
-            "width": 753,
-            "height": 39
-          },
-          "placement": {
-            "x": 70,
-            "y": 530,
-            "width": 1140,
-            "height": 59.04382470119522
+            "x": 72,
+            "y": 233,
+            "width": 1456,
+            "height": 1300
           }
         }
       ]
     },
     "shot-ai-providers.svg": {
-      "width": 1280,
-      "height": 730,
-      "bytes": 168401,
-      "sha256": "d0e56bfb68a01d6d4a1c4f16380e53f3caf61ea11bb199b5b62cc998c124bcf1",
+      "width": 1600,
+      "height": 1606,
+      "bytes": 232837,
+      "sha256": "ac970fa809b618271299c25b90fb7ca42dd1645457125e143b2e9061e59b9c0a",
       "native_regions": [
         {
           "source": "docs/assets/demo/ai-providers.png",
-          "crop": {
-            "x": 463,
-            "y": 65,
-            "width": 897,
-            "height": 351
-          },
+          "full_capture": true,
           "placement": {
-            "x": 52,
-            "y": 205,
-            "width": 1176,
-            "height": 460.17391304347825
+            "x": 72,
+            "y": 233,
+            "width": 1456,
+            "height": 1300
           }
         }
       ]
     },
-    "how-it-works-light.svg": {
-      "width": 1280,
-      "height": 690,
-      "bytes": 5151,
-      "sha256": "4860007f1efc8bab5a522d5f90b3ef66772ad1fc9536de6c86e5520c6024982d",
-      "native_regions": []
-    },
-    "how-it-works-dark.svg": {
-      "width": 1280,
-      "height": 690,
-      "bytes": 5151,
-      "sha256": "a0929529806a8b4c19aac4876b467706f4f06744046132a7e3ea70ecbf79cca1",
-      "native_regions": []
-    },
     "share-context.svg": {
       "width": 1200,
       "height": 630,
-      "bytes": 179316,
-      "sha256": "11e08392e920231b5b9a4bd3ef8833895dff06af0d900c63be87bee71ce2e799",
+      "bytes": 205537,
+      "sha256": "96043b383fec7a70bd8922f6f141578bd7f566b73469e5bf4a3a4a5d36604b03",
       "native_regions": [
         {
-          "source": "docs/assets/demo/next-actions.png",
-          "crop": {
-            "x": 520,
-            "y": 209,
-            "width": 785,
-            "height": 366
-          },
+          "source": "docs/assets/demo/next-actions-dark.png",
+          "full_capture": true,
           "placement": {
-            "x": 152,
-            "y": 167,
-            "width": 896,
-            "height": 417.75286624203824
+            "x": 512.2,
+            "y": 54,
+            "width": 649.6,
+            "height": 522
           }
         }
       ]
@@ -201,29 +177,24 @@
     "share-context.png": {
       "width": 1200,
       "height": 630,
-      "bytes": 83226,
-      "sha256": "9bf97ebaf00b8310721f24c1b2278ca6a7828937748b9492cf3a981afbeb6eba",
+      "bytes": 146350,
+      "sha256": "12f194d646674164e917cb8648f832133b3269e08d0df4213dc94ddebcc72d7e",
       "rendered_from": "share-context.svg"
     },
     "share-privacy.svg": {
       "width": 1200,
       "height": 630,
-      "bytes": 187752,
-      "sha256": "ae491e906384b5a3e44b803a3a400462b6e419f70bcbde5ad01197e0e1a31368",
+      "bytes": 274833,
+      "sha256": "c7cf27218d58d228062fb6bfaf3927ac183052c5d09eb091ba94e1d81ec245e1",
       "native_regions": [
         {
           "source": "docs/assets/demo/privacy.png",
-          "crop": {
-            "x": 272,
-            "y": 239,
-            "width": 638,
-            "height": 86
-          },
+          "full_capture": true,
           "placement": {
-            "x": 62,
-            "y": 344,
-            "width": 1076,
-            "height": 145.04075235109718
+            "x": 544.68,
+            "y": 54,
+            "width": 584.64,
+            "height": 522
           }
         }
       ]
@@ -231,9 +202,23 @@
     "share-privacy.png": {
       "width": 1200,
       "height": 630,
-      "bytes": 74495,
-      "sha256": "ff894887849c11915da73581c07e80207836e6b90aaefc31be12e89004188b3f",
+      "bytes": 220134,
+      "sha256": "00be0905a2e8fb9af3ede40e6ee9387205003325400bf2a36e5032bdf214f558",
       "rendered_from": "share-privacy.svg"
+    },
+    "how-it-works-light.svg": {
+      "width": 1280,
+      "height": 690,
+      "bytes": 5205,
+      "sha256": "da1e9abdcf168e974f4d90eaa6fbebfc719ee57d82815671f5d266b01554c3b0",
+      "native_regions": []
+    },
+    "how-it-works-dark.svg": {
+      "width": 1280,
+      "height": 690,
+      "bytes": 5205,
+      "sha256": "caa5c1ed4850eda65a1aeb6e178984f9eb5a2d0063cc631cfadbf5b56ffb7dec",
+      "native_regions": []
     }
   }
 }
