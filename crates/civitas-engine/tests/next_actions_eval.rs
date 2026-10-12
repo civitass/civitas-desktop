@@ -740,29 +740,57 @@ async fn actual_route_requires_saved_query_opt_in_and_preserves_series_feedback(
     assert_eq!(next["feedbackSuppressedCount"], 1);
 }
 
+fn open_thread_fixture_sessions(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
+    // Leave more than 24 hours between sessions so their UTC dates differ at
+    // every execution time. The previous 27h/6h offsets shared a date during
+    // 03:00–05:59 UTC, despite the fixtures intending activity on separate days.
+    (
+        now - chrono::Duration::hours(36),
+        now - chrono::Duration::hours(6),
+    )
+}
+
+#[test]
+fn open_thread_fixture_sessions_span_distinct_dates_throughout_the_utc_day() {
+    let midnight = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    for minute in 0..24 * 60 {
+        let now = midnight + chrono::Duration::minutes(minute);
+        let (earlier, recent) = open_thread_fixture_sessions(now);
+        // Cover the complete timestamp ranges used by both route fixtures.
+        let earlier_end = earlier + chrono::Duration::minutes(30);
+        let recent_start = recent - chrono::Duration::minutes(20);
+        assert!(
+            earlier_end.date_naive() < recent_start.date_naive(),
+            "fixture sessions must occupy separate UTC dates at {now}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn actual_route_surfaces_an_interrupted_artifact_thread_from_captured_actions() {
     let (app, database, _directory) = setup_route().await;
     let now = Utc::now();
+    let (earlier, recent) = open_thread_fixture_sessions(now);
     let pull_request = json!([
         {"kind": "pull_request", "value": "acme/api#123", "confidence": 0.95},
         {"kind": "repo", "value": "acme/api", "confidence": 0.95}
     ])
     .to_string();
-    // Two sessions yesterday and this morning; the last touch was six hours ago.
-    for (offset_minutes, verb) in [
-        (27 * 60, "clicked"),
-        (27 * 60 - 15, "typed"),
-        (6 * 60 + 20, "clicked"),
-        (6 * 60, "saved"),
+    // Two sessions on distinct UTC dates; the last touch was six hours ago.
+    for (at, verb) in [
+        (earlier, "clicked"),
+        (earlier + chrono::Duration::minutes(15), "typed"),
+        (recent - chrono::Duration::minutes(20), "clicked"),
+        (recent, "saved"),
     ] {
-        let at = (now - chrono::Duration::minutes(offset_minutes)).to_rfc3339();
         sqlx::query(
             "INSERT INTO semantic_actions
              (ts_start, ts_end, verb, object, app_name, window_title, artifacts, event_count, mining_version)
              VALUES (?1, ?1, ?2, 'Files changed', 'Arc', 'PR #123 · acme/api', ?3, 1, 1)",
         )
-        .bind(at)
+        .bind(at.to_rfc3339())
         .bind(verb)
         .bind(&pull_request)
         .execute(&database.pool)
@@ -873,7 +901,7 @@ async fn insert_title_action(
 async fn actual_route_surfaces_a_title_thread_across_apps_without_artifacts() {
     let (app, database, _directory) = setup_route().await;
     let now = Utc::now();
-    let yesterday = now - chrono::Duration::hours(27);
+    let (earlier, recent) = open_thread_fixture_sessions(now);
     for (offset_minutes, application, title) in [
         (0, "Code", "main.pdf — thesis"),
         (12, "Code", "main.pdf — thesis"),
@@ -881,7 +909,7 @@ async fn actual_route_surfaces_a_title_thread_across_apps_without_artifacts() {
     ] {
         insert_title_action(
             &database,
-            yesterday + chrono::Duration::minutes(offset_minutes),
+            earlier + chrono::Duration::minutes(offset_minutes),
             application,
             title,
         )
@@ -890,7 +918,7 @@ async fn actual_route_surfaces_a_title_thread_across_apps_without_artifacts() {
     for offset_minutes in [0, 20] {
         insert_title_action(
             &database,
-            now - chrono::Duration::hours(6) - chrono::Duration::minutes(offset_minutes),
+            recent - chrono::Duration::minutes(offset_minutes),
             "Code",
             "main.pdf — thesis",
         )
