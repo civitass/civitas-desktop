@@ -431,7 +431,16 @@ describe("Publication demo surfaces", function () {
     expect(await local.getAttribute("aria-checked")).toBe("true");
     const key = await $('[data-testid="privacy-api-key-input"]');
     await key.waitForExist({ timeout: t(10_000) });
-    expect(await key.getAttribute("type")).toBe("password");
+    // The real control substitutes bullets while hidden; the DOM never holds
+    // the token until the owner deliberately reveals it.
+    await browser.waitUntil(
+      async () => (await browser.execute(() => {
+        const input = document.querySelector<HTMLInputElement>('[data-testid="privacy-api-key-input"]');
+        return input?.readOnly === true && /^•{1,32}$/.test(input.value);
+      })) as boolean,
+      { timeout: t(10_000), timeoutMsg: "Local API key must be hydrated, masked, and read-only before capture" },
+    );
+    expect(await $('[data-testid="privacy-api-key-reveal"]').getAttribute("title")).toBe("Reveal key");
     expect(await $('[data-testid="privacy-api-auth-status"]').getAttribute("data-state")).toBe("locked-on");
     await settlePublicationFrame({ anchorHeading: "Privacy" });
     await assertPublicationViewport();
