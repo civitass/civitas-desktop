@@ -43,22 +43,22 @@
     "hero-light.svg": {
       "width": 1280,
       "height": 142,
-      "bytes": 20145,
-      "sha256": "0c4893b8846530e0f915adc22c040dd21a811475b54b35d601d959ead9c1bbc1",
+      "bytes": 20554,
+      "sha256": "940f7d30cb75c6ba98f2b27e86d1b7bccea286e47ad5bec56f20312e4d23b7bb",
       "native_regions": []
     },
     "hero-dark.svg": {
       "width": 1280,
       "height": 142,
-      "bytes": 20145,
-      "sha256": "579fb168cb9b93d9e0fe056cffbe8c5a3a448c73f7c2c0ed692544c045f1830f",
+      "bytes": 20554,
+      "sha256": "37aa56d876de3918c49b131768b46324adebe44b58b8aab8bbdb2e08c61029d0",
       "native_regions": []
     },
     "shot-next-actions.svg": {
       "width": 1280,
       "height": 820,
-      "bytes": 155994,
-      "sha256": "5930098ce8dce6fbaa684d9419712d6667a09d1e20e7d1c98766f9ee47590bc9",
+      "bytes": 159216,
+      "sha256": "ca2b5ea140f06306b6453c78b1c245b18afc268084028e791d9708a452b58c1b",
       "native_regions": [
         {
           "source": "docs/assets/demo/next-actions.png",
@@ -80,8 +80,8 @@
     "scene-timeline.svg": {
       "width": 1280,
       "height": 774,
-      "bytes": 440253,
-      "sha256": "8484dd9201a4169f8b4c4b85b4ae72fab26b35e0e8db80050c9b9ada33066295",
+      "bytes": 449398,
+      "sha256": "f6a4891344c1c6b89d3644be88ca51c5d9a1ce8226e864f61f34e7eed74f066a",
       "native_regions": [
         {
           "source": "docs/assets/demo/timeline.png",
@@ -103,8 +103,8 @@
     "shot-privacy.svg": {
       "width": 1280,
       "height": 674,
-      "bytes": 164423,
-      "sha256": "3ee4ed4ebac28d4dcafe936fadc04a4d89546fe696a52a3c943b5daeb587d69a",
+      "bytes": 167809,
+      "sha256": "74468e9d5af12188ccd0f20ab8727f66866677200e6a2af396ac738aea819163",
       "native_regions": [
         {
           "source": "docs/assets/demo/privacy.png",
@@ -141,8 +141,8 @@
     "shot-ai-providers.svg": {
       "width": 1280,
       "height": 730,
-      "bytes": 164992,
-      "sha256": "356b8c05c82a129785dab67f7347e2f65654641d7766b745454d88d996d220d0",
+      "bytes": 168401,
+      "sha256": "d0e56bfb68a01d6d4a1c4f16380e53f3caf61ea11bb199b5b62cc998c124bcf1",
       "native_regions": [
         {
           "source": "docs/assets/demo/ai-providers.png",
@@ -178,8 +178,8 @@
     "share-context.svg": {
       "width": 1200,
       "height": 630,
-      "bytes": 175685,
-      "sha256": "88eca5e41e0161898c0f812ebe48bd0a5a0e86ef77790ba7779b9c7dd3fdad8c",
+      "bytes": 179316,
+      "sha256": "11e08392e920231b5b9a4bd3ef8833895dff06af0d900c63be87bee71ce2e799",
       "native_regions": [
         {
           "source": "docs/assets/demo/next-actions.png",
@@ -208,8 +208,8 @@
     "share-privacy.svg": {
       "width": 1200,
       "height": 630,
-      "bytes": 183957,
-      "sha256": "c934ed8ee930bc41d18f8ae6fa905633f794b58e8fee1181c97baf9e4abd1a0b",
+      "bytes": 187752,
+      "sha256": "ae491e906384b5a3e44b803a3a400462b6e419f70bcbde5ad01197e0e1a31368",
       "native_regions": [
         {
           "source": "docs/assets/demo/privacy.png",

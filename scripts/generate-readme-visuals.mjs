@@ -39,7 +39,12 @@ for (const [name, source] of Object.entries(captures)) {
   Object.assign(source, { path: relative, width: metadata.width, height: metadata.height });
 }
 const wordmark = await fs.readFile(path.join(root, "docs/assets/civitas-desktop-wordmark.svg"), "utf8");
-const uri = (buffer, mime = "image/png") => `data:${mime};base64,${Buffer.from(buffer).toString("base64")}`;
+// MIME-style wrapping keeps opaque binary data out of enormous diff lines.
+// SVG normalizes the newlines to spaces; base64 image decoders ignore them.
+const uri = (buffer, mime = "image/png") => {
+  const encoded = Buffer.from(buffer).toString("base64");
+  return `data:${mime};base64,\n${encoded.match(/.{1,48}/g).join("\n")}\n`;
+};
 const ink = "#1d1d1f", secondary = "#66666b", sepia = "#7a5f48";
 const text = (x, y, size, content, options = {}) => `<text x="${x}" y="${y}" font-size="${size}" font-weight="${options.weight ?? 400}" fill="${options.fill ?? ink}"${options.anchor ? ` text-anchor="${options.anchor}"` : ""}>${escape(content)}</text>`;
 const picture = (x, y, width, height, data, mime) => `<image x="${x}" y="${y}" width="${width}" height="${height}" xlink:href="${uri(data, mime)}"/>`;
